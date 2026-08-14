@@ -1,0 +1,325 @@
+const http = require('node:http');
+const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  Client,
+  EmbedBuilder,
+  GatewayIntentBits,
+  LabelBuilder,
+  ModalBuilder,
+  OverwriteType,
+  PermissionFlagsBits,
+  TextInputBuilder,
+  TextInputStyle,
+} = require('discord.js');
+
+const { commands } = require('./src/commands');
+const { getGuild, patchGuild } = require('./src/store');
+const { buildWelcomeCard } = require('./src/welcome');
+const { ticketPanelComponents, createTicket, handleTicketButton } = require('./src/tickets');
+
+if (!process.env.DISCORD_TOKEN) {
+  console.error('Missing DISCORD_TOKEN environment variable.');
+  process.exit(1);
+}
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildInvites,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+  ],
+});
+
+const inviteCache = new Map();
+
+function canManageGuild(interaction) {
+  return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+}
+
+async function cacheGuildInvites(guild) {
+  try {
+    const invites = await guild.invites.fetch();
+    inviteCache.set(guild.id, new Map(invites.map((invite) => [invite.code, invite.uses ?? 0])));
+  } catch (error) {
+    console.warn(`[invites] Cannot fetch invites for ${guild.name}: ${error.message}`);
+  }
+}
+
+async function resolveInviter(member) {
+  try {
+    const before = inviteCache.get(member.guild.id) || new Map();
+    const current = await member.guild.invites.fetch();
+    let usedInvite = null;
+    for (const invite of current.values()) {
+      const oldUses = before.get(invite.code) ?? 0;
+      if ((invite.uses ?? 0) > oldUses) {
+        usedInvite = invite;
+        break;
+      }
+    }
+    inviteCache.set(member.guild.id, new Map(current.map((invite) => [invite.code, invite.uses ?? 0])));
+    return usedInvite?.inviter || null;
+  } catch (error) {
+    console.warn(`[invites] Failed to resolve inviter for ${member.user.tag}: ${error.message}`);
+    return null;
+  }
+}
+
+function tempVoiceControls(channelId) {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`temp:limit:${channelId}`).setLabel('تحديد العدد').setEmoji('👥').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`temp:lock:${channelId}`).setLabel('قفل الروم').setEmoji('🔒').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`temp:open:${channelId}`).setLabel('فتح الروم').setEmoji('🔓').setStyle(ButtonStyle.Success),
+  )];
+}
+
+function tempOwnerId(channel) {
+  const overwrite = channel.permissionOverwrites.cache.find(
+    (entry) => entry.type === OverwriteType.Member && entry.id !== channel.guild.members.me?.id,
+  );
+  return overwrite?.id || null;
+}
+
+function canControlTemp(member, channel) {
+  return member.permissions.has(PermissionFlagsBits.Administrator) || tempOwnerId(channel) === member.id;
+}
+
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await guild.commands.set(commands);
+      console.log(`Registered ${commands.length} commands in ${guild.name}`);
+    } catch (error) {
+      console.error(`Failed to register commands in ${guild.name}:`, error);
+    }
+    await cacheGuildInvites(guild);
+  }
+});
+
+client.on('guildCreate', async (guild) => {
+  await guild.commands.set(commands).catch(console.error);
+  await cacheGuildInvites(guild);
+});
+client.on('inviteCreate', (invite) => cacheGuildInvites(invite.guild));
+client.on('inviteDelete', (invite) => cacheGuildInvites(invite.guild));
+
+client.on('guildMemberAdd', async (member) => {
+  const config = getGuild(member.guild.id);
+  const inviter = await resolveInviter(member);
+  if (!config.welcomeChannelId) return;
+  const channel = member.guild.channels.cache.get(config.welcomeChannelId);
+  if (!channel?.isSendable()) return;
+
+  try {
+    const card = await buildWelcomeCard(member);
+    await channel.send({ files: [{ attachment: card, name: `welcome-${member.user.id}.png` }] });
+    const inviterText = inviter ? `<@${inviter.id}>` : 'Unknown';
+    await channel.send({
+      content: `• welcome to neverless: <@${member.user.id}>\n• invited by: ${inviterText}`,
+      allowedMentions: { users: inviter ? [member.user.id, inviter.id] : [member.user.id] },
+    });
+  } catch (error) {
+    console.error('[welcome] Failed:', error);
+  }
+});
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  const guild = newState.guild || oldState.guild;
+  const config = getGuild(guild.id);
+  const temp = config.tempVoice;
+  if (!temp?.lobbyId || !temp?.categoryId) return;
+
+  if (newState.channelId === temp.lobbyId && oldState.channelId !== temp.lobbyId && newState.member) {
+    try {
+      const owner = newState.member;
+      const room = await guild.channels.create({
+        name: `${owner.displayName}'s room`.slice(0, 90),
+        type: ChannelType.GuildVoice,
+        parent: temp.categoryId,
+        permissionOverwrites: [
+          { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect] },
+          { id: owner.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect] },
+        ],
+      });
+      await owner.voice.setChannel(room);
+      await room.send({
+        embeds: [new EmbedBuilder().setColor(0x15233a).setTitle('إدارة رومك الصوتي').setDescription('هذه الخيارات متاحة لمالك الروم، والإدارة تستطيع التحكم أيضاً.')],
+        components: tempVoiceControls(room.id),
+      });
+    } catch (error) {
+      console.error('[tempvoice] Failed to create room:', error);
+    }
+  }
+
+  if (oldState.channel && oldState.channel.parentId === temp.categoryId && oldState.channel.id !== temp.lobbyId && tempOwnerId(oldState.channel)) {
+    setTimeout(async () => {
+      const channel = guild.channels.cache.get(oldState.channelId);
+      if (channel && channel.members.size === 0) await channel.delete('NeverLess temporary voice room empty').catch(console.error);
+    }, 2500);
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === 'welcome') {
+        if (!canManageGuild(interaction)) return interaction.reply({ content: 'ليس لديك صلاحية.', ephemeral: true });
+        const channel = interaction.options.getChannel('channel', true);
+        await patchGuild(interaction.guildId, { welcomeChannelId: channel.id });
+        return interaction.reply({ content: `تم تحديد ${channel} كروم Welcome.`, ephemeral: true });
+      }
+
+      if (interaction.commandName === 'rules') {
+        if (!canManageGuild(interaction)) return interaction.reply({ content: 'ليس لديك صلاحية.', ephemeral: true });
+        const channel = interaction.options.getChannel('channel', true);
+        const rulesText = interaction.options.getString('rules', true);
+        const imageUrl = interaction.options.getString('image_url', true);
+        try {
+          const parsed = new URL(imageUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('bad protocol');
+        } catch {
+          return interaction.reply({ content: 'رابط الصورة غير صالح.', ephemeral: true });
+        }
+        const embed = new EmbedBuilder().setColor(0x15233a).setTitle('NeverLess Rules').setDescription(rulesText).setImage(imageUrl).setFooter({ text: 'NeverLess' });
+        const message = await channel.send({ embeds: [embed] });
+        await patchGuild(interaction.guildId, { rulesChannelId: channel.id, rulesMessageId: message.id });
+        return interaction.reply({ content: `تم إرسال القوانين في ${channel}.`, ephemeral: true });
+      }
+
+      if (interaction.commandName === 'ticket-setup') {
+        if (!canManageGuild(interaction)) return interaction.reply({ content: 'ليس لديك صلاحية.', ephemeral: true });
+        const channel = interaction.options.getChannel('channel', true);
+        const category = interaction.options.getChannel('category', true);
+        const supportRole = interaction.options.getRole('support_role', true);
+        const imageUrl = interaction.options.getString('image_url');
+        const embed = new EmbedBuilder().setColor(0x15233a).setTitle('أهلاً بك في قسم التذاكر').setDescription('• افتح تذكرتك\n\nاختر نوع التذكرة من القائمة بالأسفل.').setFooter({ text: 'NeverLess Support' });
+        if (imageUrl) embed.setImage(imageUrl);
+        const panel = await channel.send({ embeds: [embed], components: ticketPanelComponents() });
+        await patchGuild(interaction.guildId, {
+          ticketPanelChannelId: channel.id,
+          ticketPanelMessageId: panel.id,
+          ticketCategoryId: category.id,
+          supportRoleId: supportRole.id,
+        });
+        return interaction.reply({ content: `تم إعداد نظام التذاكر في ${channel}.`, ephemeral: true });
+      }
+
+      if (interaction.commandName === 'tempvoice') {
+        if (!canManageGuild(interaction)) return interaction.reply({ content: 'ليس لديك صلاحية.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        const categoryName = interaction.options.getString('category_name') || 'TEMP VOICE';
+        const lobbyName = interaction.options.getString('lobby_name') || '➕ Create Room';
+        const category = await interaction.guild.channels.create({ name: categoryName, type: ChannelType.GuildCategory });
+        const lobby = await interaction.guild.channels.create({ name: lobbyName, type: ChannelType.GuildVoice, parent: category.id });
+        await patchGuild(interaction.guildId, { tempVoice: { categoryId: category.id, lobbyId: lobby.id } });
+        return interaction.editReply({ content: `تم إنشاء ${category} و ${lobby}. أي عضو يدخل روم الإنشاء سيحصل على روم مؤقت باسمه.` });
+      }
+
+      if (interaction.commandName === 'kick') {
+        const user = interaction.options.getUser('user', true);
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member) return interaction.reply({ content: 'العضو غير موجود في السيرفر.', ephemeral: true });
+        if (!member.kickable) return interaction.reply({ content: 'لا أستطيع طرد هذا العضو. تأكد أن رتبة البوت أعلى منه.', ephemeral: true });
+        const reason = interaction.options.getString('reason') || `Kicked by ${interaction.user.tag}`;
+        await member.kick(reason);
+        return interaction.reply({ content: `تم طرد ${user.tag}.` });
+      }
+
+      if (interaction.commandName === 'ban') {
+        const user = interaction.options.getUser('user', true);
+        const days = interaction.options.getInteger('delete_days') ?? 0;
+        const reason = interaction.options.getString('reason') || `Banned by ${interaction.user.tag}`;
+        await interaction.guild.members.ban(user.id, { deleteMessageSeconds: days * 86400, reason });
+        return interaction.reply({ content: `تم حظر ${user.tag}.` });
+      }
+
+      if (interaction.commandName === 'lock' || interaction.commandName === 'unlock') {
+        const channel = interaction.options.getChannel('channel') || interaction.channel;
+        if (!channel || channel.type !== ChannelType.GuildText) return interaction.reply({ content: 'اختر روم نصي.', ephemeral: true });
+        const lock = interaction.commandName === 'lock';
+        await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SendMessages: lock ? false : null });
+        return interaction.reply({ content: lock ? `🔒 تم قفل ${channel}.` : `🔓 تم فتح ${channel}.` });
+      }
+
+      if (interaction.commandName === 'clear') {
+        if (!interaction.channel?.isTextBased() || !('bulkDelete' in interaction.channel)) return interaction.reply({ content: 'هذا الأمر يعمل في الشاتات النصية فقط.', ephemeral: true });
+        const amount = interaction.options.getInteger('amount', true);
+        await interaction.deferReply({ ephemeral: true });
+        const deleted = await interaction.channel.bulkDelete(amount, true);
+        return interaction.editReply({ content: `تم حذف ${deleted.size} رسالة. الرسائل الأقدم من 14 يوماً لا يمكن حذفها بالمسح الجماعي.` });
+      }
+
+      if (interaction.commandName === 'move') {
+        const user = interaction.options.getUser('user', true);
+        const target = interaction.options.getChannel('channel', true);
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member?.voice.channelId) return interaction.reply({ content: 'العضو ليس داخل روم صوتي.', ephemeral: true });
+        await member.voice.setChannel(target);
+        return interaction.reply({ content: `تم سحب ${user} إلى ${target}.` });
+      }
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === 'ticket:create') {
+      return createTicket(interaction, getGuild(interaction.guildId));
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('ticket:')) {
+      const handled = await handleTicketButton(interaction, getGuild(interaction.guildId));
+      if (handled) return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('temp:')) {
+      const [, action, channelId] = interaction.customId.split(':');
+      const channel = interaction.guild.channels.cache.get(channelId);
+      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
+      if (!canControlTemp(interaction.member, channel)) return interaction.reply({ content: 'هذه الخيارات لمالك الروم أو الإدارة فقط.', ephemeral: true });
+
+      if (action === 'lock') {
+        await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
+        await channel.permissionOverwrites.edit(tempOwnerId(channel), { Connect: true, ViewChannel: true });
+        return interaction.reply({ content: '🔒 تم قفل الروم.', ephemeral: true });
+      }
+      if (action === 'open') {
+        await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
+        return interaction.reply({ content: '🔓 تم فتح الروم.', ephemeral: true });
+      }
+      if (action === 'limit') {
+        const input = new TextInputBuilder().setCustomId('limit').setStyle(TextInputStyle.Short).setPlaceholder('0 = بدون حد، أو رقم من 1 إلى 99').setMinLength(1).setMaxLength(2).setRequired(true);
+        const label = new LabelBuilder().setLabel('عدد الأعضاء').setDescription('اكتب الحد الأقصى للروم').setTextInputComponent(input);
+        const modal = new ModalBuilder().setCustomId(`temp-limit:${channel.id}`).setTitle('تحديد عدد أعضاء الروم').addLabelComponents(label);
+        return interaction.showModal(modal);
+      }
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('temp-limit:')) {
+      const channelId = interaction.customId.split(':')[1];
+      const channel = interaction.guild.channels.cache.get(channelId);
+      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
+      if (!canControlTemp(interaction.member, channel)) return interaction.reply({ content: 'لا تملك صلاحية التحكم بهذا الروم.', ephemeral: true });
+      const limit = Number(interaction.fields.getTextInputValue('limit').trim());
+      if (!Number.isInteger(limit) || limit < 0 || limit > 99) return interaction.reply({ content: 'اكتب رقماً من 0 إلى 99.', ephemeral: true });
+      await channel.setUserLimit(limit);
+      return interaction.reply({ content: limit === 0 ? 'تم إلغاء حد الأعضاء.' : `تم تحديد الحد إلى ${limit} أعضاء.`, ephemeral: true });
+    }
+  } catch (error) {
+    console.error('[interaction] Unhandled error:', error);
+    const payload = { content: 'حدث خطأ أثناء تنفيذ الأمر. راجع Logs في Railway.', ephemeral: true };
+    if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => {});
+    else await interaction.reply(payload).catch(() => {});
+  }
+});
+
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify({ ok: true, bot: client.user?.tag || 'starting' }));
+}).listen(port, '0.0.0.0', () => console.log(`Health server listening on ${port}`));
+
+client.login(process.env.DISCORD_TOKEN);
