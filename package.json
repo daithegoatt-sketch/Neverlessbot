@@ -1,0 +1,18 @@
+{
+  "name": "neverlessbot",
+  "version": "1.0.0",
+  "description": "NeverLess Discord community bot",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js && node --check src/commands.js && node --check src/store.js && node --check src/welcome.js && node --check src/tickets.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.3",
+    "discord.js": "^14.26.4"
+  }
+}
