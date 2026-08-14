@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1672" height="941" viewBox="0 0 1672 941">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07101f"/>
+      <stop offset="0.55" stop-color="#0b1930"/>
+      <stop offset="1" stop-color="#050a14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="70%" cy="55%" r="55%">
+      <stop offset="0" stop-color="#29405c" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#07101f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3eadc"/>
+      <stop offset="0.42" stop-color="#c8b18e"/>
+      <stop offset="0.7" stop-color="#7e6d58"/>
+      <stop offset="1" stop-color="#eadbc1"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="0.45" stop-color="#d8dce4"/>
+      <stop offset="1" stop-color="#a79d91"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="16"/></filter>
+    <filter id="shadow"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#000" flood-opacity=".75"/></filter>
+  </defs>
+
+  <rect width="1672" height="941" fill="url(#bg)"/>
+  <rect width="1672" height="941" fill="url(#glow)"/>
+
+  <g opacity=".65" fill="#f0d7ad">
+    <circle cx="110" cy="118" r="2"/><circle cx="177" cy="164" r="2"/><circle cx="240" cy="84" r="1.5"/>
+    <circle cx="596" cy="114" r="2"/><circle cx="699" cy="191" r="1.5"/><circle cx="1184" cy="115" r="2"/>
+    <circle cx="1270" cy="174" r="1.5"/><circle cx="1392" cy="122" r="2"/><circle cx="1510" cy="191" r="1.5"/>
+    <circle cx="1150" cy="340" r="1.5"/><circle cx="714" cy="365" r="1.5"/><circle cx="602" cy="712" r="1.8"/>
+  </g>
+  <g stroke="#d9b985" stroke-width="2" opacity=".9">
+    <path d="M585 212 L635 183"/><circle cx="641" cy="180" r="3" fill="#f7e4be"/>
+    <path d="M1318 201 L1375 168"/><circle cx="1381" cy="165" r="3" fill="#f7e4be"/>
+  </g>
+
+  <path d="M76 327 C103 152 220 78 356 88 C254 118 188 202 171 317 C145 478 221 611 332 681 C184 635 77 510 76 327Z" fill="#8ea5bd" opacity=".23"/>
+  <path d="M1505 149 C1572 235 1575 353 1538 438 C1518 365 1483 315 1438 282 C1474 247 1494 201 1505 149Z" fill="#b8aa9a" opacity=".18"/>
+
+  <g opacity=".75" fill="#101a29">
+    <path d="M0 737 L105 649 L190 704 L282 624 L385 721 L489 648 L585 738 L0 820Z"/>
+    <path d="M963 757 L1052 699 L1112 721 L1185 659 L1260 706 L1325 642 L1395 694 L1478 631 L1672 744 L1672 850 L963 850Z"/>
+  </g>
+
+  <g transform="translate(1375 382)" fill="#111827" stroke="#b99e76" stroke-width="2" opacity=".96">
+    <path d="M-110 265 L-110 125 L-76 125 L-76 70 L-57 70 L-57 24 L-43 0 L-29 24 L-29 83 L-9 83 L-9 39 L4 15 L17 39 L17 97 L43 97 L43 57 L56 34 L69 57 L69 116 L98 116 L98 265Z"/>
+    <path d="M-145 265 L-145 174 L-118 174 L-118 265Z"/>
+    <path d="M98 265 L98 162 L125 162 L125 265Z"/>
+    <g fill="#d9b985" stroke="none" opacity=".65">
+      <rect x="-86" y="145" width="5" height="11"/><rect x="-52" y="112" width="5" height="11"/>
+      <rect x="-17" y="132" width="5" height="11"/><rect x="17" y="121" width="5" height="11"/>
+      <rect x="48" y="148" width="5" height="11"/><rect x="79" y="166" width="5" height="11"/>
+    </g>
+  </g>
+
+  <ellipse cx="842" cy="806" rx="570" ry="55" fill="#6d8298" opacity=".13" filter="url(#soft)"/>
+  <path d="M530 798 C735 730 915 752 1114 803 C938 776 785 780 610 824Z" fill="#b5c1cc" opacity=".16"/>
+
+  <rect x="26" y="43" width="1620" height="850" rx="24" fill="none" stroke="#a98c64" stroke-width="2.5"/>
+  <rect x="38" y="55" width="1596" height="826" rx="18" fill="none" stroke="#665942" stroke-width="1" opacity=".85"/>
+  <path d="M26 112 Q26 43 96 43 M1576 43 Q1646 43 1646 112 M26 824 Q26 893 96 893 M1576 893 Q1646 893 1646 824" fill="none" stroke="#d1b486" stroke-width="3"/>
+
+  <g transform="translate(390 454)">
+    <circle r="223" fill="#07111e" opacity=".92"/>
+    <circle r="216" fill="none" stroke="#73654f" stroke-width="2"/>
+    <circle r="209" fill="none" stroke="url(#metal)" stroke-width="5"/>
+    <circle r="198" fill="#101826" stroke="#171d28" stroke-width="2"/>
+    <g fill="url(#metal)" stroke="#ddc8a6" stroke-width="1.2">
+      <path d="M0 -251 L13 -220 L44 -207 L13 -194 L0 -163 L-13 -194 L-44 -207 L-13 -220Z"/>
+      <path d="M0 251 L13 220 L44 207 L13 194 L0 163 L-13 194 L-44 207 L-13 220Z"/>
+      <path d="M-251 0 L-220 -13 L-207 -44 L-194 -13 L-163 0 L-194 13 L-207 44 L-220 13Z"/>
+      <path d="M251 0 L220 -13 L207 -44 L194 -13 L163 0 L194 13 L207 44 L220 13Z"/>
+    </g>
+  </g>
+
+  <g text-anchor="middle" filter="url(#shadow)">
+    <g transform="translate(1034 158)">
+      <path d="M0 -39 L11 -12 L39 0 L11 12 L0 39 L-11 12 L-39 0 L-11 -12Z" fill="none" stroke="url(#metal)" stroke-width="5"/>
+      <path d="M0 -22 L7 -7 L22 0 L7 7 L0 22 L-7 7 L-22 0 L-7 -7Z" fill="#bac7d6"/>
+    </g>
+    <text x="1034" y="269" fill="#d9b985" font-family="Georgia, 'Times New Roman', serif" font-size="31" letter-spacing="12">WELCOME TO</text>
+    <line x1="745" y1="257" x2="848" y2="257" stroke="#b69a70" stroke-width="2"/>
+    <line x1="1220" y1="257" x2="1323" y2="257" stroke="#b69a70" stroke-width="2"/>
+    <text x="1034" y="425" fill="url(#silver)" font-family="Georgia, 'Times New Roman', serif" font-size="130" font-weight="600" letter-spacing="-4">NeverLess</text>
+    <text x="1034" y="486" fill="#c9a876" font-family="Georgia, 'Times New Roman', serif" font-size="37" letter-spacing="17">SERVER</text>
+    <line x1="800" y1="500" x2="967" y2="500" stroke="#a98c64" stroke-width="2"/>
+    <line x1="1100" y1="500" x2="1267" y2="500" stroke="#a98c64" stroke-width="2"/>
+    <path d="M1034 484 L1042 500 L1058 508 L1042 516 L1034 532 L1026 516 L1010 508 L1026 500Z" fill="#c9a876"/>
+  </g>
+
+  <g stroke="#9e835f" fill="none" opacity=".85">
+    <path d="M713 548 H1350" stroke-width="2"/>
+    <path d="M751 651 H1295" stroke-width="1.6"/>
+    <path d="M982 548 q18 0 25 -13 q7 13 25 13"/>
+    <path d="M972 651 q23 0 35 -17 q12 17 35 17"/>
+  </g>
+</svg>
