@@ -1,1 +1,0 @@
-// NeverLess welcome image renderer
