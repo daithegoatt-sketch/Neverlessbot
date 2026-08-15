@@ -6,6 +6,7 @@ const FILE = path.join(DATA_DIR, 'guilds.json');
 
 // NeverLess production defaults. These values intentionally live in code so a
 // Railway restart/redeploy does not require running the setup commands again.
+// They are applied last, so stale runtime data can never override them.
 const DEFAULT_GUILD_CONFIG = Object.freeze({
   welcomeChannelId: '1537605375229173844',
   ticketCategoryId: '1537951071811534930',
@@ -34,14 +35,13 @@ ensureLoaded();
 
 function getGuild(guildId) {
   return {
-    ...DEFAULT_GUILD_CONFIG,
     ...(state.guilds[guildId] || {}),
+    ...DEFAULT_GUILD_CONFIG,
   };
 }
 
 async function patchGuild(guildId, patch) {
   state.guilds[guildId] = {
-    ...DEFAULT_GUILD_CONFIG,
     ...(state.guilds[guildId] || {}),
     ...patch,
   };
