@@ -61,8 +61,6 @@ async function discoverCharacterUrl(name) {
   });
 
   if (!best) {
-    // Game8's all-builds index can lag behind a new release. Fall back to their
-    // own search page, but still require the character name in the anchor text.
     const searchHtml = await fetchHtml(SEARCH_URL(name));
     const $$ = cheerio.load(searchHtml);
     $$('a[href*="/games/Genshin-Impact/archives/"]').each((_, node) => {
@@ -80,13 +78,8 @@ async function discoverCharacterUrl(name) {
   return best.href;
 }
 
-function headingText(node, $) {
-  return normalize($(node).text());
-}
-
-function elementStream($) {
-  return $('h2,h3,h4,table').toArray();
-}
+function headingText(node, $) { return normalize($(node).text()); }
+function elementStream($) { return $('h2,h3,h4,table').toArray(); }
 
 function precedingHeadings(elements, index, $, limit = 4) {
   const result = [];
@@ -185,8 +178,7 @@ function parseTargetRows(rows) {
 }
 
 function tableContext(elements, index, $) {
-  const headings = precedingHeadings(elements, index, $, 5);
-  return headings.map((h) => h.text).join(' | ');
+  return precedingHeadings(elements, index, $, 5).map((h) => h.text).join(' | ');
 }
 
 function extractTeamsFromRows(rows, characterNames, mainName) {
@@ -194,8 +186,7 @@ function extractTeamsFromRows(rows, characterNames, mainName) {
   for (const row of rows) {
     const text = row.join(' | ');
     const names = orderedMatches(text, characterNames, 8);
-    const main = names.find((x) => normalize(x) === normalize(mainName));
-    if (!main) continue;
+    if (!names.some((x) => normalize(x) === normalize(mainName))) continue;
     const unique = [];
     for (const n of names) if (!unique.some((x) => normalize(x) === normalize(n))) unique.push(n);
     if (unique.length < 4) continue;
@@ -218,31 +209,22 @@ function dedupe(values) {
 async function parseGame8Guide(name, url, html) {
   const $ = cheerio.load(html);
   const title = normalize($('h1').first().text());
-  if (title && !title.includes(normalize(name))) {
-    throw new Error(`Game8 page mismatch for ${name}`);
-  }
+  if (title && !title.includes(normalize(name))) throw new Error(`Game8 page mismatch for ${name}`);
   const [characterNames, weaponNames, artifactNames] = await Promise.all([
-    getCharacterNames(),
-    getWeaponNames(),
-    getArtifactNames(),
+    getCharacterNames(), getWeaponNames(), getArtifactNames(),
   ]);
 
   const elements = elementStream($);
   const guide = {
-    name,
-    source: 'Game8',
-    url,
-    role: null,
+    name, source: 'Game8', url, role: null,
     stats: { main: [], priority: null, targets: [] },
-    weapons: [],
-    f2pWeapons: [],
-    artifacts: [],
-    teams: { premium: [], f2p: [] },
+    weapons: [], f2pWeapons: [], artifacts: [],
+    teams: { premium: [], f2p: [] }, combos: [],
   };
 
-  // Role from intro/tier copy, kept intentionally short.
   const bodyText = $('body').text().replace(/\s+/g, ' ');
-  const roleMatch = bodyText.match(new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^.]{0,120}(Main DPS|Sub-DPS|Support|DPS)[^.]{0,100}`, 'i'));
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const roleMatch = bodyText.match(new RegExp(`${escapedName}[^.]{0,120}(Main DPS|Sub-DPS|Support|DPS)[^.]{0,100}`, 'i'));
   if (roleMatch) guide.role = roleMatch[0].replace(/\s+/g, ' ').slice(0, 180);
 
   for (let i = 0; i < elements.length; i += 1) {
@@ -254,41 +236,36 @@ async function parseGame8Guide(name, url, html) {
     const tableText = rows.flat().join(' | ');
     const combined = `${context} | ${tableText}`;
 
-    const isBuildTable = /best builds|builds|best weapon|artifact main stats/i.test(combined);
-    if (isBuildTable) {
+    if (/best builds|builds|best weapon|artifact main stats/i.test(combined)) {
       if (!guide.stats.main.length) guide.stats.main = parseMainStats(tableText);
       if (!guide.stats.priority) guide.stats.priority = parseSubstats(tableText);
-      if (!guide.weapons.length && /best weapon|replacement weapons/i.test(tableText)) {
-        guide.weapons = orderedMatches(tableText, weaponNames, 8);
-      }
-      if (!guide.artifacts.length && /best artifacts/i.test(tableText)) {
-        guide.artifacts = orderedMatches(tableText, artifactNames, 5);
-      }
+      if (!guide.weapons.length && /best weapon|replacement weapons/i.test(tableText)) guide.weapons = orderedMatches(tableText, weaponNames, 8);
+      if (!guide.artifacts.length && /best artifacts/i.test(tableText)) guide.artifacts = orderedMatches(tableText, artifactNames, 5);
     }
 
     if (/goal stat values|goal value|recommended stats/i.test(combined)) {
       const targets = parseTargetRows(rows);
       if (targets.length > guide.stats.targets.length) guide.stats.targets = targets;
     }
-
-    if (/best artifacts|artifacts ranked|artifact bonuses/i.test(context)) {
-      guide.artifacts.push(...orderedMatches(tableText, artifactNames, 6));
-    }
-
+    if (/best artifacts|artifacts ranked|artifact bonuses/i.test(context)) guide.artifacts.push(...orderedMatches(tableText, artifactNames, 6));
     if (/best weapons|recommended weapons|weapon information|free.to.play weapon/i.test(context)) {
       const weapons = orderedMatches(tableText, weaponNames, 10);
       if (/free.to.play|f2p|free weapon/i.test(context)) guide.f2pWeapons.push(...weapons);
       else guide.weapons.push(...weapons);
     }
-
     if (/team comps|teams|team compositions/i.test(context)) {
       const teams = extractTeamsFromRows(rows, characterNames, name);
       if (/f2p|free.to.play|free team/i.test(context)) guide.teams.f2p.push(...teams);
       else guide.teams.premium.push(...teams);
     }
+    if (/combo|rotation|how to play/i.test(context)) {
+      for (const row of rows) {
+        const step = row.join(' → ').replace(/\s+/g, ' ').trim();
+        if (step.length >= 12 && step.length <= 240) guide.combos.push(step);
+      }
+    }
   }
 
-  // Section-text fallbacks for main stats/substats/weapons where Game8 wraps content outside tables.
   const allText = $('body').text().replace(/\r/g, '\n').replace(/[ \t]+/g, ' ');
   if (!guide.stats.main.length) guide.stats.main = parseMainStats(allText);
   if (!guide.stats.priority) guide.stats.priority = parseSubstats(allText);
@@ -298,8 +275,8 @@ async function parseGame8Guide(name, url, html) {
   guide.artifacts = dedupe(guide.artifacts).slice(0, 5);
   guide.teams.premium = dedupe(guide.teams.premium).slice(0, 10);
   guide.teams.f2p = dedupe(guide.teams.f2p).slice(0, 8);
+  guide.combos = dedupe(guide.combos).slice(0, 8);
 
-  // Do not expose a malformed live parse. A curated fallback is safer than bad numbers.
   const useful = guide.weapons.length || guide.artifacts.length || guide.stats.main.length || guide.teams.premium.length || guide.teams.f2p.length;
   if (!useful) throw new Error(`Game8 parser found no usable data for ${name}`);
   return guide;
@@ -307,13 +284,7 @@ async function parseGame8Guide(name, url, html) {
 
 async function fetchGame8Guide(name) {
   const url = await discoverCharacterUrl(name);
-  const html = await fetchHtml(url);
-  return parseGame8Guide(name, url, html);
+  return parseGame8Guide(name, url, await fetchHtml(url));
 }
 
-module.exports = {
-  fetchGame8Guide,
-  discoverCharacterUrl,
-  parseGame8Guide,
-  saneTarget,
-};
+module.exports = { fetchGame8Guide, discoverCharacterUrl, parseGame8Guide, saneTarget };
