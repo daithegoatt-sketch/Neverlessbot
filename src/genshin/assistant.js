@@ -1,30 +1,47 @@
 'use strict';
 
-const { EmbedBuilder } = require('discord.js');
-const { getGuideByText, normalize } = require('./guides');
+const { getGuideByText } = require('./guides');
+const { getGuide } = require('./guideClient');
 const { getCharacterNames, getCharacter, getCharacterStats } = require('./dataClient');
+const { getLinkedUid, linkUid, unlinkUid } = require('./accountStore');
+const { fetchAccount, findCharacter, getBuildSnapshot, listCharacters, accountSummary } = require('./enkaClient');
+const {
+  formatGuideAnswer,
+  formatTeams,
+  formatBaseData,
+  formatAccountAnalysis,
+  describeOpinion,
+  normalizeTeams,
+} = require('./responses');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
-const COOLDOWN_MS = 2500;
+const COOLDOWN_MS = 1800;
 const cooldowns = new Map();
+const sessions = new Map();
 
-const INTENTS = [
-  { id: 'team', words: ['team', 'teams', 'comp', 'comps', 'تيم', 'فريق', 'تشكيلة', 'تشكيله', 'تركيبة', 'تركيبه'] },
-  { id: 'weapon', words: ['weapon', 'weapons', 'sword', 'claymore', 'bow', 'catalyst', 'polearm', 'سلاح', 'اسلحة', 'أسلحة', 'سيف'] },
-  { id: 'artifact', words: ['artifact', 'artifacts', 'set', 'ارتفاكت', 'ارتي', 'قطع', 'طقم'] },
-  { id: 'stats', words: ['stats', 'stat', 'crit', 'cr', 'cd', 'atk', 'hp', 'er', 'em', 'احصائيات', 'إحصائيات', 'ستات', 'كريت', 'اتاك', 'طاقة', 'طاقه'] },
-  { id: 'talent', words: ['talent', 'talents', 'priority', 'موهبة', 'مواهب', 'تالنت', 'اولوية', 'أولوية'] },
-  { id: 'build', words: ['build', 'بيلد', 'بناء', 'ابني', 'أبني'] },
-  { id: 'info', words: ['info', 'character', 'عنصر', 'سلاحه', 'سلاحها', 'معلومات'] },
-];
+function sessionKey(message) {
+  return `${message.guildId}:${message.author.id}`;
+}
 
-function detectIntent(text) {
-  const n = normalize(text);
-  if (/^(help|مساعدة|مساعده|شلون استخدم|كيف استخدم)/u.test(n)) return 'help';
-  for (const intent of INTENTS) {
-    if (intent.words.some((word) => n.includes(normalize(word)))) return intent.id;
-  }
-  return 'build';
+function getSession(message) {
+  const key = sessionKey(message);
+  const existing = sessions.get(key);
+  if (existing && Date.now() - existing.updatedAt < 30 * 60 * 1000) return existing;
+  const fresh = { updatedAt: Date.now(), character: null, teams: [], excluded: [], language: 'ar' };
+  sessions.set(key, fresh);
+  return fresh;
+}
+
+function saveSession(message, patch) {
+  const next = { ...getSession(message), ...patch, updatedAt: Date.now() };
+  sessions.set(sessionKey(message), next);
+  return next;
+}
+
+function detectLanguage(text) {
+  const ar = (String(text || '').match(/[\u0600-\u06FF]/g) || []).length;
+  const latin = (String(text || '').match(/[A-Za-z]/g) || []).length;
+  return ar > 0 && ar >= latin * 0.35 ? 'ar' : 'en';
 }
 
 function phoneticSkeleton(input) {
@@ -35,21 +52,17 @@ function phoneticSkeleton(input) {
     ع: '', غ: 'gh', ف: 'f', ق: 'q', ك: 'k', ل: 'l', م: 'm', ن: 'n', ه: 'h', ة: 'h', و: 'w', ي: 'y', ى: 'a', ء: '', ئ: 'y', ؤ: 'w',
   };
   value = [...value].map((ch) => arabicMap[ch] ?? ch).join('');
-  value = value.replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g').replace(/th|dh/g, 't');
-  value = value.replace(/[^a-z0-9]/g, '');
-  value = value.replace(/[aeiouywh]/g, '');
-  value = value.replace(/(.)\1+/g, '$1');
-  return value;
+  return value
+    .replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g').replace(/th|dh/g, 't')
+    .replace(/[^a-z0-9]/g, '').replace(/[aeiouywh]/g, '').replace(/(.)\1+/g, '$1');
 }
 
 function levenshtein(a, b) {
-  const rows = b.length + 1;
-  const cols = a.length + 1;
-  const matrix = Array.from({ length: rows }, () => Array(cols).fill(0));
-  for (let i = 0; i < rows; i += 1) matrix[i][0] = i;
-  for (let j = 0; j < cols; j += 1) matrix[0][j] = j;
-  for (let i = 1; i < rows; i += 1) {
-    for (let j = 1; j < cols; j += 1) {
+  const matrix = Array.from({ length: b.length + 1 }, () => Array(a.length + 1).fill(0));
+  for (let i = 0; i <= b.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= a.length; j += 1) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i += 1) {
+    for (let j = 1; j <= a.length; j += 1) {
       const cost = b[i - 1] === a[j - 1] ? 0 : 1;
       matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
     }
@@ -57,202 +70,285 @@ function levenshtein(a, b) {
   return matrix[b.length][a.length];
 }
 
-function extractLatinCandidate(text, names) {
-  const lower = String(text || '').toLowerCase();
-  const sorted = [...names].sort((a, b) => b.length - a.length);
-  return sorted.find((name) => lower.includes(name.toLowerCase())) || null;
-}
-
-function extractArabicTokens(text) {
-  return String(text || '').match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,})?/g) || [];
-}
-
 async function resolveCharacter(text) {
   const curated = getGuideByText(text);
-  if (curated) return { name: curated.name, guide: curated, source: 'curated' };
+  if (curated) return curated.name;
 
   let names = [];
-  try {
-    names = await getCharacterNames();
-  } catch (error) {
-    console.warn('[genshin] Could not fetch character names:', error.message);
-  }
+  try { names = await getCharacterNames(); } catch { return null; }
 
-  const direct = extractLatinCandidate(text, names);
-  if (direct) return { name: direct, guide: getGuideByText(direct), source: 'game-data' };
+  const lower = String(text || '').toLowerCase();
+  const direct = [...names].sort((a, b) => b.length - a.length).find((name) => lower.includes(name.toLowerCase()));
+  if (direct) return direct;
 
-  const arabicTokens = extractArabicTokens(text);
+  const tokens = String(text || '').match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,})?/g) || [];
   let best = null;
-  for (const token of arabicTokens) {
-    const tokenSkeleton = phoneticSkeleton(token);
-    if (tokenSkeleton.length < 2) continue;
+  for (const token of tokens) {
+    const left = phoneticSkeleton(token);
+    if (left.length < 2) continue;
     for (const name of names) {
-      const nameSkeleton = phoneticSkeleton(name);
-      if (nameSkeleton.length < 2) continue;
-      const distance = levenshtein(tokenSkeleton, nameSkeleton);
-      const maxLen = Math.max(tokenSkeleton.length, nameSkeleton.length);
-      const score = 1 - (distance / maxLen);
-      if (score >= 0.58 && (!best || score > best.score)) best = { name, score };
+      const right = phoneticSkeleton(name);
+      if (right.length < 2) continue;
+      const score = 1 - levenshtein(left, right) / Math.max(left.length, right.length);
+      if (score >= 0.62 && (!best || score > best.score)) best = { name, score };
     }
   }
-
-  if (best) return { name: best.name, guide: getGuideByText(best.name), source: 'phonetic' };
-  return null;
+  return best?.name || null;
 }
 
-function sourceLines(guide) {
-  if (!guide?.sources?.length) return 'لا يوجد مصدر توصيات موثّق مضاف لهذه الشخصية حاليًا.';
-  return guide.sources.map((source) => `[${source.name}](${source.url})`).join(' • ');
-}
+async function extractMentionedCharacters(text) {
+  let names = [];
+  try { names = await getCharacterNames(); } catch { return []; }
 
-function statusLabel(guide) {
-  if (!guide) return '⚪ بيانات لعبة فقط';
-  return guide.status === 'verified' ? '🟢 موثّق من مصدر Theorycrafting' : '🟡 مبدئي — يحتاج تحديث ما بعد الإصدار';
-}
-
-function guideEmbed(guide, intent) {
-  const embed = new EmbedBuilder()
-    .setColor(guide.status === 'verified' ? 0x4caf50 : 0xe0a800)
-    .setTitle(`${guide.name} — ${intent.toUpperCase()}`)
-    .setDescription(`${statusLabel(guide)}\n${guide.role || ''}`)
-    .setFooter({ text: 'Neverless Genshin • Source-backed only — no guessed values' });
-
-  if (intent === 'team') {
-    embed.addFields({ name: 'فرق منشورة', value: guide.teams?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا توجد فرق موثقة بعد.' });
-  } else if (intent === 'weapon') {
-    embed.addFields({ name: 'الأسلحة', value: guide.weapons?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا يوجد ترتيب موثّق مضاف بعد.' });
-  } else if (intent === 'artifact') {
-    embed.addFields(
-      { name: 'Main Stats', value: guide.stats?.main?.map((v) => `• ${v}`).join('\n') || 'غير متوفر' },
-      { name: 'Artifact Sets', value: guide.artifacts?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-    );
-  } else if (intent === 'stats') {
-    embed.addFields(
-      { name: 'Main Stats', value: guide.stats?.main?.map((v) => `• ${v}`).join('\n') || 'غير متوفر' },
-      { name: 'الأولوية', value: guide.stats?.priority || 'غير متوفر' },
-      { name: 'Targets / ER', value: guide.stats?.targets?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا توجد أرقام موثقة مضافة.' },
-    );
-    if (guide.stats?.note) embed.addFields({ name: 'ملاحظة', value: guide.stats.note.slice(0, 1024) });
-  } else if (intent === 'talent') {
-    embed.addFields({ name: 'Talent Priority', value: guide.talentPriority || 'غير متوفر' });
-  } else {
-    embed.addFields(
-      { name: 'Stats', value: `${guide.stats?.priority || 'غير متوفر'}\n${guide.stats?.main?.join(' • ') || ''}`.slice(0, 1024) },
-      { name: 'Weapons', value: guide.weapons?.slice(0, 3).map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-      { name: 'Teams', value: guide.teams?.slice(0, 4).map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-    );
+  const lower = String(text || '').toLowerCase();
+  const found = [];
+  for (const name of [...names].sort((a, b) => b.length - a.length)) {
+    if (lower.includes(name.toLowerCase()) && !found.some((x) => x.toLowerCase() === name.toLowerCase())) found.push(name);
   }
 
-  embed.addFields({ name: 'المصدر', value: sourceLines(guide).slice(0, 1024) });
-  if (guide.statusNote) embed.addFields({ name: 'حالة البيانات', value: guide.statusNote.slice(0, 1024) });
-  return embed;
-}
-
-function number(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 1 }) : null;
-}
-
-async function gameDataEmbed(name, intent) {
-  const character = await getCharacter(name).catch(() => null);
-  if (!character) return null;
-
-  const embed = new EmbedBuilder()
-    .setColor(0x6f83d6)
-    .setTitle(`${character.name || name} — بيانات اللعبة`)
-    .setFooter({ text: 'Data: genshin-db API • factual game data, not build advice' });
-
-  const element = character.elementText || character.element || character.elementtype || 'Unknown';
-  const weapon = character.weaponText || character.weapontype || character.weaponType || 'Unknown';
-  embed.setDescription(`${character.rarity ? '★'.repeat(Math.min(5, Number(character.rarity))) : ''} ${element} • ${weapon}`);
-
-  if (intent === 'stats' || intent === 'info') {
-    const stats = await getCharacterStats(character.name || name, '90').catch(() => null);
-    const fields = [];
-    if (stats) {
-      const hp = number(stats.hp || stats.basehp);
-      const atk = number(stats.attack || stats.atk || stats.baseatk);
-      const def = number(stats.defense || stats.def || stats.basedef);
-      if (hp) fields.push(`Base HP: ${hp}`);
-      if (atk) fields.push(`Base ATK: ${atk}`);
-      if (def) fields.push(`Base DEF: ${def}`);
+  const tokens = String(text || '').match(/[\u0600-\u06FF]{3,}/g) || [];
+  for (const token of tokens) {
+    const left = phoneticSkeleton(token);
+    if (left.length < 3) continue;
+    let best = null;
+    for (const name of names) {
+      const right = phoneticSkeleton(name);
+      const score = 1 - levenshtein(left, right) / Math.max(left.length, right.length);
+      if (score >= 0.72 && (!best || score > best.score)) best = { name, score };
     }
-    if (fields.length) embed.addFields({ name: 'Level 90 Base Stats', value: fields.join('\n') });
+    if (best && !found.some((x) => x.toLowerCase() === best.name.toLowerCase())) found.push(best.name);
   }
-
-  if (character.description) embed.addFields({ name: 'الوصف', value: String(character.description).slice(0, 1024) });
-  embed.addFields({ name: 'تنبيه', value: 'هذه Base/Game Stats وليست أهداف Build. أرقام البيلد لا تُعرض إلا عندما تكون موجودة في مصدر Theorycrafting موثّق.' });
-  return embed;
+  return found;
 }
 
-function helpEmbed() {
-  return new EmbedBuilder()
-    .setColor(0x6f83d6)
-    .setTitle('Neverless Genshin')
-    .setDescription('اسأل بشكل طبيعي داخل هذا الروم فقط. البوت لا يستخدم AI مدفوع ولا يخمّن بيانات غير موجودة.')
-    .addFields(
-      { name: 'أمثلة', value: '• احتاج تيم لأوديت\n• شنو ستات ساندروني؟\n• افضل سلاح لياي ميكو\n• ارتفاكت Furina\n• معلومات عن Hu Tao' },
-      { name: 'مصادر البيانات', value: 'بيانات اللعبة: genshin-db API\nالتوصيات: بيانات منظمة من KQM / مصادر Theorycrafting محددة، مع رابط المصدر وحالة التحديث.' },
-      { name: 'قاعدة الأمان', value: 'إذا المصدر غير موجود أو قديم، البوت يقول ذلك صراحة بدل اختراع Team أو أرقام.' },
-    );
+function detectIntent(text) {
+  if (/\b(?:unlink|remove uid)\b/i.test(text) || /فك الربط|الغاء الربط|إلغاء الربط/u.test(text)) return 'unlink';
+  if ((/\b(?:link|connect)\b/i.test(text) && /\buid\b/i.test(text)) || /ربط\s*(?:ال)?uid|اربط\s*(?:ال)?uid/u.test(text)) return 'link';
+  if (/شخصياتي|شخصيات حسابي|my characters|my showcase/i.test(text)) return 'characters';
+  if (/base\s*stats?|بيانات\s|بيانات$|الاحصائيات الاساسية|الإحصائيات الأساسية/u.test(text)) return 'base';
+  if (/\bteam\b|\bteams\b|\bcomp\b|تيم|فريق|تشكيل|تركيب/u.test(text)) return 'team';
+  if (/بحسابي|من حسابي|my account|analy[sz]e|حلل|قيّم|قيم/u.test(text)) return 'accountBuild';
+  if (/ما عندي|ما املك|ما أملك|بدون|dont have|don't have|without/i.test(text)) return 'followupMissing';
+  if (/عندي|املك|أملك|i have/i.test(text)) return 'followupOwned';
+  if (/رأيك|رايك|what do you think|is .* good/i.test(text)) return 'opinion';
+  if (/بيلد|\bbuild\b/i.test(text)) return 'build';
+  if (/ارتيفاكت|ارتيفكت|ارتي|artifact|artifacts|طقم/i.test(text)) return 'artifacts';
+  if (/weapon|weapons|سلاح|اسلحة|أسلحة/i.test(text)) return 'weapons';
+  if (/\bstats?\b|ستات|احصائيات|إحصائيات|crit|كريت|\ber\b|energy recharge|\bem\b|elemental mastery|\batk\b|attack|\bhp\b/i.test(text)) return 'stats';
+  if (/مساعدة|مساعده|help/i.test(text)) return 'help';
+  return 'unknown';
+}
+
+async function replyPlain(message, text) {
+  const parts = [];
+  let current = '';
+  for (const line of String(text).split('\n')) {
+    if ((current + '\n' + line).length > 1850) {
+      if (current) parts.push(current);
+      current = line;
+    } else {
+      current = current ? `${current}\n${line}` : line;
+    }
+  }
+  if (current) parts.push(current);
+  if (!parts.length) return;
+
+  await message.reply({ content: parts[0], allowedMentions: { repliedUser: true } });
+  for (const part of parts.slice(1)) await message.channel.send({ content: part });
+}
+
+async function linkedAccount(message, lang) {
+  const uid = getLinkedUid(message.author.id);
+  if (!uid) {
+    await replyPlain(message, lang === 'ar'
+      ? 'ما ربطت UID بعد. اكتب داخل هذا الروم: `ربط UID 7xxxxxxxx`'
+      : 'No UID is linked yet. In this channel, type: `link UID 7xxxxxxxx`');
+    return null;
+  }
+
+  try {
+    return await fetchAccount(uid);
+  } catch (error) {
+    console.error('[genshin] Enka fetch failed:', error.message);
+    await replyPlain(message, lang === 'ar'
+      ? 'ما قدرت أوصل لبيانات Enka الآن. تأكد من الـUID وأن الـCharacter Showcase ظاهر ثم جرّب مرة ثانية.'
+      : 'I could not reach Enka data right now. Check the UID and make sure the Character Showcase is visible, then try again.');
+    return null;
+  }
+}
+
+async function handleLink(message, lang, text) {
+  const uid = text.match(/\b\d{9,10}\b/)?.[0];
+  if (!uid) {
+    await replyPlain(message, lang === 'ar' ? 'اكتبها بهذا الشكل: `ربط UID 712345678`' : 'Use: `link UID 712345678`');
+    return;
+  }
+
+  try {
+    const account = await fetchAccount(uid);
+    const summary = accountSummary(account);
+    await linkUid(message.author.id, uid);
+    await replyPlain(message, lang === 'ar'
+      ? `تم ربط **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) بالـUID **${uid}**.\nEnka شايف حاليًا **${summary.characters.length}** شخصية من الـCharacter Showcase.${summary.showCharacterDetails ? '' : '\nفعّل Show Character Details داخل اللعبة عشان أقدر أقرأ البيلد.'}\nجرّب: \`شخصياتي\` أو \`حلل Skirk بحسابي\`.`
+      : `Linked **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) to UID **${uid}**.\nEnka currently sees **${summary.characters.length}** Character Showcase entries.${summary.showCharacterDetails ? '' : '\nEnable Show Character Details in-game so I can read builds.'}\nTry: \`my characters\` or \`analyze Skirk on my account\`.`);
+  } catch (error) {
+    console.error('[genshin] UID link failed:', error.message);
+    await replyPlain(message, lang === 'ar'
+      ? 'ما قدرت أقرأ هذا الـUID. تأكد من الرقم، وخلي الـCharacter Showcase ظاهر في بروفايل Genshin.'
+      : 'I could not read that UID. Check the number and make your Genshin Character Showcase visible.');
+  }
 }
 
 async function handleGenshinMessage(message) {
-  if (!message?.guildId || message.author?.bot) return false;
-  if (message.channelId !== CHANNEL_ID) return false;
-
+  if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return false;
   const text = String(message.content || '').trim();
   if (!text) return false;
-  if (text.length > 600) {
-    await message.reply('السؤال طويل جدًا. اختصره إلى أقل من 600 حرف.');
-    return true;
-  }
+  const lang = detectLanguage(text);
 
   const now = Date.now();
   const last = cooldowns.get(message.author.id) || 0;
   if (now - last < COOLDOWN_MS) return true;
   cooldowns.set(message.author.id, now);
-  setTimeout(() => cooldowns.delete(message.author.id), COOLDOWN_MS + 1000).unref?.();
+  setTimeout(() => cooldowns.delete(message.author.id), COOLDOWN_MS + 500).unref?.();
 
   const intent = detectIntent(text);
+
   if (intent === 'help') {
-    await message.reply({ embeds: [helpEmbed()] });
+    await replyPlain(message, lang === 'ar'
+      ? '**Neverless Genshin**\n`بيلد Skirk` = البيلد كامل\n`ارتيفاكت Skirk` = الآرتيفاكت وتقسيم القطع\n`سلاح Skirk` = الأسلحة فقط\n`إحصائيات Skirk` = الستات المطلوبة\n`بيانات Skirk` أو `Skirk base stats` = Base Stats\n`تيم Skirk` = التيمات المنشورة\n`ربط UID 7xxxxxxxx` = ربط حسابك\n`حلل Skirk بحسابي` = تحليل بيلدك الفعلي'
+      : '**Neverless Genshin**\n`Skirk build` = full build\n`Skirk artifacts` = artifacts + main stats\n`Skirk weapon` = weapons only\n`Skirk stats` = recommended target stats\n`Skirk base stats` = base game stats\n`Skirk team` = published teams\n`link UID 7xxxxxxxx` = link your account\n`analyze Skirk on my account` = analyze your real build');
     return true;
   }
 
-  await message.channel.sendTyping().catch(() => {});
-  const resolved = await resolveCharacter(text);
-  if (!resolved) {
-    await message.reply('ما قدرت أحدد الشخصية بثقة. اكتب اسم الشخصية الرسمي بالإنجليزي داخل السؤال، مثال: `Odette` أو `Yae Miko`.');
+  if (intent === 'unlink') {
+    await unlinkUid(message.author.id);
+    await replyPlain(message, lang === 'ar' ? 'تم فك ربط الـUID.' : 'UID unlinked.');
     return true;
   }
 
-  if (['team', 'weapon', 'artifact', 'build', 'talent'].includes(intent)) {
-    if (!resolved.guide) {
-      await message.reply(`عرفت الشخصية: **${resolved.name}**، لكن ما عندي لها توصية Build موثقة ومنظمة في قاعدة Neverless حاليًا. ما راح أركب لك Team أو أرقام من عندي. أقدر فقط أعرض بيانات اللعبة الأساسية إلى أن نضيف مصدر Theorycrafting موثوق.`);
+  if (intent === 'link') {
+    await handleLink(message, lang, text);
+    return true;
+  }
+
+  if (intent === 'characters') {
+    const account = await linkedAccount(message, lang);
+    if (!account) return true;
+    const chars = listCharacters(account);
+    const content = chars.length
+      ? chars.map((item) => `${item.name} Lv.${item.level} C${item.constellation}`).join(' • ')
+      : (lang === 'ar' ? 'ما في شخصيات بتفاصيلها ظاهرة لـEnka حاليًا.' : 'No detailed Showcase characters are visible to Enka right now.');
+    await replyPlain(message, `${lang === 'ar' ? '**الشخصيات الظاهرة عند Enka:**' : '**Characters visible to Enka:**'}\n${content}`);
+    return true;
+  }
+
+  const session = getSession(message);
+
+  if (intent === 'followupMissing' && session.character && session.teams.length) {
+    const mentioned = await extractMentionedCharacters(text);
+    const excluded = [...new Set([...(session.excluded || []), ...mentioned])];
+    const guide = await getGuide(session.character);
+    saveSession(message, { excluded, language: lang });
+    if (guide) await replyPlain(message, formatTeams(guide, lang, [], excluded));
+    return true;
+  }
+
+  if (intent === 'followupOwned' && session.character && session.teams.length) {
+    const owned = await extractMentionedCharacters(text);
+    const guide = await getGuide(session.character);
+    if (guide) await replyPlain(message, formatTeams(guide, lang, owned, session.excluded || []));
+    return true;
+  }
+
+  const characterName = await resolveCharacter(text) || session.character;
+  if (!characterName) {
+    await replyPlain(message, lang === 'ar'
+      ? 'حدد اسم الشخصية في السؤال، مثال: `بيلد Skirk` أو `تيم Escoffier`.'
+      : 'Include the character name, for example: `Skirk build` or `Escoffier team`.');
+    return true;
+  }
+  saveSession(message, { character: characterName, language: lang });
+
+  if (intent === 'base') {
+    const [character, stats] = await Promise.all([
+      getCharacter(characterName).catch(() => null),
+      getCharacterStats(characterName, '90').catch(() => null),
+    ]);
+    if (!character) await replyPlain(message, lang === 'ar' ? `ما لقيت بيانات اللعبة لـ **${characterName}**.` : `No game data found for **${characterName}**.`);
+    else await replyPlain(message, formatBaseData(character, stats, lang));
+    return true;
+  }
+
+  if (intent === 'team') {
+    const guide = await getGuide(characterName);
+    if (!guide) {
+      await replyPlain(message, lang === 'ar' ? `ما قدرت أستخرج تيمات موثوقة لـ **${characterName}** حاليًا.` : `I couldn't retrieve reliable teams for **${characterName}** right now.`);
       return true;
     }
-    await message.reply({ embeds: [guideEmbed(resolved.guide, intent)] });
+
+    let owned = [];
+    let excluded = [];
+    if (/من حسابي|بحسابي|my account/i.test(text)) {
+      const account = await linkedAccount(message, lang);
+      if (!account) return true;
+      owned = listCharacters(account).map((item) => item.name);
+    } else {
+      const mentioned = await extractMentionedCharacters(text);
+      const others = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
+      if (/بدون|ما عندي|ما املك|ما أملك|without|don't have|dont have/i.test(text)) excluded = others;
+      else if (others.length) owned = [characterName, ...others];
+    }
+
+    const teams = normalizeTeams(guide.teams);
+    saveSession(message, { character: characterName, teams, excluded, language: lang });
+    await replyPlain(message, formatTeams(guide, lang, owned, excluded));
     return true;
   }
 
-  if (intent === 'stats' && resolved.guide) {
-    await message.reply({ embeds: [guideEmbed(resolved.guide, 'stats')] });
+  if (intent === 'accountBuild') {
+    const account = await linkedAccount(message, lang);
+    if (!account) return true;
+    const character = findCharacter(account, characterName);
+    if (!character) {
+      await replyPlain(message, lang === 'ar'
+        ? `**${characterName}** مو ظاهرة عند Enka. حطها في Character Showcase داخل Genshin وفعّل **Show Character Details**، وبعدها أرسل نفس السؤال.`
+        : `**${characterName}** is not visible to Enka. Put them in your Genshin Character Showcase and enable **Show Character Details**, then ask again.`);
+      return true;
+    }
+
+    const guide = await getGuide(characterName);
+    if (!guide) {
+      await replyPlain(message, lang === 'ar'
+        ? `أقدر أقرأ بيلد **${characterName}** من حسابك، لكن ما عندي Guide موثوق أقارنه فيه حاليًا.`
+        : `I can read your **${characterName}** build, but I do not currently have a reliable guide to compare it against.`);
+      return true;
+    }
+    await replyPlain(message, formatAccountAnalysis(getBuildSnapshot(character), guide, lang));
     return true;
   }
 
-  const factual = await gameDataEmbed(resolved.name, intent);
-  if (factual) {
-    await message.reply({ embeds: [factual] });
+  const guide = await getGuide(characterName);
+  if (!guide) {
+    await replyPlain(message, lang === 'ar'
+      ? `ما قدرت أستخرج Guide موثوق لـ **${characterName}** حاليًا. ما راح أحول سؤالك إلى Base Stats ولا أخمّن.`
+      : `I couldn't retrieve a reliable guide for **${characterName}** right now. I won't replace your request with base stats or guess.`);
     return true;
   }
 
-  if (resolved.guide) {
-    await message.reply({ embeds: [guideEmbed(resolved.guide, 'build')] });
+  if (intent === 'opinion') {
+    await replyPlain(message, describeOpinion(guide, lang));
     return true;
   }
 
-  await message.reply(`لقيت اسم **${resolved.name}** لكن مصدر بيانات اللعبة الخارجي ما رجّع تفاصيل لها حاليًا. ما راح أخمّن.`);
+  const guideIntent = ['artifacts', 'weapons', 'stats', 'build'].includes(intent) ? intent : 'build';
+  await replyPlain(message, formatGuideAnswer(guide, lang, guideIntent, text));
   return true;
 }
 
-module.exports = { CHANNEL_ID, handleGenshinMessage, resolveCharacter, detectIntent, phoneticSkeleton };
+module.exports = {
+  CHANNEL_ID,
+  handleGenshinMessage,
+  resolveCharacter,
+  detectIntent,
+  detectLanguage,
+};

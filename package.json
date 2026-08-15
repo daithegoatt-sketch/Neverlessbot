@@ -6,13 +6,14 @@
   "type": "commonjs",
   "scripts": {
     "start": "node prepare.js && node -r ./src/genshin/preload.js index.js",
-    "check": "node --check prepare.js && node --check index.js && node --check src/commands.js && node --check src/store.js && node --check src/tickets.js && node --check src/genshin/preload.js && node --check src/genshin/assistant.js && node --check src/genshin/dataClient.js && node --check src/genshin/guides.js"
+    "check": "node --check prepare.js && node --check index.js && node --check src/commands.js && node --check src/store.js && node --check src/tickets.js && node --check src/genshin/preload.js && node --check src/genshin/assistant.js && node --check src/genshin/dataClient.js && node --check src/genshin/guides.js && node --check src/genshin/guideClient.js && node --check src/genshin/accountStore.js && node --check src/genshin/enkaClient.js && node --check src/genshin/responses.js"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.3",
-    "discord.js": "^14.26.4"
+    "discord.js": "^14.26.4",
+    "enka-network-api": "^5.0.16"
   }
 }
