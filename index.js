@@ -9,12 +9,11 @@ const {
   Client,
   EmbedBuilder,
   GatewayIntentBits,
-  LabelBuilder,
-  ModalBuilder,
   OverwriteType,
   PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle,
+  ModalBuilder,
 } = require('discord.js');
 
 const { commands } = require('./src/commands');
@@ -37,11 +36,19 @@ const client = new Client({
   ],
 });
 
-const inviteCache = new Map();
 const WELCOME_WIDTH = 1672;
 const WELCOME_HEIGHT = 941;
 const WELCOME_TEMPLATE = path.join(process.cwd(), 'assets', 'welcome-template.jpg');
+const AUTO_ROLE_NAME = 'Neverless';
+
 let welcomeTemplatePromise;
+const inviteCache = new Map();
+const inviteQueues = new Map();
+const recentlyDeletedInvites = new Map();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function welcomeTemplate() {
   if (!welcomeTemplatePromise) welcomeTemplatePromise = loadImage(WELCOME_TEMPLATE);
@@ -68,16 +75,28 @@ async function buildWelcomeCard(member) {
   if (!['cdn.discordapp.com', 'media.discordapp.net'].includes(parsedAvatar.hostname)) {
     throw new Error('Unexpected Discord avatar host');
   }
+
   const avatar = await loadImage(avatarUrl);
   const cx = 390;
   const cy = 454;
   const radius = 188;
+
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.clip();
   const side = Math.min(avatar.width, avatar.height);
-  ctx.drawImage(avatar, (avatar.width - side) / 2, (avatar.height - side) / 2, side, side, cx - radius, cy - radius, radius * 2, radius * 2);
+  ctx.drawImage(
+    avatar,
+    (avatar.width - side) / 2,
+    (avatar.height - side) / 2,
+    side,
+    side,
+    cx - radius,
+    cy - radius,
+    radius * 2,
+    radius * 2,
+  );
   ctx.restore();
 
   const name = member.displayName || member.user.globalName || member.user.username;
@@ -96,40 +115,236 @@ async function buildWelcomeCard(member) {
   ctx.fillStyle = '#d9b985';
   ctx.shadowBlur = 5;
   ctx.fillText(`MEMBER #${number}`, 1565, 810);
+
   return canvas.toBuffer('image/png');
 }
 
 function canManageGuild(interaction) {
-  return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+  return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+    || interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+}
+
+function snapshotInvite(invite) {
+  return {
+    code: invite.code,
+    uses: invite.uses ?? 0,
+    inviterId: invite.inviter?.id || null,
+    maxUses: invite.maxUses ?? 0,
+    channelId: invite.channelId || invite.channel?.id || null,
+  };
+}
+
+function snapshotInviteCollection(invites) {
+  return new Map([...invites.values()].map((invite) => [invite.code, snapshotInvite(invite)]));
 }
 
 async function cacheGuildInvites(guild) {
   try {
     const invites = await guild.invites.fetch();
-    inviteCache.set(guild.id, new Map(invites.map((invite) => [invite.code, invite.uses ?? 0])));
+    inviteCache.set(guild.id, snapshotInviteCollection(invites));
+    return invites;
   } catch (error) {
     console.warn(`[invites] Cannot fetch invites for ${guild.name}: ${error.message}`);
+    return null;
   }
 }
 
-async function resolveInviter(member) {
-  try {
-    const before = inviteCache.get(member.guild.id) || new Map();
-    const current = await member.guild.invites.fetch();
-    let usedInvite = null;
-    for (const invite of current.values()) {
-      const oldUses = before.get(invite.code) ?? 0;
-      if ((invite.uses ?? 0) > oldUses) {
-        usedInvite = invite;
-        break;
-      }
+function detectUsedInvite(before, currentInvites, deletedCandidates = []) {
+  let best = null;
+
+  for (const invite of currentInvites.values()) {
+    const previous = before.get(invite.code);
+    const oldUses = previous?.uses ?? 0;
+    const newUses = invite.uses ?? 0;
+    const delta = newUses - oldUses;
+
+    if (delta > 0 && (!best || delta > best.delta)) {
+      best = {
+        code: invite.code,
+        inviterId: invite.inviter?.id || previous?.inviterId || null,
+        usesAfter: newUses,
+        delta,
+        disappeared: false,
+      };
     }
-    inviteCache.set(member.guild.id, new Map(current.map((invite) => [invite.code, invite.uses ?? 0])));
-    return usedInvite?.inviter || null;
-  } catch (error) {
-    console.warn(`[invites] Failed to resolve inviter for ${member.user.tag}: ${error.message}`);
-    return null;
   }
+
+  if (best) return best;
+
+  const now = Date.now();
+  for (const item of deletedCandidates) {
+    if (now - item.deletedAt > 15_000) continue;
+    const previous = item.snapshot;
+    if (!previous?.inviterId || !previous.maxUses) continue;
+
+    if (previous.uses + 1 >= previous.maxUses) {
+      return {
+        code: previous.code,
+        inviterId: previous.inviterId,
+        usesAfter: Math.max(previous.maxUses, previous.uses + 1),
+        delta: 1,
+        disappeared: true,
+      };
+    }
+  }
+
+  for (const previous of before.values()) {
+    if (currentInvites.has(previous.code)) continue;
+    if (!previous.inviterId || !previous.maxUses) continue;
+    if (previous.uses + 1 >= previous.maxUses) {
+      return {
+        code: previous.code,
+        inviterId: previous.inviterId,
+        usesAfter: Math.max(previous.maxUses, previous.uses + 1),
+        delta: 1,
+        disappeared: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+function totalInviteUsesFor(currentInvites, inviterId, usedInvite) {
+  let total = 0;
+  for (const invite of currentInvites.values()) {
+    if (invite.inviter?.id === inviterId) total += invite.uses ?? 0;
+  }
+
+  if (usedInvite?.disappeared && usedInvite.inviterId === inviterId) {
+    total += usedInvite.usesAfter;
+  }
+
+  return total;
+}
+
+async function resolveInviterUnlocked(member) {
+  const guild = member.guild;
+  const before = inviteCache.get(guild.id) || new Map();
+  const deleted = recentlyDeletedInvites.get(guild.id) || [];
+  let currentInvites = null;
+  let usedInvite = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      currentInvites = await guild.invites.fetch();
+      usedInvite = detectUsedInvite(before, currentInvites, deleted);
+      if (usedInvite) break;
+    } catch (error) {
+      console.warn(`[invites] Fetch attempt ${attempt + 1} failed in ${guild.name}: ${error.message}`);
+      break;
+    }
+
+    if (attempt < 3) await sleep(700);
+  }
+
+  if (!currentInvites) {
+    return { user: null, count: null, code: null };
+  }
+
+  inviteCache.set(guild.id, snapshotInviteCollection(currentInvites));
+  recentlyDeletedInvites.set(
+    guild.id,
+    deleted.filter((item) => Date.now() - item.deletedAt <= 15_000),
+  );
+
+  if (!usedInvite?.inviterId) {
+    console.warn(`[invites] Could not identify inviter for ${member.user.tag}. This can happen with vanity URLs or missing Manage Guild access.`);
+    return { user: null, count: null, code: null };
+  }
+
+  const user = await client.users.fetch(usedInvite.inviterId).catch(() => null);
+  const count = totalInviteUsesFor(currentInvites, usedInvite.inviterId, usedInvite);
+  return { user, count, code: usedInvite.code };
+}
+
+function resolveInviter(member) {
+  const guildId = member.guild.id;
+  const previous = inviteQueues.get(guildId) || Promise.resolve();
+  const task = previous
+    .catch(() => {})
+    .then(() => resolveInviterUnlocked(member));
+
+  const queued = task.finally(() => {
+    if (inviteQueues.get(guildId) === queued) inviteQueues.delete(guildId);
+  });
+  inviteQueues.set(guildId, queued);
+
+  return task;
+}
+
+async function assignAutoRole(member) {
+  if (member.user.bot) return;
+
+  try {
+    const role = member.guild.roles.cache.find((item) => item.name === AUTO_ROLE_NAME);
+    if (!role) {
+      console.warn(`[autorole] Role "${AUTO_ROLE_NAME}" was not found in ${member.guild.name}.`);
+      return;
+    }
+    if (!member.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)) {
+      console.warn(`[autorole] Missing Manage Roles permission in ${member.guild.name}.`);
+      return;
+    }
+    if (!role.editable) {
+      console.warn(`[autorole] Bot role must be above "${AUTO_ROLE_NAME}".`);
+      return;
+    }
+    if (!member.roles.cache.has(role.id)) {
+      await member.roles.add(role, 'NeverLess automatic member role');
+    }
+  } catch (error) {
+    console.error(`[autorole] Failed for ${member.user.tag}:`, error);
+  }
+}
+
+async function findExistingTicketPanel(channel) {
+  let before;
+  let scanned = 0;
+
+  while (scanned < 300) {
+    const batch = await channel.messages.fetch({ limit: 100, before }).catch(() => null);
+    if (!batch?.size) return null;
+
+    for (const message of batch.values()) {
+      if (message.author.id !== client.user.id) continue;
+      const hasTicketMenu = message.components.some((row) => row.components.some((component) => component.customId === 'ticket:create'));
+      if (hasTicketMenu) return message;
+    }
+
+    scanned += batch.size;
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+
+  return null;
+}
+
+async function ensureTicketPanel(guild) {
+  const config = getGuild(guild.id);
+  const channel = guild.channels.cache.get(config.ticketPanelChannelId);
+  if (!channel?.isSendable()) {
+    console.warn(`[tickets] Ticket channel ${config.ticketPanelChannelId} was not found or is not sendable.`);
+    return;
+  }
+
+  const existing = await findExistingTicketPanel(channel);
+  if (existing) {
+    await patchGuild(guild.id, { ticketPanelMessageId: existing.id });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x15233a)
+    .setTitle('أهلاً بك في قسم التذاكر')
+    .setDescription('• افتح تذكرتك\n\nاختر نوع التذكرة من القائمة بالأسفل.')
+    .setFooter({ text: 'NeverLess Support' });
+
+  if (config.ticketPanelImageUrl) embed.setImage(config.ticketPanelImageUrl);
+
+  const panel = await channel.send({ embeds: [embed], components: ticketPanelComponents() });
+  await patchGuild(guild.id, { ticketPanelMessageId: panel.id });
+  console.log(`[tickets] Restored ticket panel in ${guild.name}.`);
 }
 
 function tempVoiceControls(channelId) {
@@ -151,40 +366,73 @@ function canControlTemp(member, channel) {
   return member.permissions.has(PermissionFlagsBits.Administrator) || tempOwnerId(channel) === member.id;
 }
 
+async function initializeGuild(guild) {
+  try {
+    await guild.commands.set(commands);
+    console.log(`Registered ${commands.length} commands in ${guild.name}`);
+  } catch (error) {
+    console.error(`Failed to register commands in ${guild.name}:`, error);
+  }
+
+  await cacheGuildInvites(guild);
+  await ensureTicketPanel(guild).catch((error) => console.error('[tickets] Failed to ensure panel:', error));
+}
+
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   for (const guild of client.guilds.cache.values()) {
-    try {
-      await guild.commands.set(commands);
-      console.log(`Registered ${commands.length} commands in ${guild.name}`);
-    } catch (error) {
-      console.error(`Failed to register commands in ${guild.name}:`, error);
-    }
-    await cacheGuildInvites(guild);
+    await initializeGuild(guild);
   }
 });
 
-client.on('guildCreate', async (guild) => {
-  await guild.commands.set(commands).catch(console.error);
-  await cacheGuildInvites(guild);
+client.on('guildCreate', initializeGuild);
+
+client.on('inviteCreate', (invite) => {
+  const guildId = invite.guild?.id;
+  if (!guildId) return;
+  const current = new Map(inviteCache.get(guildId) || []);
+  current.set(invite.code, snapshotInvite(invite));
+  inviteCache.set(guildId, current);
 });
-client.on('inviteCreate', (invite) => cacheGuildInvites(invite.guild));
-client.on('inviteDelete', (invite) => cacheGuildInvites(invite.guild));
+
+client.on('inviteDelete', (invite) => {
+  const guildId = invite.guild?.id;
+  if (!guildId) return;
+
+  const cached = inviteCache.get(guildId)?.get(invite.code) || snapshotInvite(invite);
+  const list = recentlyDeletedInvites.get(guildId) || [];
+  list.push({ snapshot: cached, deletedAt: Date.now() });
+  recentlyDeletedInvites.set(guildId, list.slice(-20));
+});
 
 client.on('guildMemberAdd', async (member) => {
+  await assignAutoRole(member);
+
   const config = getGuild(member.guild.id);
-  const inviter = await resolveInviter(member);
-  if (!config.welcomeChannelId) return;
+  const inviteInfo = await resolveInviter(member);
   const channel = member.guild.channels.cache.get(config.welcomeChannelId);
-  if (!channel?.isSendable()) return;
+
+  if (!channel?.isSendable()) {
+    console.warn(`[welcome] Welcome channel ${config.welcomeChannelId} was not found or is not sendable.`);
+    return;
+  }
 
   try {
     const card = await buildWelcomeCard(member);
     await channel.send({ files: [{ attachment: card, name: `welcome-${member.user.id}.png` }] });
-    const inviterText = inviter ? `<@${inviter.id}>` : 'Unknown';
+
+    const inviterMention = inviteInfo.user ? `<@${inviteInfo.user.id}>` : 'Unknown';
+    const invitedCount = Number.isInteger(inviteInfo.count) ? inviteInfo.count : 'Unknown';
+
     await channel.send({
-      content: `• welcome to neverless: <@${member.user.id}>\n• invited by: ${inviterText}`,
-      allowedMentions: { users: inviter ? [member.user.id, inviter.id] : [member.user.id] },
+      content: [
+        `• welcome to neverless: <@${member.user.id}>`,
+        `• invited by: ${inviterMention}`,
+        `• ${inviterMention} invited: ${invitedCount}`,
+      ].join('\n'),
+      allowedMentions: {
+        users: inviteInfo.user ? [member.user.id, inviteInfo.user.id] : [member.user.id],
+      },
     });
   } catch (error) {
     console.error('[welcome] Failed:', error);
@@ -208,20 +456,36 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
           { id: owner.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect] },
         ],
       });
+
       await owner.voice.setChannel(room);
-      await room.send({
-        embeds: [new EmbedBuilder().setColor(0x15233a).setTitle('إدارة رومك الصوتي').setDescription('هذه الخيارات متاحة لمالك الروم، والإدارة تستطيع التحكم أيضاً.')],
-        components: tempVoiceControls(room.id),
-      });
+
+      if (room.isSendable()) {
+        await room.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x15233a)
+              .setTitle('إدارة رومك الصوتي')
+              .setDescription('هذه الخيارات متاحة لمالك الروم، والإدارة تستطيع التحكم أيضاً.'),
+          ],
+          components: tempVoiceControls(room.id),
+        });
+      }
     } catch (error) {
       console.error('[tempvoice] Failed to create room:', error);
     }
   }
 
-  if (oldState.channel && oldState.channel.parentId === temp.categoryId && oldState.channel.id !== temp.lobbyId && tempOwnerId(oldState.channel)) {
+  if (
+    oldState.channel
+    && oldState.channel.parentId === temp.categoryId
+    && oldState.channel.id !== temp.lobbyId
+    && tempOwnerId(oldState.channel)
+  ) {
     setTimeout(async () => {
       const channel = guild.channels.cache.get(oldState.channelId);
-      if (channel && channel.members.size === 0) await channel.delete('NeverLess temporary voice room empty').catch(console.error);
+      if (channel && channel.members.size === 0) {
+        await channel.delete('NeverLess temporary voice room empty').catch(console.error);
+      }
     }, 2500);
   }
 });
@@ -241,13 +505,21 @@ client.on('interactionCreate', async (interaction) => {
         const channel = interaction.options.getChannel('channel', true);
         const rulesText = interaction.options.getString('rules', true);
         const imageUrl = interaction.options.getString('image_url', true);
+
         try {
           const parsed = new URL(imageUrl);
           if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('bad protocol');
         } catch {
           return interaction.reply({ content: 'رابط الصورة غير صالح.', ephemeral: true });
         }
-        const embed = new EmbedBuilder().setColor(0x15233a).setTitle('NeverLess Rules').setDescription(rulesText).setImage(imageUrl).setFooter({ text: 'NeverLess' });
+
+        const embed = new EmbedBuilder()
+          .setColor(0x15233a)
+          .setTitle('NeverLess Rules')
+          .setDescription(rulesText)
+          .setImage(imageUrl)
+          .setFooter({ text: 'NeverLess' });
+
         const message = await channel.send({ embeds: [embed] });
         await patchGuild(interaction.guildId, { rulesChannelId: channel.id, rulesMessageId: message.id });
         return interaction.reply({ content: `تم إرسال القوانين في ${channel}.`, ephemeral: true });
@@ -258,15 +530,22 @@ client.on('interactionCreate', async (interaction) => {
         const channel = interaction.options.getChannel('channel', true);
         const category = interaction.options.getChannel('category', true);
         const supportRole = interaction.options.getRole('support_role', true);
-        const imageUrl = interaction.options.getString('image_url');
-        const embed = new EmbedBuilder().setColor(0x15233a).setTitle('أهلاً بك في قسم التذاكر').setDescription('• افتح تذكرتك\n\nاختر نوع التذكرة من القائمة بالأسفل.').setFooter({ text: 'NeverLess Support' });
+        const imageUrl = interaction.options.getString('image_url') || getGuild(interaction.guildId).ticketPanelImageUrl;
+
+        const embed = new EmbedBuilder()
+          .setColor(0x15233a)
+          .setTitle('أهلاً بك في قسم التذاكر')
+          .setDescription('• افتح تذكرتك\n\nاختر نوع التذكرة من القائمة بالأسفل.')
+          .setFooter({ text: 'NeverLess Support' });
         if (imageUrl) embed.setImage(imageUrl);
+
         const panel = await channel.send({ embeds: [embed], components: ticketPanelComponents() });
         await patchGuild(interaction.guildId, {
           ticketPanelChannelId: channel.id,
           ticketPanelMessageId: panel.id,
           ticketCategoryId: category.id,
           supportRoleId: supportRole.id,
+          ticketPanelImageUrl: imageUrl,
         });
         return interaction.reply({ content: `تم إعداد نظام التذاكر في ${channel}.`, ephemeral: true });
       }
@@ -302,14 +581,18 @@ client.on('interactionCreate', async (interaction) => {
 
       if (interaction.commandName === 'lock' || interaction.commandName === 'unlock') {
         const channel = interaction.options.getChannel('channel') || interaction.channel;
-        if (!channel || channel.type !== ChannelType.GuildText) return interaction.reply({ content: 'اختر روم نصي.', ephemeral: true });
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          return interaction.reply({ content: 'اختر روم نصي.', ephemeral: true });
+        }
         const lock = interaction.commandName === 'lock';
         await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SendMessages: lock ? false : null });
         return interaction.reply({ content: lock ? `🔒 تم قفل ${channel}.` : `🔓 تم فتح ${channel}.` });
       }
 
       if (interaction.commandName === 'clear') {
-        if (!interaction.channel?.isTextBased() || !('bulkDelete' in interaction.channel)) return interaction.reply({ content: 'هذا الأمر يعمل في الشاتات النصية فقط.', ephemeral: true });
+        if (!interaction.channel?.isTextBased() || !('bulkDelete' in interaction.channel)) {
+          return interaction.reply({ content: 'هذا الأمر يعمل في الشاتات النصية فقط.', ephemeral: true });
+        }
         const amount = interaction.options.getInteger('amount', true);
         await interaction.deferReply({ ephemeral: true });
         const deleted = await interaction.channel.bulkDelete(amount, true);
@@ -338,22 +621,39 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('temp:')) {
       const [, action, channelId] = interaction.customId.split(':');
       const channel = interaction.guild.channels.cache.get(channelId);
-      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
-      if (!canControlTemp(interaction.member, channel)) return interaction.reply({ content: 'هذه الخيارات لمالك الروم أو الإدارة فقط.', ephemeral: true });
+      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) {
+        return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
+      }
+      if (!canControlTemp(interaction.member, channel)) {
+        return interaction.reply({ content: 'هذه الخيارات لمالك الروم أو الإدارة فقط.', ephemeral: true });
+      }
 
       if (action === 'lock') {
         await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
         await channel.permissionOverwrites.edit(tempOwnerId(channel), { Connect: true, ViewChannel: true });
         return interaction.reply({ content: '🔒 تم قفل الروم.', ephemeral: true });
       }
+
       if (action === 'open') {
         await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
         return interaction.reply({ content: '🔓 تم فتح الروم.', ephemeral: true });
       }
+
       if (action === 'limit') {
-        const input = new TextInputBuilder().setCustomId('limit').setStyle(TextInputStyle.Short).setPlaceholder('0 = بدون حد، أو رقم من 1 إلى 99').setMinLength(1).setMaxLength(2).setRequired(true);
-        const label = new LabelBuilder().setLabel('عدد الأعضاء').setDescription('اكتب الحد الأقصى للروم').setTextInputComponent(input);
-        const modal = new ModalBuilder().setCustomId(`temp-limit:${channel.id}`).setTitle('تحديد عدد أعضاء الروم').addLabelComponents(label);
+        const input = new TextInputBuilder()
+          .setCustomId('limit')
+          .setLabel('عدد الأعضاء')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('0 = بدون حد، أو رقم من 1 إلى 99')
+          .setMinLength(1)
+          .setMaxLength(2)
+          .setRequired(true);
+
+        const modal = new ModalBuilder()
+          .setCustomId(`temp-limit:${channel.id}`)
+          .setTitle('تحديد عدد أعضاء الروم')
+          .addComponents(new ActionRowBuilder().addComponents(input));
+
         return interaction.showModal(modal);
       }
     }
@@ -361,12 +661,23 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('temp-limit:')) {
       const channelId = interaction.customId.split(':')[1];
       const channel = interaction.guild.channels.cache.get(channelId);
-      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
-      if (!canControlTemp(interaction.member, channel)) return interaction.reply({ content: 'لا تملك صلاحية التحكم بهذا الروم.', ephemeral: true });
+      if (!channel || channel.type !== ChannelType.GuildVoice || !tempOwnerId(channel)) {
+        return interaction.reply({ content: 'الروم لم يعد موجوداً.', ephemeral: true });
+      }
+      if (!canControlTemp(interaction.member, channel)) {
+        return interaction.reply({ content: 'لا تملك صلاحية التحكم بهذا الروم.', ephemeral: true });
+      }
+
       const limit = Number(interaction.fields.getTextInputValue('limit').trim());
-      if (!Number.isInteger(limit) || limit < 0 || limit > 99) return interaction.reply({ content: 'اكتب رقماً من 0 إلى 99.', ephemeral: true });
+      if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
+        return interaction.reply({ content: 'اكتب رقماً من 0 إلى 99.', ephemeral: true });
+      }
+
       await channel.setUserLimit(limit);
-      return interaction.reply({ content: limit === 0 ? 'تم إلغاء حد الأعضاء.' : `تم تحديد الحد إلى ${limit} أعضاء.`, ephemeral: true });
+      return interaction.reply({
+        content: limit === 0 ? 'تم إلغاء حد الأعضاء.' : `تم تحديد الحد إلى ${limit} أعضاء.`,
+        ephemeral: true,
+      });
     }
   } catch (error) {
     console.error('[interaction] Unhandled error:', error);
