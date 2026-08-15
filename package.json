@@ -12,6 +12,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@kiznavierr/kirara": "^2.0.2",
     "@napi-rs/canvas": "^1.0.3",
     "cheerio": "^1.0.0",
     "discord.js": "^14.26.4",

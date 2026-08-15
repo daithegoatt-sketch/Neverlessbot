@@ -40,7 +40,20 @@ function normalize(value) {
 
 function findCharacter(account, name) {
   const key = normalize(name);
-  return account?.characters?.find((character) => normalize(characterName(character)) === key) || null;
+  const character = account?.characters?.find((item) => normalize(characterName(item)) === key) || null;
+  if (character && account?.uid != null) {
+    try {
+      Object.defineProperty(character, '__neverlessUid', {
+        value: String(account.uid),
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+    } catch {
+      character.__neverlessUid = String(account.uid);
+    }
+  }
+  return character;
 }
 
 function statValue(property) {
