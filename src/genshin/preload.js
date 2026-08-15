@@ -17,7 +17,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
           console.error('[genshin] Unhandled message error:', error);
         });
     });
-    console.log('[genshin] Neverless Genshin V3 + Rating V4 installed.');
+    console.log('[genshin] Neverless Genshin V3 + Account Cards V5 installed.');
   }
   return originalLogin.call(this, token);
 };
