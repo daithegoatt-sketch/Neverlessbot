@@ -2,7 +2,7 @@
 
 const API = 'https://genshin-db-api.vercel.app/api/v5';
 const CACHE_TTL = 6 * 60 * 60 * 1000;
-let namesCache = { expiresAt: 0, value: [] };
+const nameCaches = new Map();
 const responseCache = new Map();
 
 async function fetchJson(url, ttl = 10 * 60 * 1000) {
@@ -10,7 +10,7 @@ async function fetchJson(url, ttl = 10 * 60 * 1000) {
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const response = await fetch(url, {
-    headers: { 'user-agent': 'Neverlessbot-Genshin/1.0' },
+    headers: { 'user-agent': 'Neverlessbot-Genshin/2.0' },
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new Error(`Genshin data source returned HTTP ${response.status}`);
@@ -19,13 +19,26 @@ async function fetchJson(url, ttl = 10 * 60 * 1000) {
   return value;
 }
 
-async function getCharacterNames() {
-  if (namesCache.expiresAt > Date.now() && namesCache.value.length) return namesCache.value;
-  const url = `${API}/characters?query=names&matchCategories=true&resultLanguage=english`;
+async function getNames(folder) {
+  const cached = nameCaches.get(folder);
+  if (cached?.expiresAt > Date.now() && cached.value.length) return cached.value;
+  const url = `${API}/${folder}?query=names&matchCategories=true&resultLanguage=english`;
   const value = await fetchJson(url, CACHE_TTL);
   const names = Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
-  namesCache = { value: names, expiresAt: Date.now() + CACHE_TTL };
+  nameCaches.set(folder, { value: names, expiresAt: Date.now() + CACHE_TTL });
   return names;
+}
+
+async function getCharacterNames() {
+  return getNames('characters');
+}
+
+async function getWeaponNames() {
+  return getNames('weapons');
+}
+
+async function getArtifactNames() {
+  return getNames('artifacts');
 }
 
 async function getCharacter(name) {
@@ -40,4 +53,10 @@ async function getCharacterStats(name, level = '90') {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
-module.exports = { getCharacterNames, getCharacter, getCharacterStats };
+module.exports = {
+  getCharacterNames,
+  getWeaponNames,
+  getArtifactNames,
+  getCharacter,
+  getCharacterStats,
+};
