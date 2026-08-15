@@ -5,8 +5,8 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node prepare.js && node index.js",
-    "check": "node --check prepare.js && node --check index.js && node --check src/commands.js && node --check src/store.js && node --check src/tickets.js"
+    "start": "node prepare.js && node -r ./src/genshin/preload.js index.js",
+    "check": "node --check prepare.js && node --check index.js && node --check src/commands.js && node --check src/store.js && node --check src/tickets.js && node --check src/genshin/preload.js && node --check src/genshin/assistant.js && node --check src/genshin/dataClient.js && node --check src/genshin/guides.js"
   },
   "engines": {
     "node": ">=20.0.0"
