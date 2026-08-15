@@ -2,14 +2,13 @@
 
 /**
  * Curated, source-backed recommendations only.
- * Do not add guessed values. Every numeric recommendation must have a source.
+ * These are fallbacks when a live guide cannot be parsed. Do not add guessed values.
  */
 const GUIDES = {
   odette: {
     name: 'Odette',
     aliases: ['odette', 'اوديت', 'أوديت'],
     status: 'provisional',
-    statusNote: 'Icy Veins lists this as Version 7.0 V3 data (updated 2026-07-14). Treat as provisional until a post-release theorycrafting update is published.',
     sources: [
       { name: 'Icy Veins — Odette Build Guide', url: 'https://www.icy-veins.com/genshin-impact/odette-guide-best-builds' },
       { name: 'Icy Veins — Odette Team Guide', url: 'https://www.icy-veins.com/genshin-impact/odette-team-guide' },
@@ -19,124 +18,130 @@ const GUIDES = {
       main: ['Sands: ATK% or EM', 'Goblet: ATK% or EM', 'Circlet: CRIT Rate / CRIT DMG'],
       priority: 'CRIT Rate / CRIT DMG > ATK% > Elemental Mastery > Energy Recharge',
       targets: ['HP: 17,000–20,000', 'ATK: 2,400–2,600', 'CRIT Rate: 60–75%', 'CRIT DMG: 150–175%', 'ER: 100–130%'],
-      note: 'Target ranges are pre-buff screen values from the cited guide and vary with weapon/team. ER is often optional if Burst is skipped.',
     },
-    weapons: [
-      'Whitelake Frostfeather — listed as her top weapon in the cited 7.0 guide.',
-    ],
-    artifacts: [
-      '4pc Disenchantment in Deep Shadow — best for Odette personal damage in Stellar-Conduct teams.',
-      '4pc Heart of the Furnace — teamwide Stellar reaction support; the cited guide recommends it when nobody else is using the set.',
-      '4pc Tenacity of the Millelith — support option for ATK-scaling teams when nobody else is using it.',
-    ],
+    weapons: ['Whitelake Frostfeather'],
+    artifacts: ['4pc Disenchantment in Deep Shadow', '4pc Heart of the Furnace', '4pc Tenacity of the Millelith'],
     teams: [
-      'Odette — Sandrone — Yae Miko — Alyosha (Stellar-Conduct)',
-      'Odette — Wriothesley — Nicole — Yae Miko (Stellar-Conduct)',
-      'Odette — Cyno — Yae Miko — Alyosha (Stellar-Conduct)',
-      'Odette — Sandrone — Cryo Traveler — Sucrose (Stellar-Swirl)',
-      'Odette — Sandrone — Qiqi — Sucrose (Stellar-Swirl)',
+      ['Odette', 'Sandrone', 'Yae Miko', 'Alyosha'],
+      ['Odette', 'Wriothesley', 'Nicole', 'Yae Miko'],
+      ['Odette', 'Cyno', 'Yae Miko', 'Alyosha'],
+      ['Odette', 'Sandrone', 'Cryo Traveler', 'Sucrose'],
+      ['Odette', 'Sandrone', 'Qiqi', 'Sucrose'],
     ],
-    talentPriority: 'Elemental Skill > Elemental Burst >>> Normal Attack',
+  },
+
+  skirk: {
+    name: 'Skirk',
+    aliases: ['skirk', 'سكيرك', 'سكيرك'],
+    status: 'verified',
+    sources: [
+      { name: 'Icy Veins — Skirk Build Guide', url: 'https://www.icy-veins.com/genshin-impact/skirk-guide-best-builds' },
+      { name: 'Icy Veins — Skirk Team Guide', url: 'https://www.icy-veins.com/genshin-impact/skirk-team-guide' },
+    ],
+    role: 'On-field Cryo Freeze DPS',
+    stats: {
+      main: ['Sands: ATK%', 'Goblet: Cryo DMG > ATK%', 'Circlet: CRIT Rate / CRIT DMG'],
+      priority: 'CRIT Rate / CRIT DMG > ATK%',
+      targets: ['HP: 18,000–20,000', 'ATK: 2,200', 'CRIT Rate: 70–75%', 'CRIT DMG: 170–200%'],
+    },
+    weapons: ['Azurelight'],
+    artifacts: ['4pc Finale of the Deep Galleries', '4pc Marechaussee Hunter'],
+    teams: [
+      ['Skirk', 'Escoffier', 'Furina', 'Yelan'],
+      ['Skirk', 'Escoffier', 'Furina', 'Citlali'],
+      ['Skirk', 'Escoffier', 'Furina', 'Charlotte'],
+      ['Skirk', 'Escoffier', 'Yelan', 'Xingqiu'],
+      ['Skirk', 'Escoffier', 'Yelan', 'Dahlia'],
+      ['Skirk', 'Escoffier', 'Yelan', 'Charlotte'],
+    ],
+  },
+
+  escoffier: {
+    name: 'Escoffier',
+    aliases: ['escoffier', 'اسكوفيه', 'اسكوفر', 'إسكوفيه', 'ايسكوفيه'],
+    status: 'verified',
+    sources: [
+      { name: 'Icy Veins — Escoffier Build Guide', url: 'https://www.icy-veins.com/genshin-impact/escoffier-guide-best-builds' },
+      { name: 'Icy Veins — Escoffier Team Guide', url: 'https://www.icy-veins.com/genshin-impact/escoffier-team-guide' },
+    ],
+    role: 'Off-field Cryo support, healer and Hydro/Cryo RES shred',
+    stats: {
+      main: ['Sands: ATK% / Energy Recharge', 'Goblet: Cryo DMG or ATK%', 'Circlet: CRIT Rate / CRIT DMG > ATK%'],
+      priority: 'Energy Recharge > CRIT Rate / CRIT DMG > ATK%',
+      targets: ['HP: 19,000–21,000', 'ATK: 1,650–1,800', 'CRIT Rate: 75–85%', 'CRIT DMG: 165–190%', 'ER: 180–200%'],
+    },
+    weapons: ['Symphonist of Scents'],
+    artifacts: ['4pc Blizzard Strayer', '4pc Golden Troupe'],
+    teams: [
+      ['Skirk', 'Escoffier', 'Furina', 'Yelan'],
+      ['Skirk', 'Escoffier', 'Furina', 'Citlali'],
+      ['Skirk', 'Escoffier', 'Furina', 'Charlotte'],
+    ],
   },
 
   sandrone: {
     name: 'Sandrone',
     aliases: ['sandrone', 'ساندروني', 'ساندرون'],
     status: 'verified',
-    statusNote: 'KQM Quick Guide updated for Version 6.7 / Luna VIII.',
-    sources: [
-      { name: 'KQM — Sandrone Quick Guide', url: 'https://keqingmains.com/q/sandrone-quickguide/' },
-    ],
+    sources: [{ name: 'KQM — Sandrone Quick Guide', url: 'https://keqingmains.com/q/sandrone-quickguide/' }],
     role: 'On-field Stellar-Conduct DPS',
     stats: {
       main: ['Sands: ATK%', 'Goblet: ATK%', 'Circlet: CRIT'],
       priority: '(ER until requirement) > CRIT > ATK% > EM',
       targets: ['ER: 130–165% with +1 Cryo for Burst every rotation', 'ER: 120–140% with +2 Cryo or +2 Electro for Burst every rotation'],
-      note: 'KQM notes that if ER needs exceed ~140%, forcing ER can be a DPS loss; Burst can instead be used when available.',
     },
-    weapons: [
-      'A Teaspoon of Transcendence — KQM BiS',
-      'A Thousand Blazing Suns — KQM second-best listed option',
-      'Other competitive 5★ options include Wolf’s Gravestone, Redhorn Stonethresher, Verdict, Beacon of the Reed Sea, and The Unforged.',
-    ],
-    artifacts: [
-      '4pc Disenchantment in Deep Shadows — KQM best set for on-field Stellar-Conduct Sandrone',
-      '4pc Gilded Dreams — strong backup',
-      '2pc ATK% / EM mixes — fallback when 4pc sets are weak',
-    ],
+    weapons: ['A Teaspoon of Transcendence', 'A Thousand Blazing Suns', 'Wolf’s Gravestone', 'Redhorn Stonethresher', 'Verdict'],
+    artifacts: ['4pc Disenchantment in Deep Shadows', '4pc Gilded Dreams'],
     teams: [
-      'Sandrone — Yae Miko — Qiqi — Escoffier / Nicole / C6 Beidou / C6 Diona',
-      'Sandrone — Yae Miko — Escoffier — Nicole',
-      'Sandrone — C6 Beidou — C6 Diona — Sucrose / Xilonen',
-      'Sandrone — Columbina — Ineffa — Yae Miko',
-      'Limited roster: Sandrone — Kuki Shinobu — Charlotte / Diona — Sucrose',
+      ['Sandrone', 'Yae Miko', 'Escoffier', 'Nicole'],
+      ['Sandrone', 'Columbina', 'Ineffa', 'Yae Miko'],
+      ['Sandrone', 'Kuki Shinobu', 'Charlotte', 'Sucrose'],
+      ['Sandrone', 'Yae Miko', 'Qiqi', 'Escoffier'],
     ],
-    talentPriority: 'Normal Attack > Burst > Skill',
   },
 
   yaemiko: {
     name: 'Yae Miko',
     aliases: ['yae miko', 'yae', 'miko', 'ياي ميكو', 'ياي', 'ميكو'],
     status: 'verified',
-    statusNote: 'KQM Quick Guide; Stellar-Conduct team context is also covered by current Icy Veins team data.',
     sources: [
       { name: 'KQM — Yae Miko Quick Guide', url: 'https://keqingmains.com/q/yae-quickguide/' },
       { name: 'Icy Veins — Yae Miko Team Guide', url: 'https://www.icy-veins.com/genshin-impact/yae-miko-team-guide' },
     ],
-    role: 'Off-field Electro DPS / Stellar-Conduct support',
+    role: 'Off-field Electro DPS',
     stats: {
       main: ['Sands: ATK% / EM', 'Goblet: Electro DMG Bonus', 'Circlet: CRIT Rate / CRIT DMG'],
       priority: 'ER (until requirement) > CRIT > ATK% >= EM',
-      targets: ['With Raiden: ~140–150% ER at C0', 'Off-field with Fischl: ~130% ER at C0', 'Aggravate: roughly 100–300 EM before prioritizing more ATK%'],
-      note: 'EM is mainly valuable in Aggravate/Hyperbloom contexts. Stellar-Conduct usage may prioritize different team goals and often skips Burst.',
+      targets: ['With Raiden: 140–150% ER at C0', 'Off-field with Fischl: 130% ER at C0', 'Aggravate: roughly 100–300 EM before prioritizing more ATK%'],
     },
-    weapons: [
-      'Kagura’s Verity — KQM best weapon for Yae Miko.',
-      'The Widsith / Solar Pearl / Flowing Purity — viable 4★ options depending on team and conditions.',
-      'Hakushin Ring — KQM best free option for Aggravate Skill + Burst teams; Mappa Mare is a general free Dendro-team option.',
-    ],
-    artifacts: [
-      '4pc Golden Troupe — especially strong for Skill-focused / Aggravate use',
-      '4pc Emblem of Severed Fate — strong at C0 in non-Aggravate teams when Bursting consistently',
-    ],
+    weapons: ['Kagura’s Verity', 'The Widsith', 'Solar Pearl', 'Flowing Purity', 'Hakushin Ring'],
+    artifacts: ['4pc Golden Troupe', '4pc Emblem of Severed Fate'],
     teams: [
-      'Sandrone — Yae Miko — Alyosha — Odette (Stellar-Conduct)',
-      'Sandrone — Yae Miko — Escoffier — Qiqi (Stellar-Conduct)',
-      'Raiden Shogun — Yae Miko — Bennett — Kaedehara Kazuha (Hypercarry)',
-      'Yae Miko — Raiden — Yaoyao — Sucrose (Aggravate)',
+      ['Sandrone', 'Yae Miko', 'Alyosha', 'Odette'],
+      ['Sandrone', 'Yae Miko', 'Escoffier', 'Qiqi'],
+      ['Raiden Shogun', 'Yae Miko', 'Bennett', 'Kaedehara Kazuha'],
+      ['Yae Miko', 'Raiden Shogun', 'Yaoyao', 'Sucrose'],
     ],
-    talentPriority: 'Skill >= Burst > Normal Attack',
   },
 
   furina: {
     name: 'Furina',
     aliases: ['furina', 'فورينا'],
     status: 'verified',
-    statusNote: 'KQM Quick Guide updated for Luna II.',
-    sources: [
-      { name: 'KQM — Furina Quick Guide', url: 'https://keqingmains.com/q/furina-quickguide/' },
-    ],
+    sources: [{ name: 'KQM — Furina Quick Guide', url: 'https://keqingmains.com/q/furina-quickguide/' }],
     role: 'Off-field Hydro DPS + teamwide buffer',
     stats: {
-      main: ['Sands: HP% or ER%', 'Goblet: HP% (generally) / Hydro DMG Bonus', 'Circlet: CRIT Rate / CRIT DMG'],
+      main: ['Sands: HP% or ER%', 'Goblet: HP% / Hydro DMG Bonus', 'Circlet: CRIT Rate / CRIT DMG'],
       priority: 'ER (until requirement) > CRIT DMG = CRIT Rate > HP%',
-      targets: ['Solo Hydro: 200%+ ER', 'Double Hydro: ~150–210% depending on teammate Skill usage', 'Double Hydro with Neuvillette: ~130–150% ER', 'Triple Hydro: ~130–140% ER'],
-      note: 'Each Favonius proc can substantially reduce ER needs. Exact ER depends on rotation and particles.',
+      targets: ['Solo Hydro: 200%+ ER', 'Double Hydro: 150–210% ER', 'Double Hydro with Neuvillette: 130–150% ER', 'Triple Hydro: 130–140% ER'],
     },
-    weapons: [
-      'Splendor of Tranquil Waters — Furina’s signature and top personal-damage weapon when ER requirements are met.',
-      'Favonius Sword — strong team-ER utility at the cost of Furina personal damage.',
-      'Fleuve Cendre Ferryman — solid free fishing option; KQM describes it as a lesser Festering Desire.',
-    ],
-    artifacts: [
-      '4pc Golden Troupe — KQM’s clear recommendation for Furina personal damage.',
-    ],
+    weapons: ['Splendor of Tranquil Waters', 'Favonius Sword', 'Fleuve Cendre Ferryman'],
+    artifacts: ['4pc Golden Troupe'],
     teams: [
-      'Furina — Neuvillette — Kazuha — Xilonen / Zhongli / Pyro Traveler',
-      'Furina — Xianyun — Xiao — Faruzan',
-      'Furina — Hu Tao — Yelan — Xilonen / Xianyun / Jean',
+      ['Furina', 'Neuvillette', 'Kaedehara Kazuha', 'Xilonen'],
+      ['Furina', 'Xianyun', 'Xiao', 'Faruzan'],
+      ['Furina', 'Hu Tao', 'Yelan', 'Jean'],
     ],
-    talentPriority: 'Burst >= Skill; Level 90 strongly recommended',
   },
 };
 
