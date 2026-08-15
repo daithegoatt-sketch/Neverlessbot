@@ -25,7 +25,9 @@ const GUIDES = {
       'Whitelake Frostfeather — listed as her top weapon in the cited 7.0 guide.',
     ],
     artifacts: [
-      'Use the source-backed main stats above. Artifact set ranking is intentionally not hard-coded here until a post-release source update is available.',
+      '4pc Disenchantment in Deep Shadow — best for Odette personal damage in Stellar-Conduct teams.',
+      '4pc Heart of the Furnace — teamwide Stellar reaction support; the cited guide recommends it when nobody else is using the set.',
+      '4pc Tenacity of the Millelith — support option for ATK-scaling teams when nobody else is using it.',
     ],
     teams: [
       'Odette — Sandrone — Yae Miko — Alyosha (Stellar-Conduct)',
@@ -89,7 +91,9 @@ const GUIDES = {
       note: 'EM is mainly valuable in Aggravate/Hyperbloom contexts. Stellar-Conduct usage may prioritize different team goals and often skips Burst.',
     },
     weapons: [
-      'Weapon ranking depends on team. KQM lists The Widsith, Solar Pearl, Flowing Purity, Hakushin Ring, and Mappa Mare among viable 4★ options in appropriate teams.',
+      'Kagura’s Verity — KQM best weapon for Yae Miko.',
+      'The Widsith / Solar Pearl / Flowing Purity — viable 4★ options depending on team and conditions.',
+      'Hakushin Ring — KQM best free option for Aggravate Skill + Burst teams; Mappa Mare is a general free Dendro-team option.',
     ],
     artifacts: [
       '4pc Golden Troupe — especially strong for Skill-focused / Aggravate use',
@@ -98,7 +102,7 @@ const GUIDES = {
     teams: [
       'Sandrone — Yae Miko — Alyosha — Odette (Stellar-Conduct)',
       'Sandrone — Yae Miko — Escoffier — Qiqi (Stellar-Conduct)',
-      'Yae Miko — Raiden — Kazuha — Bennett',
+      'Raiden Shogun — Yae Miko — Bennett — Kaedehara Kazuha (Hypercarry)',
       'Yae Miko — Raiden — Yaoyao — Sucrose (Aggravate)',
     ],
     talentPriority: 'Skill >= Burst > Normal Attack',
@@ -120,13 +124,15 @@ const GUIDES = {
       note: 'Each Favonius proc can substantially reduce ER needs. Exact ER depends on rotation and particles.',
     },
     weapons: [
-      'Weapon choice depends on ER and team; the bot avoids inventing a universal ranking when the cited excerpt does not establish one.',
+      'Splendor of Tranquil Waters — Furina’s signature and top personal-damage weapon when ER requirements are met.',
+      'Favonius Sword — strong team-ER utility at the cost of Furina personal damage.',
+      'Fleuve Cendre Ferryman — solid free fishing option; KQM describes it as a lesser Festering Desire.',
     ],
     artifacts: [
       '4pc Golden Troupe — KQM’s clear recommendation for Furina personal damage.',
     ],
     teams: [
-      'Furina — Healer — Flex — Flex (general shell)',
+      'Furina — Neuvillette — Kazuha — Xilonen / Zhongli / Pyro Traveler',
       'Furina — Xianyun — Xiao — Faruzan',
       'Furina — Hu Tao — Yelan — Xilonen / Xianyun / Jean',
     ],
