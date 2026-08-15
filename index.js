@@ -9,11 +9,12 @@ const {
   Client,
   EmbedBuilder,
   GatewayIntentBits,
+  LabelBuilder,
+  ModalBuilder,
   OverwriteType,
   PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle,
-  ModalBuilder,
 } = require('discord.js');
 
 const { commands } = require('./src/commands');
@@ -642,17 +643,21 @@ client.on('interactionCreate', async (interaction) => {
       if (action === 'limit') {
         const input = new TextInputBuilder()
           .setCustomId('limit')
-          .setLabel('عدد الأعضاء')
           .setStyle(TextInputStyle.Short)
           .setPlaceholder('0 = بدون حد، أو رقم من 1 إلى 99')
           .setMinLength(1)
           .setMaxLength(2)
           .setRequired(true);
 
+        const label = new LabelBuilder()
+          .setLabel('عدد الأعضاء')
+          .setDescription('اكتب الحد الأقصى للروم')
+          .setTextInputComponent(input);
+
         const modal = new ModalBuilder()
           .setCustomId(`temp-limit:${channel.id}`)
           .setTitle('تحديد عدد أعضاء الروم')
-          .addComponents(new ActionRowBuilder().addComponents(input));
+          .addLabelComponents(label);
 
         return interaction.showModal(modal);
       }
