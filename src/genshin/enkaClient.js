@@ -1,16 +1,15 @@
 'use strict';
 
 let client = null;
+const accountCache = new Map();
 
 function getClient() {
   if (client) return client;
-  // Loaded lazily so Enka is completely isolated from the rest of the Discord bot.
-  // The npm package ships with the Genshin cache used to decode Enka's numeric IDs.
   const { EnkaClient } = require('enka-network-api');
   client = new EnkaClient({
     defaultLanguage: 'en',
-    userAgent: 'NeverlessBot/2.0 (Discord Genshin helper)',
-    requestTimeout: 8000,
+    userAgent: 'NeverlessBot/3.0 (Discord Genshin helper)',
+    requestTimeout: 10000,
     showFetchCacheLog: false,
   });
   return client;
@@ -19,7 +18,16 @@ function getClient() {
 async function fetchAccount(uid) {
   const value = String(uid || '').trim();
   if (!/^\d{9,10}$/.test(value)) throw new Error('INVALID_UID');
-  return getClient().fetchUser(value);
+  const cached = accountCache.get(value);
+  if (cached?.expiresAt > Date.now()) return cached.account;
+  const account = await getClient().fetchUser(value);
+  const ttl = Number.isFinite(account?.ttl) && account.ttl > 0 ? account.ttl : 60;
+  accountCache.set(value, { account, expiresAt: Date.now() + Math.min(ttl, 300) * 1000 });
+  return account;
+}
+
+function clearAccountCache(uid) {
+  accountCache.delete(String(uid || '').trim());
 }
 
 function characterName(character) {
@@ -57,27 +65,18 @@ function getBuildSnapshot(character) {
   const stats = character.stats || {};
   const weapon = character.weapon || null;
   const artifacts = Array.isArray(character.artifacts) ? character.artifacts : [];
-
   const slotMap = {
-    EQUIP_BRACER: 'flower',
-    EQUIP_NECKLACE: 'plume',
-    EQUIP_SHOES: 'sands',
-    EQUIP_RING: 'goblet',
-    EQUIP_DRESS: 'circlet',
+    EQUIP_BRACER: 'flower', EQUIP_NECKLACE: 'plume', EQUIP_SHOES: 'sands', EQUIP_RING: 'goblet', EQUIP_DRESS: 'circlet',
   };
-
   const artifactRows = artifacts.map((artifact) => ({
     slot: slotMap[artifact?.artifactData?.equipType] || artifact?.artifactData?.equipType || 'unknown',
-    set: textAsset(artifact?.artifactData?.set?.name) || 'Unknown Set',
+    set: textAsset(artifact?.artifactData?.set?.name) || textAsset(artifact?.artifactData?.setName) || 'Unknown Set',
     mainStat: textAsset(artifact?.mainstat?.fightPropName) || artifact?.mainstat?.fightProp || 'Unknown',
     mainValue: artifact?.mainstat?.valueText || '',
-    // The wrapper stores the raw reliquary level one above the in-game +0..+20 display.
     level: Number.isInteger(artifact?.level) ? Math.max(0, artifact.level - 1) : null,
   }));
-
   const setCounts = {};
   for (const artifact of artifactRows) setCounts[artifact.set] = (setCounts[artifact.set] || 0) + 1;
-
   return {
     name: characterName(character),
     level: character.level ?? null,
@@ -124,6 +123,7 @@ function accountSummary(account) {
 
 module.exports = {
   fetchAccount,
+  clearAccountCache,
   findCharacter,
   getBuildSnapshot,
   listCharacters,
