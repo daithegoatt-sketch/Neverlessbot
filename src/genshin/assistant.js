@@ -117,12 +117,12 @@ function detectIntent(text) {
   if ((/\b(?:link|connect)\b/i.test(text) && /\buid\b/i.test(text)) || /ربط\s*(?:ال)?uid|اربط\s*(?:ال)?uid/u.test(text)) return 'link';
   if (/شخصياتي|شخصيات حسابي|my characters|my showcase/i.test(text)) return 'characters';
   if (/base\s*stats?|بيانات\s|بيانات$|الاحصائيات الاساسية|الإحصائيات الأساسية/u.test(text)) return 'base';
-  if (/بحسابي|من حسابي|my account|analy[sz]e|حلل|قيّم|قيم/u.test(text)) return 'accountBuild';
   if (/\bteam\b|\bteams\b|\bcomp\b|تيم|فريق|تشكيل|تركيب/u.test(text)) return 'team';
+  if (/بحسابي|من حسابي|my account|analy[sz]e|حلل|قيّم|قيم/u.test(text)) return 'accountBuild';
   if (/ما عندي|ما املك|ما أملك|بدون|dont have|don't have|without/i.test(text)) return 'followupMissing';
   if (/عندي|املك|أملك|i have/i.test(text)) return 'followupOwned';
   if (/رأيك|رايك|what do you think|is .* good/i.test(text)) return 'opinion';
-  if (/بيلد|\bbuild\b|ارتيفاكت|ارتيفكت|artifact|weapon|سلاح|ستات|احصائيات|إحصائيات|crit|كريت|goblet|sands|circlet/i.test(text)) return 'build';
+  if (/بيلد|\bbuild\b|\bstats?\b|ارتيفاكت|ارتيفكت|artifact|weapon|سلاح|ستات|احصائيات|إحصائيات|crit|كريت|goblet|sands|circlet/i.test(text)) return 'build';
   if (/مساعدة|مساعده|help/i.test(text)) return 'help';
   return 'unknown';
 }
@@ -416,6 +416,28 @@ async function handleGenshinMessage(message) {
     return true;
   }
 
+  if (intent === 'team') {
+    const guide = await getGuide(characterName);
+    if (!guide) {
+      await replyPlain(message, isArabic(lang) ? `ما قدرت أستخرج تيمات موثوقة لـ **${characterName}** حاليًا.` : `I couldn't retrieve reliable teams for **${characterName}** right now.`);
+      return true;
+    }
+    let owned = [];
+    if (/من حسابي|بحسابي|my account/i.test(text)) {
+      const account = await linkedAccount(message, lang);
+      if (!account) return true;
+      owned = listCharacters(account).map((item) => item.name);
+    } else {
+      const mentioned = await extractMentionedCharacters(text);
+      owned = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
+      if (owned.length) owned.unshift(characterName);
+    }
+    const teams = normalizeTeams(guide.teams);
+    saveSession(message, { character: characterName, teams, excluded: [], language: lang });
+    await replyPlain(message, formatTeams(guide, lang, owned));
+    return true;
+  }
+
   if (intent === 'accountBuild') {
     const account = await linkedAccount(message, lang);
     if (!account) return true;
@@ -441,28 +463,10 @@ async function handleGenshinMessage(message) {
     return true;
   }
 
-  if (intent === 'team') {
-    let owned = [];
-    if (/من حسابي|بحسابي|my account/i.test(text)) {
-      const account = await linkedAccount(message, lang);
-      if (!account) return true;
-      owned = listCharacters(account).map((item) => item.name);
-    } else {
-      const mentioned = await extractMentionedCharacters(text);
-      owned = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
-      if (owned.length) owned.unshift(characterName);
-    }
-    const teams = normalizeTeams(guide.teams);
-    saveSession(message, { character: characterName, teams, excluded: [], language: lang });
-    await replyPlain(message, formatTeams(guide, lang, owned));
-    return true;
-  }
-
   if (intent === 'opinion') {
-    const role = guide.role ? ` ${guide.role}.` : '';
     await replyPlain(message, isArabic(lang)
-      ? `**${characterName}**:${role || ' عندي لها بيانات بيلد وتيم منشورة.'}\nإذا تبي جواب عملي قل: \`بيلد ${characterName}\` أو \`تيم ${characterName}\`.`
-      : `**${characterName}**:${role || ' I have published build and team data for this character.'}\nFor a practical answer, ask: \`${characterName} build\` or \`${characterName} team\`.`);
+      ? `**${characterName}** عندي لها توصيات بيلد وتيم منشورة. إذا تبي جواب عملي قل: \`بيلد ${characterName}\` أو \`تيم ${characterName}\`.`
+      : `**${characterName}**${guide.role ? ` — ${guide.role}` : ''}. For a practical answer, ask: \`${characterName} build\` or \`${characterName} team\`.`);
     return true;
   }
 
