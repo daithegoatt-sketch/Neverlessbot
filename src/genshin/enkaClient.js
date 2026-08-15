@@ -4,7 +4,8 @@ let client = null;
 
 function getClient() {
   if (client) return client;
-  // Loaded lazily so a temporary Enka/cache problem never prevents the rest of the bot from starting.
+  // Loaded lazily so Enka is completely isolated from the rest of the Discord bot.
+  // The npm package ships with the Genshin cache used to decode Enka's numeric IDs.
   const { EnkaClient } = require('enka-network-api');
   client = new EnkaClient({
     defaultLanguage: 'en',
@@ -18,8 +19,7 @@ function getClient() {
 async function fetchAccount(uid) {
   const value = String(uid || '').trim();
   if (!/^\d{9,10}$/.test(value)) throw new Error('INVALID_UID');
-  const account = await getClient().fetchUser(value);
-  return account;
+  return getClient().fetchUser(value);
 }
 
 function characterName(character) {
@@ -48,6 +48,10 @@ function rounded(value, digits = 1) {
   return Math.round(value * factor) / factor;
 }
 
+function textAsset(asset) {
+  return asset?.get?.('en') || asset?.get?.() || null;
+}
+
 function getBuildSnapshot(character) {
   if (!character) return null;
   const stats = character.stats || {};
@@ -64,10 +68,11 @@ function getBuildSnapshot(character) {
 
   const artifactRows = artifacts.map((artifact) => ({
     slot: slotMap[artifact?.artifactData?.equipType] || artifact?.artifactData?.equipType || 'unknown',
-    set: artifact?.artifactData?.setName?.get?.('en') || artifact?.artifactData?.setName?.get?.() || 'Unknown Set',
-    mainStat: artifact?.mainstat?.fightPropName?.get?.('en') || artifact?.mainstat?.fightPropName?.get?.() || artifact?.mainstat?.fightProp || 'Unknown',
+    set: textAsset(artifact?.artifactData?.set?.name) || 'Unknown Set',
+    mainStat: textAsset(artifact?.mainstat?.fightPropName) || artifact?.mainstat?.fightProp || 'Unknown',
     mainValue: artifact?.mainstat?.valueText || '',
-    level: artifact?.level ?? null,
+    // The wrapper stores the raw reliquary level one above the in-game +0..+20 display.
+    level: Number.isInteger(artifact?.level) ? Math.max(0, artifact.level - 1) : null,
   }));
 
   const setCounts = {};
@@ -78,7 +83,7 @@ function getBuildSnapshot(character) {
     level: character.level ?? null,
     constellation: character.unlockedConstellations?.length ?? 0,
     weapon: {
-      name: weapon?.weaponData?.name?.get?.('en') || weapon?.weaponData?.name?.get?.() || null,
+      name: textAsset(weapon?.weaponData?.name),
       level: weapon?.level ?? null,
       refinement: weapon?.refinementRank ?? null,
     },
