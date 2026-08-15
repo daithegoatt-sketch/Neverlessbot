@@ -1,6 +1,7 @@
 'use strict';
 
 const { LABELS } = require('./buildEvaluator');
+const { formatStat, formatTarget } = require('./statProfile');
 
 function ar(lang) { return lang === 'ar'; }
 function pctDelta(value) { return `${value > 0 ? '+' : ''}${value}`; }
@@ -82,17 +83,44 @@ function replacementText(character, currentTeam, alternatives, missingNames, lan
   return A ? `إذا ما عندك **${missing}**، أقرب بديل منشور هو **${replacement || 'تغيير التشكيلة'}**.\nالتيم يصير: **${best.team.join(' • ')}**` : `If you don't have **${missing}**, the closest published replacement is **${replacement || 'a different shell'}**.\nUse: **${best.team.join(' • ')}**`;
 }
 
+function ratingWord(score, lang) {
+  const A = ar(lang);
+  if (score >= 95) return A ? 'نخبوي' : 'Elite';
+  if (score >= 90) return A ? 'ممتاز' : 'Excellent';
+  if (score >= 80) return A ? 'قوي' : 'Strong';
+  if (score >= 70) return A ? 'جيد' : 'Good';
+  if (score >= 60) return A ? 'متوسط' : 'Average';
+  if (score >= 45) return A ? 'يحتاج تحسين' : 'Needs Work';
+  return A ? 'غير مكتمل' : 'Incomplete';
+}
+
 function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaPercentile = null) {
-  const A = ar(lang), lines = [`**${snapshot.name} — ${A ? 'تقييم بيلدك' : 'Build Rating'}: ${evaluation.score}%**`];
-  lines.push(`ATK ${snapshot.stats.atk ?? '?'} • CR ${snapshot.stats.critRate ?? '?'}% • CD ${snapshot.stats.critDmg ?? '?'}% • ER ${snapshot.stats.er ?? '?'}% • EM ${snapshot.stats.em ?? '?'}`);
-  if (snapshot.weapon?.name) lines.push(`${A ? 'السلاح' : 'Weapon'}: ${snapshot.weapon.name}${snapshot.weapon.refinement ? ` R${snapshot.weapon.refinement}` : ''}`);
-  if (akashaPercentile != null) lines.push(`Akasha: Top ${akashaPercentile}% ${A ? '(ترتيب آرتيفاكت فقط)' : '(artifact leaderboard only)'}`);
-  const weak = evaluation.notes.filter((n) => n.type === 'down' || n.type === 'warn').slice(0, 3);
-  if (weak.length) { lines.push(`**${A ? 'أهم شيء تحسنه' : 'Main improvements'}:**`); weak.forEach((n) => lines.push(`• ${n.text}`)); } else lines.push(A ? 'الأرقام الأساسية اللي أقدر أقارنها قريبة من الأهداف المنشورة.' : 'The main comparable stats are close to the published targets.');
+  const A = ar(lang), lines = [`**${snapshot.name} — ${A ? 'تقييم البيلد' : 'Build Rating'}: ${evaluation.score}% (${ratingWord(evaluation.score, lang)})**`];
+
+  if (evaluation.relevantStats?.length) {
+    lines.push(`**${A ? 'الإحصائيات المهمة لهذه الشخصية' : 'Relevant stats for this character'}:**`);
+    for (const row of evaluation.relevantStats.slice(0, 6)) {
+      const marker = row.status === 'down' ? '↓' : row.status === 'warn' ? '!' : '✓';
+      lines.push(`${marker} **${row.label}:** ${formatStat(row.key, row.value)}  |  ${A ? 'الهدف' : 'target'} ${formatTarget(row.target)}`);
+    }
+  }
+
+  if (snapshot.weapon?.name) lines.push(`**${A ? 'السلاح' : 'Weapon'}:** ${snapshot.weapon.name}${snapshot.weapon.refinement ? ` R${snapshot.weapon.refinement}` : ''}`);
+  lines.push(`**Artifacts:** ${evaluation.artifactCount}/5 • ${A ? 'متوسط المستوى' : 'avg level'} +${evaluation.artifactAvgLevel} • Main Stats ${evaluation.mainStatScore}% • Set ${evaluation.artifactSetScore}%`);
+  if (akashaPercentile != null) lines.push(`**Akasha:** Top ${akashaPercentile}% ${A ? 'للآرتيفاكتات في أفضل leaderboard تم العثور عليه' : 'artifact leaderboard (best category found)'}`);
+
+  const weak = evaluation.notes.filter((n) => n.type === 'down' || n.type === 'warn').slice(0, 4);
+  if (weak.length) {
+    lines.push(`**${A ? 'الأولوية للتحسين' : 'Improvement priority'}:**`);
+    weak.forEach((n) => lines.push(`• ${n.text}`));
+  }
+
+  // Comparison is deliberately shown only for an explicit compare request.
   if (comparison) {
-    lines.push(`**${A ? 'مقارنة بآخر تقييم' : 'Vs previous rating'}:** ${comparison.previousScore}% → ${comparison.currentScore}% (${pctDelta(comparison.scoreDelta)}%)`);
-    const useful = Object.entries(comparison.deltas).filter(([, value]) => value !== 0).slice(0, 5); if (useful.length) lines.push(useful.map(([key, value]) => `${LABELS[key] || key} ${value > 0 ? '+' : ''}${value}`).join(' • '));
-    lines.push(comparison.scoreDelta > 0 ? (A ? 'البيلد تحسّن عن النسخة السابقة.' : 'The build improved over the previous version.') : comparison.scoreDelta < 0 ? (A ? 'التقييم نزل؛ راجع الستات اللي نقصت.' : 'The score dropped; check the stats that decreased.') : (A ? 'التقييم العام ثابت تقريبًا.' : 'The overall score is essentially unchanged.'));
+    lines.push(`**${A ? 'المقارنة مع آخر نسخة مختلفة' : 'Compared with the previous different build'}:** ${comparison.previousScore}% → ${comparison.currentScore}% (${pctDelta(comparison.scoreDelta)}%)`);
+    const useful = Object.entries(comparison.deltas).filter(([, value]) => value !== 0).slice(0, 6);
+    if (useful.length) lines.push(useful.map(([key, value]) => `${LABELS[key] || key} ${value > 0 ? '+' : ''}${value}`).join(' • '));
+    lines.push(comparison.scoreDelta > 0 ? (A ? 'البيلد الحالي أفضل من النسخة السابقة.' : 'The current build is stronger than the previous one.') : comparison.scoreDelta < 0 ? (A ? 'البيلد الحالي أضعف إجمالًا؛ راجع الإحصائيات التي نزلت.' : 'The current build is weaker overall; review the stats that dropped.') : (A ? 'التقييم العام لم يتغير فعليًا.' : 'The overall rating is effectively unchanged.'));
   }
   return lines.join('\n');
 }
