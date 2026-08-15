@@ -1,30 +1,40 @@
 'use strict';
 
-const { EmbedBuilder } = require('discord.js');
 const { getGuideByText, normalize } = require('./guides');
+const { getGuide } = require('./guideClient');
 const { getCharacterNames, getCharacter, getCharacterStats } = require('./dataClient');
+const { getLinkedUid, linkUid, unlinkUid } = require('./accountStore');
+const { fetchAccount, findCharacter, getBuildSnapshot, listCharacters, accountSummary } = require('./enkaClient');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
-const COOLDOWN_MS = 2500;
+const COOLDOWN_MS = 1800;
 const cooldowns = new Map();
+const sessions = new Map();
 
-const INTENTS = [
-  { id: 'team', words: ['team', 'teams', 'comp', 'comps', 'تيم', 'فريق', 'تشكيلة', 'تشكيله', 'تركيبة', 'تركيبه'] },
-  { id: 'weapon', words: ['weapon', 'weapons', 'sword', 'claymore', 'bow', 'catalyst', 'polearm', 'سلاح', 'اسلحة', 'أسلحة', 'سيف'] },
-  { id: 'artifact', words: ['artifact', 'artifacts', 'set', 'ارتفاكت', 'ارتي', 'قطع', 'طقم'] },
-  { id: 'stats', words: ['stats', 'stat', 'crit', 'cr', 'cd', 'atk', 'hp', 'er', 'em', 'احصائيات', 'إحصائيات', 'ستات', 'كريت', 'اتاك', 'طاقة', 'طاقه'] },
-  { id: 'talent', words: ['talent', 'talents', 'priority', 'موهبة', 'مواهب', 'تالنت', 'اولوية', 'أولوية'] },
-  { id: 'build', words: ['build', 'بيلد', 'بناء', 'ابني', 'أبني'] },
-  { id: 'info', words: ['info', 'character', 'عنصر', 'سلاحه', 'سلاحها', 'معلومات'] },
-];
+function sessionKey(message) {
+  return `${message.guildId}:${message.author.id}`;
+}
 
-function detectIntent(text) {
-  const n = normalize(text);
-  if (/^(help|مساعدة|مساعده|شلون استخدم|كيف استخدم)/u.test(n)) return 'help';
-  for (const intent of INTENTS) {
-    if (intent.words.some((word) => n.includes(normalize(word)))) return intent.id;
-  }
-  return 'build';
+function getSession(message) {
+  const key = sessionKey(message);
+  const existing = sessions.get(key);
+  if (existing && Date.now() - existing.updatedAt < 30 * 60 * 1000) return existing;
+  const fresh = { updatedAt: Date.now(), character: null, teams: [], excluded: [], language: 'ar' };
+  sessions.set(key, fresh);
+  return fresh;
+}
+
+function saveSession(message, patch) {
+  const current = getSession(message);
+  const next = { ...current, ...patch, updatedAt: Date.now() };
+  sessions.set(sessionKey(message), next);
+  return next;
+}
+
+function detectLanguage(text) {
+  const ar = (String(text || '').match(/[\u0600-\u06FF]/g) || []).length;
+  const latin = (String(text || '').match(/[A-Za-z]/g) || []).length;
+  return ar >= latin * 0.35 && ar > 0 ? 'ar' : 'en';
 }
 
 function phoneticSkeleton(input) {
@@ -35,21 +45,17 @@ function phoneticSkeleton(input) {
     ع: '', غ: 'gh', ف: 'f', ق: 'q', ك: 'k', ل: 'l', م: 'm', ن: 'n', ه: 'h', ة: 'h', و: 'w', ي: 'y', ى: 'a', ء: '', ئ: 'y', ؤ: 'w',
   };
   value = [...value].map((ch) => arabicMap[ch] ?? ch).join('');
-  value = value.replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g').replace(/th|dh/g, 't');
-  value = value.replace(/[^a-z0-9]/g, '');
-  value = value.replace(/[aeiouywh]/g, '');
-  value = value.replace(/(.)\1+/g, '$1');
-  return value;
+  return value
+    .replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g').replace(/th|dh/g, 't')
+    .replace(/[^a-z0-9]/g, '').replace(/[aeiouywh]/g, '').replace(/(.)\1+/g, '$1');
 }
 
 function levenshtein(a, b) {
-  const rows = b.length + 1;
-  const cols = a.length + 1;
-  const matrix = Array.from({ length: rows }, () => Array(cols).fill(0));
-  for (let i = 0; i < rows; i += 1) matrix[i][0] = i;
-  for (let j = 0; j < cols; j += 1) matrix[0][j] = j;
-  for (let i = 1; i < rows; i += 1) {
-    for (let j = 1; j < cols; j += 1) {
+  const matrix = Array.from({ length: b.length + 1 }, () => Array(a.length + 1).fill(0));
+  for (let i = 0; i <= b.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= a.length; j += 1) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i += 1) {
+    for (let j = 1; j <= a.length; j += 1) {
       const cost = b[i - 1] === a[j - 1] ? 0 : 1;
       matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
     }
@@ -57,202 +63,423 @@ function levenshtein(a, b) {
   return matrix[b.length][a.length];
 }
 
-function extractLatinCandidate(text, names) {
-  const lower = String(text || '').toLowerCase();
-  const sorted = [...names].sort((a, b) => b.length - a.length);
-  return sorted.find((name) => lower.includes(name.toLowerCase())) || null;
-}
-
-function extractArabicTokens(text) {
-  return String(text || '').match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,})?/g) || [];
-}
-
 async function resolveCharacter(text) {
   const curated = getGuideByText(text);
-  if (curated) return { name: curated.name, guide: curated, source: 'curated' };
-
+  if (curated) return curated.name;
   let names = [];
-  try {
-    names = await getCharacterNames();
-  } catch (error) {
-    console.warn('[genshin] Could not fetch character names:', error.message);
-  }
+  try { names = await getCharacterNames(); } catch { return null; }
 
-  const direct = extractLatinCandidate(text, names);
-  if (direct) return { name: direct, guide: getGuideByText(direct), source: 'game-data' };
+  const lower = String(text || '').toLowerCase();
+  const direct = [...names].sort((a, b) => b.length - a.length).find((name) => lower.includes(name.toLowerCase()));
+  if (direct) return direct;
 
-  const arabicTokens = extractArabicTokens(text);
+  const tokens = String(text || '').match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,})?/g) || [];
   let best = null;
-  for (const token of arabicTokens) {
-    const tokenSkeleton = phoneticSkeleton(token);
-    if (tokenSkeleton.length < 2) continue;
+  for (const token of tokens) {
+    const left = phoneticSkeleton(token);
+    if (left.length < 2) continue;
     for (const name of names) {
-      const nameSkeleton = phoneticSkeleton(name);
-      if (nameSkeleton.length < 2) continue;
-      const distance = levenshtein(tokenSkeleton, nameSkeleton);
-      const maxLen = Math.max(tokenSkeleton.length, nameSkeleton.length);
-      const score = 1 - (distance / maxLen);
-      if (score >= 0.58 && (!best || score > best.score)) best = { name, score };
+      const right = phoneticSkeleton(name);
+      if (right.length < 2) continue;
+      const score = 1 - levenshtein(left, right) / Math.max(left.length, right.length);
+      if (score >= 0.62 && (!best || score > best.score)) best = { name, score };
     }
   }
-
-  if (best) return { name: best.name, guide: getGuideByText(best.name), source: 'phonetic' };
-  return null;
+  return best?.name || null;
 }
 
-function sourceLines(guide) {
-  if (!guide?.sources?.length) return 'لا يوجد مصدر توصيات موثّق مضاف لهذه الشخصية حاليًا.';
-  return guide.sources.map((source) => `[${source.name}](${source.url})`).join(' • ');
+async function extractMentionedCharacters(text) {
+  let names = [];
+  try { names = await getCharacterNames(); } catch { return []; }
+  const lower = String(text || '').toLowerCase();
+  const found = [];
+  for (const name of [...names].sort((a, b) => b.length - a.length)) {
+    if (lower.includes(name.toLowerCase()) && !found.some((x) => x.toLowerCase() === name.toLowerCase())) found.push(name);
+  }
+
+  const arabicTokens = String(text || '').match(/[\u0600-\u06FF]{3,}/g) || [];
+  for (const token of arabicTokens) {
+    const left = phoneticSkeleton(token);
+    if (left.length < 3) continue;
+    let best = null;
+    for (const name of names) {
+      const right = phoneticSkeleton(name);
+      const score = 1 - levenshtein(left, right) / Math.max(left.length, right.length);
+      if (score >= 0.72 && (!best || score > best.score)) best = { name, score };
+    }
+    if (best && !found.some((x) => x.toLowerCase() === best.name.toLowerCase())) found.push(best.name);
+  }
+  return found;
 }
 
-function statusLabel(guide) {
-  if (!guide) return '⚪ بيانات لعبة فقط';
-  return guide.status === 'verified' ? '🟢 موثّق من مصدر Theorycrafting' : '🟡 مبدئي — يحتاج تحديث ما بعد الإصدار';
+function detectIntent(text) {
+  if (/\b(?:unlink|remove uid)\b/i.test(text) || /فك الربط|الغاء الربط|إلغاء الربط/u.test(text)) return 'unlink';
+  if ((/\b(?:link|connect)\b/i.test(text) && /\buid\b/i.test(text)) || /ربط\s*(?:ال)?uid|اربط\s*(?:ال)?uid/u.test(text)) return 'link';
+  if (/شخصياتي|شخصيات حسابي|my characters|my showcase/i.test(text)) return 'characters';
+  if (/base\s*stats?|بيانات\s|بيانات$|الاحصائيات الاساسية|الإحصائيات الأساسية/u.test(text)) return 'base';
+  if (/بحسابي|من حسابي|my account|analy[sz]e|حلل|قيّم|قيم/u.test(text)) return 'accountBuild';
+  if (/\bteam\b|\bteams\b|\bcomp\b|تيم|فريق|تشكيل|تركيب/u.test(text)) return 'team';
+  if (/ما عندي|ما املك|ما أملك|بدون|dont have|don't have|without/i.test(text)) return 'followupMissing';
+  if (/عندي|املك|أملك|i have/i.test(text)) return 'followupOwned';
+  if (/رأيك|رايك|what do you think|is .* good/i.test(text)) return 'opinion';
+  if (/بيلد|\bbuild\b|ارتيفاكت|ارتيفكت|artifact|weapon|سلاح|ستات|احصائيات|إحصائيات|crit|كريت|goblet|sands|circlet/i.test(text)) return 'build';
+  if (/مساعدة|مساعده|help/i.test(text)) return 'help';
+  return 'unknown';
 }
 
-function guideEmbed(guide, intent) {
-  const embed = new EmbedBuilder()
-    .setColor(guide.status === 'verified' ? 0x4caf50 : 0xe0a800)
-    .setTitle(`${guide.name} — ${intent.toUpperCase()}`)
-    .setDescription(`${statusLabel(guide)}\n${guide.role || ''}`)
-    .setFooter({ text: 'Neverless Genshin • Source-backed only — no guessed values' });
+function cleanRecommendation(value) {
+  return String(value || '').split(/\s+[—–-]\s+/)[0].replace(/^\d+pc\s+/i, '').trim();
+}
 
-  if (intent === 'team') {
-    embed.addFields({ name: 'فرق منشورة', value: guide.teams?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا توجد فرق موثقة بعد.' });
-  } else if (intent === 'weapon') {
-    embed.addFields({ name: 'الأسلحة', value: guide.weapons?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا يوجد ترتيب موثّق مضاف بعد.' });
-  } else if (intent === 'artifact') {
-    embed.addFields(
-      { name: 'Main Stats', value: guide.stats?.main?.map((v) => `• ${v}`).join('\n') || 'غير متوفر' },
-      { name: 'Artifact Sets', value: guide.artifacts?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-    );
-  } else if (intent === 'stats') {
-    embed.addFields(
-      { name: 'Main Stats', value: guide.stats?.main?.map((v) => `• ${v}`).join('\n') || 'غير متوفر' },
-      { name: 'الأولوية', value: guide.stats?.priority || 'غير متوفر' },
-      { name: 'Targets / ER', value: guide.stats?.targets?.map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'لا توجد أرقام موثقة مضافة.' },
-    );
-    if (guide.stats?.note) embed.addFields({ name: 'ملاحظة', value: guide.stats.note.slice(0, 1024) });
-  } else if (intent === 'talent') {
-    embed.addFields({ name: 'Talent Priority', value: guide.talentPriority || 'غير متوفر' });
+function expandTeamString(value) {
+  const cleaned = String(value || '')
+    .replace(/^Limited roster:\s*/i, '')
+    .replace(/\([^)]*\)/g, '')
+    .trim();
+  const slots = cleaned.split(/\s+[—–]\s+/).map((slot) => slot.trim()).filter(Boolean);
+  let teams = [[]];
+  for (const slot of slots) {
+    const options = slot.split(/\s*\/\s*/).map((x) => x.replace(/^C\d+\s+/i, '').trim()).filter(Boolean);
+    teams = teams.flatMap((team) => options.slice(0, 5).map((option) => [...team, option])).slice(0, 20);
+  }
+  return teams.filter((team) => team.length >= 3 && team.length <= 4).map((team) => team.slice(0, 4));
+}
+
+function normalizeTeams(teams) {
+  const result = [];
+  for (const team of teams || []) {
+    const expanded = Array.isArray(team) ? [team] : expandTeamString(team);
+    for (const members of expanded) {
+      const clean = members.map((x) => String(x).trim()).filter(Boolean);
+      if (clean.length !== 4) continue;
+      const key = clean.join('|').toLowerCase();
+      if (!result.some((x) => x.join('|').toLowerCase() === key)) result.push(clean);
+    }
+  }
+  return result;
+}
+
+function rankTeams(teams, owned = [], excluded = []) {
+  const ownedSet = new Set(owned.map((x) => x.toLowerCase()));
+  const excludedSet = new Set(excluded.map((x) => x.toLowerCase()));
+  return teams
+    .filter((team) => !team.some((member) => excludedSet.has(member.toLowerCase())))
+    .map((team, index) => ({
+      team,
+      index,
+      ownedCount: team.filter((member) => ownedSet.has(member.toLowerCase())).length,
+      missing: team.filter((member) => ownedSet.size && !ownedSet.has(member.toLowerCase())),
+    }))
+    .sort((a, b) => (b.ownedCount - a.ownedCount) || (a.missing.length - b.missing.length) || (a.index - b.index));
+}
+
+function isArabic(lang) { return lang === 'ar'; }
+
+function formatBuild(guide, lang) {
+  const ar = isArabic(lang);
+  const lines = [`**${guide.name} — ${ar ? 'البيلد' : 'Build'}**`];
+  if (guide.artifacts?.length) {
+    lines.push(`**${ar ? 'الآرتيفاكت' : 'Artifacts'}:**`);
+    guide.artifacts.slice(0, 3).forEach((item, i) => lines.push(`${i + 1}. ${cleanRecommendation(item)}`));
+  }
+  if (guide.stats?.main?.length) {
+    lines.push(`**${ar ? 'تقسيم القطع' : 'Main Stats'}:**`);
+    guide.stats.main.forEach((item) => lines.push(`• ${item}`));
+  }
+  if (guide.stats?.priority) lines.push(`**${ar ? 'الأولوية بالسب ستات' : 'Substat Priority'}:** ${guide.stats.priority}`);
+  if (guide.weapons?.length) {
+    lines.push(`**${ar ? 'الأسلحة' : 'Weapons'}:**`);
+    guide.weapons.slice(0, 5).forEach((item, i) => lines.push(`${i + 1}. ${cleanRecommendation(item)}`));
+  }
+  if (guide.stats?.targets?.length) {
+    lines.push(`**${ar ? 'أرقام تستهدفها تقريبًا' : 'Recommended Targets'}:**`);
+    guide.stats.targets.slice(0, 7).forEach((item) => lines.push(`• ${item}`));
+  }
+  return lines.join('\n');
+}
+
+function formatTeams(guide, lang, owned = [], excluded = []) {
+  const ar = isArabic(lang);
+  const teams = normalizeTeams(guide.teams);
+  const ranked = rankTeams(teams, owned, excluded);
+  if (!ranked.length) return ar ? `ما لقيت تيم منشور لـ **${guide.name}** يطابق القيود اللي ذكرتها.` : `I couldn't find a published **${guide.name}** team matching those restrictions.`;
+  const lines = [`**${guide.name} — ${ar ? 'التيمات' : 'Teams'}**`];
+  ranked.slice(0, 4).forEach((entry, i) => {
+    lines.push(`${i + 1}. ${entry.team.join(' • ')}`);
+    if (owned.length && entry.missing.length) lines.push(`   ${ar ? 'ينقصك' : 'Missing'}: ${entry.missing.join(', ')}`);
+  });
+  return lines.join('\n');
+}
+
+function formatBaseData(character, stats, lang) {
+  const ar = isArabic(lang);
+  const name = character?.name || 'Character';
+  const element = character?.elementText || character?.element || 'Unknown';
+  const weapon = character?.weaponText || character?.weapontype || character?.weaponType || 'Unknown';
+  const hp = stats?.hp || stats?.basehp;
+  const atk = stats?.attack || stats?.atk || stats?.baseatk;
+  const def = stats?.defense || stats?.def || stats?.basedef;
+  return [
+    `**${name} — ${ar ? 'البيانات الأساسية' : 'Base Stats'}**`,
+    `${element} • ${weapon}`,
+    hp != null ? `Base HP: ${Number(hp).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
+    atk != null ? `Base ATK: ${Number(atk).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
+    def != null ? `Base DEF: ${Number(def).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
+  ].filter(Boolean).join('\n');
+}
+
+function parseTarget(target) {
+  const text = String(target || '').replace(/,/g, '');
+  let key = null;
+  if (/CRIT Rate/i.test(text)) key = 'critRate';
+  else if (/CRIT DMG/i.test(text)) key = 'critDmg';
+  else if (/\bATK\b/i.test(text)) key = 'atk';
+  else if (/\bHP\b/i.test(text)) key = 'hp';
+  else if (/\bER\b|Energy Recharge/i.test(text)) key = 'er';
+  else if (/\bEM\b|Elemental Mastery/i.test(text)) key = 'em';
+  if (!key) return null;
+  const nums = [...text.matchAll(/(\d+(?:\.\d+)?)/g)].map((match) => Number(match[1]));
+  if (!nums.length) return null;
+  return { key, min: nums[0], max: nums[1] ?? nums[0], text: target };
+}
+
+function actualStatText(snapshot) {
+  const s = snapshot.stats;
+  return `HP ${s.hp ?? '?'} • ATK ${s.atk ?? '?'} • CR ${s.critRate ?? '?'}% • CD ${s.critDmg ?? '?'}% • ER ${s.er ?? '?'}% • EM ${s.em ?? '?'}`;
+}
+
+function compareTargets(snapshot, guide, lang) {
+  const ar = isArabic(lang);
+  const parsed = (guide.stats?.targets || []).map(parseTarget).filter(Boolean);
+  const counts = parsed.reduce((acc, item) => ({ ...acc, [item.key]: (acc[item.key] || 0) + 1 }), {});
+  const notes = [];
+  for (const target of parsed) {
+    if (counts[target.key] > 1) continue;
+    const value = snapshot.stats[target.key];
+    if (typeof value !== 'number') continue;
+    const lowThreshold = target.min === target.max ? target.min * 0.93 : target.min;
+    if (value < lowThreshold) notes.push(ar ? `${target.key}: عندك ${value} وأقل من الهدف ${target.text.split(':').slice(1).join(':').trim()}` : `${target.key}: ${value} is below ${target.text}`);
+    else if ((target.key === 'critRate' || target.key === 'er') && target.max > target.min && value > target.max * 1.08) notes.push(ar ? `${target.key}: عندك ${value}؛ أعلى من الرينج المعتاد، وقد تقدر تحول جزء منه لستات هجومية.` : `${target.key}: ${value} is above the usual range; some rolls may be movable into offensive stats.`);
+  }
+  return notes.slice(0, 4);
+}
+
+function formatAccountAnalysis(snapshot, guide, lang) {
+  const ar = isArabic(lang);
+  const lines = [`**${snapshot.name} — ${ar ? 'تحليل بيلدك' : 'Your Build'}**`];
+  lines.push(`${ar ? 'لفل' : 'Level'} ${snapshot.level} • C${snapshot.constellation}`);
+  lines.push(`**${ar ? 'الستات الحالية' : 'Current Stats'}:** ${actualStatText(snapshot)}`);
+
+  if (snapshot.weapon.name) {
+    lines.push(`**${ar ? 'سلاحك' : 'Weapon'}:** ${snapshot.weapon.name}${snapshot.weapon.refinement ? ` R${snapshot.weapon.refinement}` : ''}`);
+    if (guide.weapons?.length) lines.push(`${ar ? 'المقترح' : 'Recommended'}: ${guide.weapons.slice(0, 3).map(cleanRecommendation).join(' / ')}`);
+  }
+
+  const sets = Object.entries(snapshot.setCounts).sort((a, b) => b[1] - a[1]);
+  if (sets.length) lines.push(`**${ar ? 'الآرتيفاكت الحالي' : 'Current Artifacts'}:** ${sets.map(([name, count]) => `${count}pc ${name}`).join(' + ')}`);
+  if (guide.artifacts?.length) lines.push(`${ar ? 'المقترح' : 'Recommended'}: ${guide.artifacts.slice(0, 2).map(cleanRecommendation).join(' / ')}`);
+
+  const slots = ['sands', 'goblet', 'circlet'];
+  const actualMain = slots.map((slot) => snapshot.artifacts.find((item) => item.slot === slot)).filter(Boolean);
+  if (actualMain.length) lines.push(`**Main Stats:** ${actualMain.map((item) => `${item.slot}: ${item.mainStat} ${item.mainValue}`).join(' • ')}`);
+  if (guide.stats?.main?.length) lines.push(`${ar ? 'المطلوب غالبًا' : 'Usually Aim For'}: ${guide.stats.main.join(' • ')}`);
+
+  const notes = compareTargets(snapshot, guide, lang);
+  if (notes.length) {
+    lines.push(`**${ar ? 'أهم الملاحظات' : 'Main Notes'}:**`);
+    notes.forEach((note) => lines.push(`• ${note}`));
   } else {
-    embed.addFields(
-      { name: 'Stats', value: `${guide.stats?.priority || 'غير متوفر'}\n${guide.stats?.main?.join(' • ') || ''}`.slice(0, 1024) },
-      { name: 'Weapons', value: guide.weapons?.slice(0, 3).map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-      { name: 'Teams', value: guide.teams?.slice(0, 4).map((v) => `• ${v}`).join('\n').slice(0, 1024) || 'غير متوفر' },
-    );
+    lines.push(ar ? 'أرقامك الأساسية ما فيها نقص واضح مقارنة بالرينجات المنشورة؛ بعدها يصير الحكم الأدق على القطع والروتيشن والتيم.' : 'Your core stats show no obvious shortfall against the published ranges; the next gains depend more on artifacts, rotation, and team context.');
   }
-
-  embed.addFields({ name: 'المصدر', value: sourceLines(guide).slice(0, 1024) });
-  if (guide.statusNote) embed.addFields({ name: 'حالة البيانات', value: guide.statusNote.slice(0, 1024) });
-  return embed;
+  return lines.join('\n');
 }
 
-function number(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 1 }) : null;
-}
-
-async function gameDataEmbed(name, intent) {
-  const character = await getCharacter(name).catch(() => null);
-  if (!character) return null;
-
-  const embed = new EmbedBuilder()
-    .setColor(0x6f83d6)
-    .setTitle(`${character.name || name} — بيانات اللعبة`)
-    .setFooter({ text: 'Data: genshin-db API • factual game data, not build advice' });
-
-  const element = character.elementText || character.element || character.elementtype || 'Unknown';
-  const weapon = character.weaponText || character.weapontype || character.weaponType || 'Unknown';
-  embed.setDescription(`${character.rarity ? '★'.repeat(Math.min(5, Number(character.rarity))) : ''} ${element} • ${weapon}`);
-
-  if (intent === 'stats' || intent === 'info') {
-    const stats = await getCharacterStats(character.name || name, '90').catch(() => null);
-    const fields = [];
-    if (stats) {
-      const hp = number(stats.hp || stats.basehp);
-      const atk = number(stats.attack || stats.atk || stats.baseatk);
-      const def = number(stats.defense || stats.def || stats.basedef);
-      if (hp) fields.push(`Base HP: ${hp}`);
-      if (atk) fields.push(`Base ATK: ${atk}`);
-      if (def) fields.push(`Base DEF: ${def}`);
-    }
-    if (fields.length) embed.addFields({ name: 'Level 90 Base Stats', value: fields.join('\n') });
+async function replyPlain(message, text) {
+  const parts = [];
+  let current = '';
+  for (const line of String(text).split('\n')) {
+    if ((current + '\n' + line).length > 1850) {
+      if (current) parts.push(current);
+      current = line;
+    } else current = current ? `${current}\n${line}` : line;
   }
-
-  if (character.description) embed.addFields({ name: 'الوصف', value: String(character.description).slice(0, 1024) });
-  embed.addFields({ name: 'تنبيه', value: 'هذه Base/Game Stats وليست أهداف Build. أرقام البيلد لا تُعرض إلا عندما تكون موجودة في مصدر Theorycrafting موثّق.' });
-  return embed;
+  if (current) parts.push(current);
+  if (!parts.length) return;
+  await message.reply({ content: parts[0], allowedMentions: { repliedUser: true } });
+  for (const part of parts.slice(1)) await message.channel.send({ content: part });
 }
 
-function helpEmbed() {
-  return new EmbedBuilder()
-    .setColor(0x6f83d6)
-    .setTitle('Neverless Genshin')
-    .setDescription('اسأل بشكل طبيعي داخل هذا الروم فقط. البوت لا يستخدم AI مدفوع ولا يخمّن بيانات غير موجودة.')
-    .addFields(
-      { name: 'أمثلة', value: '• احتاج تيم لأوديت\n• شنو ستات ساندروني؟\n• افضل سلاح لياي ميكو\n• ارتفاكت Furina\n• معلومات عن Hu Tao' },
-      { name: 'مصادر البيانات', value: 'بيانات اللعبة: genshin-db API\nالتوصيات: بيانات منظمة من KQM / مصادر Theorycrafting محددة، مع رابط المصدر وحالة التحديث.' },
-      { name: 'قاعدة الأمان', value: 'إذا المصدر غير موجود أو قديم، البوت يقول ذلك صراحة بدل اختراع Team أو أرقام.' },
-    );
+async function linkedAccount(message, lang) {
+  const uid = getLinkedUid(message.author.id);
+  if (!uid) {
+    await replyPlain(message, isArabic(lang) ? 'ما ربطت UID بعد. اكتب داخل هذا الروم: `ربط UID 7xxxxxxxx`' : 'No UID is linked yet. In this channel, type: `link UID 7xxxxxxxx`');
+    return null;
+  }
+  try { return await fetchAccount(uid); }
+  catch (error) {
+    console.error('[genshin] Enka fetch failed:', error.message);
+    await replyPlain(message, isArabic(lang) ? 'ما قدرت أوصل لبيانات Enka الآن. تأكد من الـUID وأن الـShowcase عام ثم جرّب بعد شوي.' : 'I could not reach Enka data right now. Check the UID and public Showcase, then try again shortly.');
+    return null;
+  }
 }
 
 async function handleGenshinMessage(message) {
-  if (!message?.guildId || message.author?.bot) return false;
-  if (message.channelId !== CHANNEL_ID) return false;
-
+  if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return false;
   const text = String(message.content || '').trim();
   if (!text) return false;
-  if (text.length > 600) {
-    await message.reply('السؤال طويل جدًا. اختصره إلى أقل من 600 حرف.');
-    return true;
-  }
+  const lang = detectLanguage(text);
 
   const now = Date.now();
   const last = cooldowns.get(message.author.id) || 0;
   if (now - last < COOLDOWN_MS) return true;
   cooldowns.set(message.author.id, now);
-  setTimeout(() => cooldowns.delete(message.author.id), COOLDOWN_MS + 1000).unref?.();
+  setTimeout(() => cooldowns.delete(message.author.id), COOLDOWN_MS + 500).unref?.();
 
   const intent = detectIntent(text);
+
   if (intent === 'help') {
-    await message.reply({ embeds: [helpEmbed()] });
+    await replyPlain(message, isArabic(lang)
+      ? '**Neverless Genshin**\n`بيلد Skirk` = آرتيفاكت + أسلحة + Main Stats + Targets\n`تيم Skirk` = التيمات المنشورة\n`بيانات Skirk` = Base Stats فقط\n`ربط UID 7xxxxxxxx` = ربط الـShowcase\n`شخصياتي` = الشخصيات الظاهرة في Showcase\n`حلل Skirk بحسابي` = تحليل بيلد Skirk الفعلي'
+      : '**Neverless Genshin**\n`Skirk build` = artifacts + weapons + main stats + targets\n`Skirk team` = published teams\n`Skirk base stats` = base stats only\n`link UID 7xxxxxxxx` = link Showcase\n`my characters` = visible Showcase characters\n`analyze Skirk on my account` = analyze your actual build');
     return true;
   }
 
-  await message.channel.sendTyping().catch(() => {});
-  const resolved = await resolveCharacter(text);
-  if (!resolved) {
-    await message.reply('ما قدرت أحدد الشخصية بثقة. اكتب اسم الشخصية الرسمي بالإنجليزي داخل السؤال، مثال: `Odette` أو `Yae Miko`.');
+  if (intent === 'unlink') {
+    await unlinkUid(message.author.id);
+    await replyPlain(message, isArabic(lang) ? 'تم فك ربط الـUID.' : 'UID unlinked.');
     return true;
   }
 
-  if (['team', 'weapon', 'artifact', 'build', 'talent'].includes(intent)) {
-    if (!resolved.guide) {
-      await message.reply(`عرفت الشخصية: **${resolved.name}**، لكن ما عندي لها توصية Build موثقة ومنظمة في قاعدة Neverless حاليًا. ما راح أركب لك Team أو أرقام من عندي. أقدر فقط أعرض بيانات اللعبة الأساسية إلى أن نضيف مصدر Theorycrafting موثوق.`);
+  if (intent === 'link') {
+    const uid = text.match(/\b\d{9,10}\b/)?.[0];
+    if (!uid) {
+      await replyPlain(message, isArabic(lang) ? 'اكتبها بهذا الشكل: `ربط UID 712345678`' : 'Use: `link UID 712345678`');
       return true;
     }
-    await message.reply({ embeds: [guideEmbed(resolved.guide, intent)] });
+    try {
+      const account = await fetchAccount(uid);
+      const summary = accountSummary(account);
+      await linkUid(message.author.id, uid);
+      const visible = summary.characters.length;
+      await replyPlain(message, isArabic(lang)
+        ? `تم ربط **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) بالـUID **${uid}**.\nEnka شايف حاليًا **${visible}** شخصية في Character Showcase.${summary.showCharacterDetails ? '' : '\nفعّل Show Character Details وحط الشخصيات اللي تبي أحللها في الـShowcase.'}\nجرّب الآن: \`شخصياتي\` أو \`حلل Skirk بحسابي\``
+        : `Linked **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) to UID **${uid}**.\nEnka currently sees **${visible}** Showcase characters.${summary.showCharacterDetails ? '' : '\nEnable Show Character Details and add the characters you want analyzed.'}\nTry: \`my characters\` or \`analyze Skirk on my account\``);
+    } catch (error) {
+      console.error('[genshin] UID link failed:', error.message);
+      await replyPlain(message, isArabic(lang) ? 'ما قدرت أقرأ هذا الـUID. تأكد من الرقم ومن أن حسابك وCharacter Showcase ظاهرين.' : 'I could not read that UID. Check the number and make sure the Character Showcase is visible.');
+    }
     return true;
   }
 
-  if (intent === 'stats' && resolved.guide) {
-    await message.reply({ embeds: [guideEmbed(resolved.guide, 'stats')] });
+  if (intent === 'characters') {
+    const account = await linkedAccount(message, lang);
+    if (!account) return true;
+    const chars = listCharacters(account);
+    const content = chars.length
+      ? chars.map((item) => `${item.name} Lv.${item.level} C${item.constellation}`).join(' • ')
+      : (isArabic(lang) ? 'ما في شخصيات مفصلة ظاهرة في الـShowcase.' : 'No detailed characters are visible in the Showcase.');
+    await replyPlain(message, `${isArabic(lang) ? '**الشخصيات الظاهرة عند Enka:**' : '**Characters visible to Enka:**'}\n${content}`);
     return true;
   }
 
-  const factual = await gameDataEmbed(resolved.name, intent);
-  if (factual) {
-    await message.reply({ embeds: [factual] });
+  const session = getSession(message);
+  if (intent === 'followupMissing' && session.character && session.teams.length) {
+    const mentioned = await extractMentionedCharacters(text);
+    const excluded = [...new Set([...(session.excluded || []), ...mentioned])];
+    saveSession(message, { excluded, language: lang });
+    const guide = await getGuide(session.character);
+    if (guide) await replyPlain(message, formatTeams(guide, lang, [], excluded));
     return true;
   }
 
-  if (resolved.guide) {
-    await message.reply({ embeds: [guideEmbed(resolved.guide, 'build')] });
+  if (intent === 'followupOwned' && session.character && session.teams.length) {
+    const owned = await extractMentionedCharacters(text);
+    const guide = await getGuide(session.character);
+    if (guide) await replyPlain(message, formatTeams(guide, lang, owned, session.excluded || []));
     return true;
   }
 
-  await message.reply(`لقيت اسم **${resolved.name}** لكن مصدر بيانات اللعبة الخارجي ما رجّع تفاصيل لها حاليًا. ما راح أخمّن.`);
+  const characterName = await resolveCharacter(text) || session.character;
+  if (!characterName) {
+    await replyPlain(message, isArabic(lang) ? 'حدد اسم الشخصية في سؤالك، مثال: `بيلد Skirk` أو `تيم Escoffier`.' : 'Include the character name, for example: `Skirk build` or `Escoffier team`.');
+    return true;
+  }
+  saveSession(message, { character: characterName, language: lang });
+
+  if (intent === 'base') {
+    const [character, stats] = await Promise.all([
+      getCharacter(characterName).catch(() => null),
+      getCharacterStats(characterName, '90').catch(() => null),
+    ]);
+    if (!character) await replyPlain(message, isArabic(lang) ? `ما لقيت بيانات اللعبة لـ **${characterName}**.` : `No game data found for **${characterName}**.`);
+    else await replyPlain(message, formatBaseData(character, stats, lang));
+    return true;
+  }
+
+  if (intent === 'accountBuild') {
+    const account = await linkedAccount(message, lang);
+    if (!account) return true;
+    const character = findCharacter(account, characterName);
+    if (!character) {
+      await replyPlain(message, isArabic(lang)
+        ? `**${characterName}** مو ظاهرة عند Enka حاليًا. حطها في Character Showcase داخل Genshin وفعّل **Show Character Details**، بعدها اكتب نفس السؤال مرة ثانية.`
+        : `**${characterName}** is not visible to Enka. Put them in your Genshin Character Showcase and enable **Show Character Details**, then ask again.`);
+      return true;
+    }
+    const guide = await getGuide(characterName);
+    if (!guide) {
+      await replyPlain(message, isArabic(lang) ? `أقدر أقرأ بيلد **${characterName}** من حسابك، لكن ما عندي Guide موثوق أقدر أقارن به حاليًا.` : `I can read your **${characterName}** build, but I don't currently have a reliable guide to compare it against.`);
+      return true;
+    }
+    await replyPlain(message, formatAccountAnalysis(getBuildSnapshot(character), guide, lang));
+    return true;
+  }
+
+  const guide = await getGuide(characterName);
+  if (!guide) {
+    await replyPlain(message, isArabic(lang) ? `ما قدرت أستخرج Guide موثوق لـ **${characterName}** حاليًا. ما راح أحول الطلب إلى Base Stats ولا أخمّن بيلد.` : `I couldn't retrieve a reliable guide for **${characterName}** right now. I won't replace it with base stats or guess a build.`);
+    return true;
+  }
+
+  if (intent === 'team') {
+    let owned = [];
+    if (/من حسابي|بحسابي|my account/i.test(text)) {
+      const account = await linkedAccount(message, lang);
+      if (!account) return true;
+      owned = listCharacters(account).map((item) => item.name);
+    } else {
+      const mentioned = await extractMentionedCharacters(text);
+      owned = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
+      if (owned.length) owned.unshift(characterName);
+    }
+    const teams = normalizeTeams(guide.teams);
+    saveSession(message, { character: characterName, teams, excluded: [], language: lang });
+    await replyPlain(message, formatTeams(guide, lang, owned));
+    return true;
+  }
+
+  if (intent === 'opinion') {
+    const role = guide.role ? ` ${guide.role}.` : '';
+    await replyPlain(message, isArabic(lang)
+      ? `**${characterName}**:${role || ' عندي لها بيانات بيلد وتيم منشورة.'}\nإذا تبي جواب عملي قل: \`بيلد ${characterName}\` أو \`تيم ${characterName}\`.`
+      : `**${characterName}**:${role || ' I have published build and team data for this character.'}\nFor a practical answer, ask: \`${characterName} build\` or \`${characterName} team\`.`);
+    return true;
+  }
+
+  if (intent === 'build' || intent === 'unknown') {
+    await replyPlain(message, formatBuild(guide, lang));
+    return true;
+  }
+
   return true;
 }
 
-module.exports = { CHANNEL_ID, handleGenshinMessage, resolveCharacter, detectIntent, phoneticSkeleton };
+module.exports = {
+  CHANNEL_ID,
+  handleGenshinMessage,
+  resolveCharacter,
+  detectIntent,
+  detectLanguage,
+  normalizeTeams,
+  rankTeams,
+};
