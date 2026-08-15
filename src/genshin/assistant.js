@@ -1,10 +1,18 @@
 'use strict';
 
-const { getGuideByText, normalize } = require('./guides');
+const { getGuideByText } = require('./guides');
 const { getGuide } = require('./guideClient');
 const { getCharacterNames, getCharacter, getCharacterStats } = require('./dataClient');
 const { getLinkedUid, linkUid, unlinkUid } = require('./accountStore');
 const { fetchAccount, findCharacter, getBuildSnapshot, listCharacters, accountSummary } = require('./enkaClient');
+const {
+  formatGuideAnswer,
+  formatTeams,
+  formatBaseData,
+  formatAccountAnalysis,
+  describeOpinion,
+  normalizeTeams,
+} = require('./responses');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const COOLDOWN_MS = 1800;
@@ -25,8 +33,7 @@ function getSession(message) {
 }
 
 function saveSession(message, patch) {
-  const current = getSession(message);
-  const next = { ...current, ...patch, updatedAt: Date.now() };
+  const next = { ...getSession(message), ...patch, updatedAt: Date.now() };
   sessions.set(sessionKey(message), next);
   return next;
 }
@@ -34,7 +41,7 @@ function saveSession(message, patch) {
 function detectLanguage(text) {
   const ar = (String(text || '').match(/[\u0600-\u06FF]/g) || []).length;
   const latin = (String(text || '').match(/[A-Za-z]/g) || []).length;
-  return ar >= latin * 0.35 && ar > 0 ? 'ar' : 'en';
+  return ar > 0 && ar >= latin * 0.35 ? 'ar' : 'en';
 }
 
 function phoneticSkeleton(input) {
@@ -66,6 +73,7 @@ function levenshtein(a, b) {
 async function resolveCharacter(text) {
   const curated = getGuideByText(text);
   if (curated) return curated.name;
+
   let names = [];
   try { names = await getCharacterNames(); } catch { return null; }
 
@@ -91,14 +99,15 @@ async function resolveCharacter(text) {
 async function extractMentionedCharacters(text) {
   let names = [];
   try { names = await getCharacterNames(); } catch { return []; }
+
   const lower = String(text || '').toLowerCase();
   const found = [];
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
     if (lower.includes(name.toLowerCase()) && !found.some((x) => x.toLowerCase() === name.toLowerCase())) found.push(name);
   }
 
-  const arabicTokens = String(text || '').match(/[\u0600-\u06FF]{3,}/g) || [];
-  for (const token of arabicTokens) {
+  const tokens = String(text || '').match(/[\u0600-\u06FF]{3,}/g) || [];
+  for (const token of tokens) {
     const left = phoneticSkeleton(token);
     if (left.length < 3) continue;
     let best = null;
@@ -122,176 +131,12 @@ function detectIntent(text) {
   if (/ما عندي|ما املك|ما أملك|بدون|dont have|don't have|without/i.test(text)) return 'followupMissing';
   if (/عندي|املك|أملك|i have/i.test(text)) return 'followupOwned';
   if (/رأيك|رايك|what do you think|is .* good/i.test(text)) return 'opinion';
-  if (/بيلد|\bbuild\b|\bstats?\b|ارتيفاكت|ارتيفكت|artifact|weapon|سلاح|ستات|احصائيات|إحصائيات|crit|كريت|goblet|sands|circlet/i.test(text)) return 'build';
+  if (/بيلد|\bbuild\b/i.test(text)) return 'build';
+  if (/ارتيفاكت|ارتيفكت|ارتي|artifact|artifacts|طقم/i.test(text)) return 'artifacts';
+  if (/weapon|weapons|سلاح|اسلحة|أسلحة/i.test(text)) return 'weapons';
+  if (/\bstats?\b|ستات|احصائيات|إحصائيات|crit|كريت|\ber\b|energy recharge|\bem\b|elemental mastery|\batk\b|attack|\bhp\b/i.test(text)) return 'stats';
   if (/مساعدة|مساعده|help/i.test(text)) return 'help';
   return 'unknown';
-}
-
-function cleanRecommendation(value) {
-  return String(value || '').split(/\s+[—–-]\s+/)[0].replace(/^\d+pc\s+/i, '').trim();
-}
-
-function expandTeamString(value) {
-  const cleaned = String(value || '')
-    .replace(/^Limited roster:\s*/i, '')
-    .replace(/\([^)]*\)/g, '')
-    .trim();
-  const slots = cleaned.split(/\s+[—–]\s+/).map((slot) => slot.trim()).filter(Boolean);
-  let teams = [[]];
-  for (const slot of slots) {
-    const options = slot.split(/\s*\/\s*/).map((x) => x.replace(/^C\d+\s+/i, '').trim()).filter(Boolean);
-    teams = teams.flatMap((team) => options.slice(0, 5).map((option) => [...team, option])).slice(0, 20);
-  }
-  return teams.filter((team) => team.length >= 3 && team.length <= 4).map((team) => team.slice(0, 4));
-}
-
-function normalizeTeams(teams) {
-  const result = [];
-  for (const team of teams || []) {
-    const expanded = Array.isArray(team) ? [team] : expandTeamString(team);
-    for (const members of expanded) {
-      const clean = members.map((x) => String(x).trim()).filter(Boolean);
-      if (clean.length !== 4) continue;
-      const key = clean.join('|').toLowerCase();
-      if (!result.some((x) => x.join('|').toLowerCase() === key)) result.push(clean);
-    }
-  }
-  return result;
-}
-
-function rankTeams(teams, owned = [], excluded = []) {
-  const ownedSet = new Set(owned.map((x) => x.toLowerCase()));
-  const excludedSet = new Set(excluded.map((x) => x.toLowerCase()));
-  return teams
-    .filter((team) => !team.some((member) => excludedSet.has(member.toLowerCase())))
-    .map((team, index) => ({
-      team,
-      index,
-      ownedCount: team.filter((member) => ownedSet.has(member.toLowerCase())).length,
-      missing: team.filter((member) => ownedSet.size && !ownedSet.has(member.toLowerCase())),
-    }))
-    .sort((a, b) => (b.ownedCount - a.ownedCount) || (a.missing.length - b.missing.length) || (a.index - b.index));
-}
-
-function isArabic(lang) { return lang === 'ar'; }
-
-function formatBuild(guide, lang) {
-  const ar = isArabic(lang);
-  const lines = [`**${guide.name} — ${ar ? 'البيلد' : 'Build'}**`];
-  if (guide.artifacts?.length) {
-    lines.push(`**${ar ? 'الآرتيفاكت' : 'Artifacts'}:**`);
-    guide.artifacts.slice(0, 3).forEach((item, i) => lines.push(`${i + 1}. ${cleanRecommendation(item)}`));
-  }
-  if (guide.stats?.main?.length) {
-    lines.push(`**${ar ? 'تقسيم القطع' : 'Main Stats'}:**`);
-    guide.stats.main.forEach((item) => lines.push(`• ${item}`));
-  }
-  if (guide.stats?.priority) lines.push(`**${ar ? 'الأولوية بالسب ستات' : 'Substat Priority'}:** ${guide.stats.priority}`);
-  if (guide.weapons?.length) {
-    lines.push(`**${ar ? 'الأسلحة' : 'Weapons'}:**`);
-    guide.weapons.slice(0, 5).forEach((item, i) => lines.push(`${i + 1}. ${cleanRecommendation(item)}`));
-  }
-  if (guide.stats?.targets?.length) {
-    lines.push(`**${ar ? 'أرقام تستهدفها تقريبًا' : 'Recommended Targets'}:**`);
-    guide.stats.targets.slice(0, 7).forEach((item) => lines.push(`• ${item}`));
-  }
-  return lines.join('\n');
-}
-
-function formatTeams(guide, lang, owned = [], excluded = []) {
-  const ar = isArabic(lang);
-  const teams = normalizeTeams(guide.teams);
-  const ranked = rankTeams(teams, owned, excluded);
-  if (!ranked.length) return ar ? `ما لقيت تيم منشور لـ **${guide.name}** يطابق القيود اللي ذكرتها.` : `I couldn't find a published **${guide.name}** team matching those restrictions.`;
-  const lines = [`**${guide.name} — ${ar ? 'التيمات' : 'Teams'}**`];
-  ranked.slice(0, 4).forEach((entry, i) => {
-    lines.push(`${i + 1}. ${entry.team.join(' • ')}`);
-    if (owned.length && entry.missing.length) lines.push(`   ${ar ? 'ينقصك' : 'Missing'}: ${entry.missing.join(', ')}`);
-  });
-  return lines.join('\n');
-}
-
-function formatBaseData(character, stats, lang) {
-  const ar = isArabic(lang);
-  const name = character?.name || 'Character';
-  const element = character?.elementText || character?.element || 'Unknown';
-  const weapon = character?.weaponText || character?.weapontype || character?.weaponType || 'Unknown';
-  const hp = stats?.hp || stats?.basehp;
-  const atk = stats?.attack || stats?.atk || stats?.baseatk;
-  const def = stats?.defense || stats?.def || stats?.basedef;
-  return [
-    `**${name} — ${ar ? 'البيانات الأساسية' : 'Base Stats'}**`,
-    `${element} • ${weapon}`,
-    hp != null ? `Base HP: ${Number(hp).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
-    atk != null ? `Base ATK: ${Number(atk).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
-    def != null ? `Base DEF: ${Number(def).toLocaleString('en-US', { maximumFractionDigits: 1 })}` : null,
-  ].filter(Boolean).join('\n');
-}
-
-function parseTarget(target) {
-  const text = String(target || '').replace(/,/g, '');
-  let key = null;
-  if (/CRIT Rate/i.test(text)) key = 'critRate';
-  else if (/CRIT DMG/i.test(text)) key = 'critDmg';
-  else if (/\bATK\b/i.test(text)) key = 'atk';
-  else if (/\bHP\b/i.test(text)) key = 'hp';
-  else if (/\bER\b|Energy Recharge/i.test(text)) key = 'er';
-  else if (/\bEM\b|Elemental Mastery/i.test(text)) key = 'em';
-  if (!key) return null;
-  const nums = [...text.matchAll(/(\d+(?:\.\d+)?)/g)].map((match) => Number(match[1]));
-  if (!nums.length) return null;
-  return { key, min: nums[0], max: nums[1] ?? nums[0], text: target };
-}
-
-function actualStatText(snapshot) {
-  const s = snapshot.stats;
-  return `HP ${s.hp ?? '?'} • ATK ${s.atk ?? '?'} • CR ${s.critRate ?? '?'}% • CD ${s.critDmg ?? '?'}% • ER ${s.er ?? '?'}% • EM ${s.em ?? '?'}`;
-}
-
-function compareTargets(snapshot, guide, lang) {
-  const ar = isArabic(lang);
-  const parsed = (guide.stats?.targets || []).map(parseTarget).filter(Boolean);
-  const counts = parsed.reduce((acc, item) => ({ ...acc, [item.key]: (acc[item.key] || 0) + 1 }), {});
-  const notes = [];
-  for (const target of parsed) {
-    if (counts[target.key] > 1) continue;
-    const value = snapshot.stats[target.key];
-    if (typeof value !== 'number') continue;
-    const lowThreshold = target.min === target.max ? target.min * 0.93 : target.min;
-    if (value < lowThreshold) notes.push(ar ? `${target.key}: عندك ${value} وأقل من الهدف ${target.text.split(':').slice(1).join(':').trim()}` : `${target.key}: ${value} is below ${target.text}`);
-    else if ((target.key === 'critRate' || target.key === 'er') && target.max > target.min && value > target.max * 1.08) notes.push(ar ? `${target.key}: عندك ${value}؛ أعلى من الرينج المعتاد، وقد تقدر تحول جزء منه لستات هجومية.` : `${target.key}: ${value} is above the usual range; some rolls may be movable into offensive stats.`);
-  }
-  return notes.slice(0, 4);
-}
-
-function formatAccountAnalysis(snapshot, guide, lang) {
-  const ar = isArabic(lang);
-  const lines = [`**${snapshot.name} — ${ar ? 'تحليل بيلدك' : 'Your Build'}**`];
-  lines.push(`${ar ? 'لفل' : 'Level'} ${snapshot.level} • C${snapshot.constellation}`);
-  lines.push(`**${ar ? 'الستات الحالية' : 'Current Stats'}:** ${actualStatText(snapshot)}`);
-
-  if (snapshot.weapon.name) {
-    lines.push(`**${ar ? 'سلاحك' : 'Weapon'}:** ${snapshot.weapon.name}${snapshot.weapon.refinement ? ` R${snapshot.weapon.refinement}` : ''}`);
-    if (guide.weapons?.length) lines.push(`${ar ? 'المقترح' : 'Recommended'}: ${guide.weapons.slice(0, 3).map(cleanRecommendation).join(' / ')}`);
-  }
-
-  const sets = Object.entries(snapshot.setCounts).sort((a, b) => b[1] - a[1]);
-  if (sets.length) lines.push(`**${ar ? 'الآرتيفاكت الحالي' : 'Current Artifacts'}:** ${sets.map(([name, count]) => `${count}pc ${name}`).join(' + ')}`);
-  if (guide.artifacts?.length) lines.push(`${ar ? 'المقترح' : 'Recommended'}: ${guide.artifacts.slice(0, 2).map(cleanRecommendation).join(' / ')}`);
-
-  const slots = ['sands', 'goblet', 'circlet'];
-  const actualMain = slots.map((slot) => snapshot.artifacts.find((item) => item.slot === slot)).filter(Boolean);
-  if (actualMain.length) lines.push(`**Main Stats:** ${actualMain.map((item) => `${item.slot}: ${item.mainStat} ${item.mainValue}`).join(' • ')}`);
-  if (guide.stats?.main?.length) lines.push(`${ar ? 'المطلوب غالبًا' : 'Usually Aim For'}: ${guide.stats.main.join(' • ')}`);
-
-  const notes = compareTargets(snapshot, guide, lang);
-  if (notes.length) {
-    lines.push(`**${ar ? 'أهم الملاحظات' : 'Main Notes'}:**`);
-    notes.forEach((note) => lines.push(`• ${note}`));
-  } else {
-    lines.push(ar ? 'أرقامك الأساسية ما فيها نقص واضح مقارنة بالرينجات المنشورة؛ بعدها يصير الحكم الأدق على القطع والروتيشن والتيم.' : 'Your core stats show no obvious shortfall against the published ranges; the next gains depend more on artifacts, rotation, and team context.');
-  }
-  return lines.join('\n');
 }
 
 async function replyPlain(message, text) {
@@ -301,10 +146,13 @@ async function replyPlain(message, text) {
     if ((current + '\n' + line).length > 1850) {
       if (current) parts.push(current);
       current = line;
-    } else current = current ? `${current}\n${line}` : line;
+    } else {
+      current = current ? `${current}\n${line}` : line;
+    }
   }
   if (current) parts.push(current);
   if (!parts.length) return;
+
   await message.reply({ content: parts[0], allowedMentions: { repliedUser: true } });
   for (const part of parts.slice(1)) await message.channel.send({ content: part });
 }
@@ -312,14 +160,42 @@ async function replyPlain(message, text) {
 async function linkedAccount(message, lang) {
   const uid = getLinkedUid(message.author.id);
   if (!uid) {
-    await replyPlain(message, isArabic(lang) ? 'ما ربطت UID بعد. اكتب داخل هذا الروم: `ربط UID 7xxxxxxxx`' : 'No UID is linked yet. In this channel, type: `link UID 7xxxxxxxx`');
+    await replyPlain(message, lang === 'ar'
+      ? 'ما ربطت UID بعد. اكتب داخل هذا الروم: `ربط UID 7xxxxxxxx`'
+      : 'No UID is linked yet. In this channel, type: `link UID 7xxxxxxxx`');
     return null;
   }
-  try { return await fetchAccount(uid); }
-  catch (error) {
+
+  try {
+    return await fetchAccount(uid);
+  } catch (error) {
     console.error('[genshin] Enka fetch failed:', error.message);
-    await replyPlain(message, isArabic(lang) ? 'ما قدرت أوصل لبيانات Enka الآن. تأكد من الـUID وأن الـShowcase عام ثم جرّب بعد شوي.' : 'I could not reach Enka data right now. Check the UID and public Showcase, then try again shortly.');
+    await replyPlain(message, lang === 'ar'
+      ? 'ما قدرت أوصل لبيانات Enka الآن. تأكد من الـUID وأن الـCharacter Showcase ظاهر ثم جرّب مرة ثانية.'
+      : 'I could not reach Enka data right now. Check the UID and make sure the Character Showcase is visible, then try again.');
     return null;
+  }
+}
+
+async function handleLink(message, lang, text) {
+  const uid = text.match(/\b\d{9,10}\b/)?.[0];
+  if (!uid) {
+    await replyPlain(message, lang === 'ar' ? 'اكتبها بهذا الشكل: `ربط UID 712345678`' : 'Use: `link UID 712345678`');
+    return;
+  }
+
+  try {
+    const account = await fetchAccount(uid);
+    const summary = accountSummary(account);
+    await linkUid(message.author.id, uid);
+    await replyPlain(message, lang === 'ar'
+      ? `تم ربط **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) بالـUID **${uid}**.\nEnka شايف حاليًا **${summary.characters.length}** شخصية من الـCharacter Showcase.${summary.showCharacterDetails ? '' : '\nفعّل Show Character Details داخل اللعبة عشان أقدر أقرأ البيلد.'}\nجرّب: \`شخصياتي\` أو \`حلل Skirk بحسابي\`.`
+      : `Linked **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) to UID **${uid}**.\nEnka currently sees **${summary.characters.length}** Character Showcase entries.${summary.showCharacterDetails ? '' : '\nEnable Show Character Details in-game so I can read builds.'}\nTry: \`my characters\` or \`analyze Skirk on my account\`.`);
+  } catch (error) {
+    console.error('[genshin] UID link failed:', error.message);
+    await replyPlain(message, lang === 'ar'
+      ? 'ما قدرت أقرأ هذا الـUID. تأكد من الرقم، وخلي الـCharacter Showcase ظاهر في بروفايل Genshin.'
+      : 'I could not read that UID. Check the number and make your Genshin Character Showcase visible.');
   }
 }
 
@@ -338,36 +214,20 @@ async function handleGenshinMessage(message) {
   const intent = detectIntent(text);
 
   if (intent === 'help') {
-    await replyPlain(message, isArabic(lang)
-      ? '**Neverless Genshin**\n`بيلد Skirk` = آرتيفاكت + أسلحة + Main Stats + Targets\n`تيم Skirk` = التيمات المنشورة\n`بيانات Skirk` = Base Stats فقط\n`ربط UID 7xxxxxxxx` = ربط الـShowcase\n`شخصياتي` = الشخصيات الظاهرة في Showcase\n`حلل Skirk بحسابي` = تحليل بيلد Skirk الفعلي'
-      : '**Neverless Genshin**\n`Skirk build` = artifacts + weapons + main stats + targets\n`Skirk team` = published teams\n`Skirk base stats` = base stats only\n`link UID 7xxxxxxxx` = link Showcase\n`my characters` = visible Showcase characters\n`analyze Skirk on my account` = analyze your actual build');
+    await replyPlain(message, lang === 'ar'
+      ? '**Neverless Genshin**\n`بيلد Skirk` = البيلد كامل\n`ارتيفاكت Skirk` = الآرتيفاكت وتقسيم القطع\n`سلاح Skirk` = الأسلحة فقط\n`إحصائيات Skirk` = الستات المطلوبة\n`بيانات Skirk` أو `Skirk base stats` = Base Stats\n`تيم Skirk` = التيمات المنشورة\n`ربط UID 7xxxxxxxx` = ربط حسابك\n`حلل Skirk بحسابي` = تحليل بيلدك الفعلي'
+      : '**Neverless Genshin**\n`Skirk build` = full build\n`Skirk artifacts` = artifacts + main stats\n`Skirk weapon` = weapons only\n`Skirk stats` = recommended target stats\n`Skirk base stats` = base game stats\n`Skirk team` = published teams\n`link UID 7xxxxxxxx` = link your account\n`analyze Skirk on my account` = analyze your real build');
     return true;
   }
 
   if (intent === 'unlink') {
     await unlinkUid(message.author.id);
-    await replyPlain(message, isArabic(lang) ? 'تم فك ربط الـUID.' : 'UID unlinked.');
+    await replyPlain(message, lang === 'ar' ? 'تم فك ربط الـUID.' : 'UID unlinked.');
     return true;
   }
 
   if (intent === 'link') {
-    const uid = text.match(/\b\d{9,10}\b/)?.[0];
-    if (!uid) {
-      await replyPlain(message, isArabic(lang) ? 'اكتبها بهذا الشكل: `ربط UID 712345678`' : 'Use: `link UID 712345678`');
-      return true;
-    }
-    try {
-      const account = await fetchAccount(uid);
-      const summary = accountSummary(account);
-      await linkUid(message.author.id, uid);
-      const visible = summary.characters.length;
-      await replyPlain(message, isArabic(lang)
-        ? `تم ربط **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) بالـUID **${uid}**.\nEnka شايف حاليًا **${visible}** شخصية في Character Showcase.${summary.showCharacterDetails ? '' : '\nفعّل Show Character Details وحط الشخصيات اللي تبي أحللها في الـShowcase.'}\nجرّب الآن: \`شخصياتي\` أو \`حلل Skirk بحسابي\``
-        : `Linked **${summary.nickname || uid}** (AR ${summary.adventureRank ?? '?'}) to UID **${uid}**.\nEnka currently sees **${visible}** Showcase characters.${summary.showCharacterDetails ? '' : '\nEnable Show Character Details and add the characters you want analyzed.'}\nTry: \`my characters\` or \`analyze Skirk on my account\``);
-    } catch (error) {
-      console.error('[genshin] UID link failed:', error.message);
-      await replyPlain(message, isArabic(lang) ? 'ما قدرت أقرأ هذا الـUID. تأكد من الرقم ومن أن حسابك وCharacter Showcase ظاهرين.' : 'I could not read that UID. Check the number and make sure the Character Showcase is visible.');
-    }
+    await handleLink(message, lang, text);
     return true;
   }
 
@@ -377,17 +237,18 @@ async function handleGenshinMessage(message) {
     const chars = listCharacters(account);
     const content = chars.length
       ? chars.map((item) => `${item.name} Lv.${item.level} C${item.constellation}`).join(' • ')
-      : (isArabic(lang) ? 'ما في شخصيات مفصلة ظاهرة في الـShowcase.' : 'No detailed characters are visible in the Showcase.');
-    await replyPlain(message, `${isArabic(lang) ? '**الشخصيات الظاهرة عند Enka:**' : '**Characters visible to Enka:**'}\n${content}`);
+      : (lang === 'ar' ? 'ما في شخصيات بتفاصيلها ظاهرة لـEnka حاليًا.' : 'No detailed Showcase characters are visible to Enka right now.');
+    await replyPlain(message, `${lang === 'ar' ? '**الشخصيات الظاهرة عند Enka:**' : '**Characters visible to Enka:**'}\n${content}`);
     return true;
   }
 
   const session = getSession(message);
+
   if (intent === 'followupMissing' && session.character && session.teams.length) {
     const mentioned = await extractMentionedCharacters(text);
     const excluded = [...new Set([...(session.excluded || []), ...mentioned])];
-    saveSession(message, { excluded, language: lang });
     const guide = await getGuide(session.character);
+    saveSession(message, { excluded, language: lang });
     if (guide) await replyPlain(message, formatTeams(guide, lang, [], excluded));
     return true;
   }
@@ -401,7 +262,9 @@ async function handleGenshinMessage(message) {
 
   const characterName = await resolveCharacter(text) || session.character;
   if (!characterName) {
-    await replyPlain(message, isArabic(lang) ? 'حدد اسم الشخصية في سؤالك، مثال: `بيلد Skirk` أو `تيم Escoffier`.' : 'Include the character name, for example: `Skirk build` or `Escoffier team`.');
+    await replyPlain(message, lang === 'ar'
+      ? 'حدد اسم الشخصية في السؤال، مثال: `بيلد Skirk` أو `تيم Escoffier`.'
+      : 'Include the character name, for example: `Skirk build` or `Escoffier team`.');
     return true;
   }
   saveSession(message, { character: characterName, language: lang });
@@ -411,7 +274,7 @@ async function handleGenshinMessage(message) {
       getCharacter(characterName).catch(() => null),
       getCharacterStats(characterName, '90').catch(() => null),
     ]);
-    if (!character) await replyPlain(message, isArabic(lang) ? `ما لقيت بيانات اللعبة لـ **${characterName}**.` : `No game data found for **${characterName}**.`);
+    if (!character) await replyPlain(message, lang === 'ar' ? `ما لقيت بيانات اللعبة لـ **${characterName}**.` : `No game data found for **${characterName}**.`);
     else await replyPlain(message, formatBaseData(character, stats, lang));
     return true;
   }
@@ -419,22 +282,26 @@ async function handleGenshinMessage(message) {
   if (intent === 'team') {
     const guide = await getGuide(characterName);
     if (!guide) {
-      await replyPlain(message, isArabic(lang) ? `ما قدرت أستخرج تيمات موثوقة لـ **${characterName}** حاليًا.` : `I couldn't retrieve reliable teams for **${characterName}** right now.`);
+      await replyPlain(message, lang === 'ar' ? `ما قدرت أستخرج تيمات موثوقة لـ **${characterName}** حاليًا.` : `I couldn't retrieve reliable teams for **${characterName}** right now.`);
       return true;
     }
+
     let owned = [];
+    let excluded = [];
     if (/من حسابي|بحسابي|my account/i.test(text)) {
       const account = await linkedAccount(message, lang);
       if (!account) return true;
       owned = listCharacters(account).map((item) => item.name);
     } else {
       const mentioned = await extractMentionedCharacters(text);
-      owned = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
-      if (owned.length) owned.unshift(characterName);
+      const others = mentioned.filter((name) => name.toLowerCase() !== characterName.toLowerCase());
+      if (/بدون|ما عندي|ما املك|ما أملك|without|don't have|dont have/i.test(text)) excluded = others;
+      else if (others.length) owned = [characterName, ...others];
     }
+
     const teams = normalizeTeams(guide.teams);
-    saveSession(message, { character: characterName, teams, excluded: [], language: lang });
-    await replyPlain(message, formatTeams(guide, lang, owned));
+    saveSession(message, { character: characterName, teams, excluded, language: lang });
+    await replyPlain(message, formatTeams(guide, lang, owned, excluded));
     return true;
   }
 
@@ -443,14 +310,17 @@ async function handleGenshinMessage(message) {
     if (!account) return true;
     const character = findCharacter(account, characterName);
     if (!character) {
-      await replyPlain(message, isArabic(lang)
-        ? `**${characterName}** مو ظاهرة عند Enka حاليًا. حطها في Character Showcase داخل Genshin وفعّل **Show Character Details**، بعدها اكتب نفس السؤال مرة ثانية.`
+      await replyPlain(message, lang === 'ar'
+        ? `**${characterName}** مو ظاهرة عند Enka. حطها في Character Showcase داخل Genshin وفعّل **Show Character Details**، وبعدها أرسل نفس السؤال.`
         : `**${characterName}** is not visible to Enka. Put them in your Genshin Character Showcase and enable **Show Character Details**, then ask again.`);
       return true;
     }
+
     const guide = await getGuide(characterName);
     if (!guide) {
-      await replyPlain(message, isArabic(lang) ? `أقدر أقرأ بيلد **${characterName}** من حسابك، لكن ما عندي Guide موثوق أقدر أقارن به حاليًا.` : `I can read your **${characterName}** build, but I don't currently have a reliable guide to compare it against.`);
+      await replyPlain(message, lang === 'ar'
+        ? `أقدر أقرأ بيلد **${characterName}** من حسابك، لكن ما عندي Guide موثوق أقارنه فيه حاليًا.`
+        : `I can read your **${characterName}** build, but I do not currently have a reliable guide to compare it against.`);
       return true;
     }
     await replyPlain(message, formatAccountAnalysis(getBuildSnapshot(character), guide, lang));
@@ -459,22 +329,19 @@ async function handleGenshinMessage(message) {
 
   const guide = await getGuide(characterName);
   if (!guide) {
-    await replyPlain(message, isArabic(lang) ? `ما قدرت أستخرج Guide موثوق لـ **${characterName}** حاليًا. ما راح أحول الطلب إلى Base Stats ولا أخمّن بيلد.` : `I couldn't retrieve a reliable guide for **${characterName}** right now. I won't replace it with base stats or guess a build.`);
+    await replyPlain(message, lang === 'ar'
+      ? `ما قدرت أستخرج Guide موثوق لـ **${characterName}** حاليًا. ما راح أحول سؤالك إلى Base Stats ولا أخمّن.`
+      : `I couldn't retrieve a reliable guide for **${characterName}** right now. I won't replace your request with base stats or guess.`);
     return true;
   }
 
   if (intent === 'opinion') {
-    await replyPlain(message, isArabic(lang)
-      ? `**${characterName}** عندي لها توصيات بيلد وتيم منشورة. إذا تبي جواب عملي قل: \`بيلد ${characterName}\` أو \`تيم ${characterName}\`.`
-      : `**${characterName}**${guide.role ? ` — ${guide.role}` : ''}. For a practical answer, ask: \`${characterName} build\` or \`${characterName} team\`.`);
+    await replyPlain(message, describeOpinion(guide, lang));
     return true;
   }
 
-  if (intent === 'build' || intent === 'unknown') {
-    await replyPlain(message, formatBuild(guide, lang));
-    return true;
-  }
-
+  const guideIntent = ['artifacts', 'weapons', 'stats', 'build'].includes(intent) ? intent : 'build';
+  await replyPlain(message, formatGuideAnswer(guide, lang, guideIntent, text));
   return true;
 }
 
@@ -484,6 +351,4 @@ module.exports = {
   resolveCharacter,
   detectIntent,
   detectLanguage,
-  normalizeTeams,
-  rankTeams,
 };
