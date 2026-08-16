@@ -9,7 +9,7 @@ const { handleHelpMessage } = require('./helpRouter');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 const { installModeration } = require('../moderation');
-const { installActivity } = require('../activity');
+const { installActivity } = require('../activityV2');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const originalLogin = Client.prototype.login;
