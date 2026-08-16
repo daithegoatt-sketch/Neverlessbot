@@ -77,7 +77,7 @@ function getRecord(guildId, userId) {
       weekKey: '', weekXp: 0,
       monthKey: '', monthXp: 0,
       invites: 0,
-      updatedAt: new Date().toISOString(),
+      updatedAt: '1970-01-01T00:00:00.000Z',
     };
   }
   return guild.users[id];
@@ -476,6 +476,7 @@ async function reconcileInviteCount(guild, userId) {
 }
 
 async function handleInviteCommand(message) {
+  await readyPromise;
   const lang = language(message.content);
   const target = message.mentions?.users?.first?.() || message.author;
   const count = await reconcileInviteCount(message.guild, target.id);
@@ -488,6 +489,7 @@ async function handleInviteCommand(message) {
 }
 
 async function handleTopCommand(message) {
+  await readyPromise;
   const lang = language(message.content);
   const period = parsePeriod(message.content);
   const payload = renderLeaderboard(message.guildId, message.author.id, period, 0, lang);
@@ -538,6 +540,7 @@ function installActivity(client) {
 
   client.on('messageCreate', (message) => {
     if (!message?.guildId || message.author?.bot) return;
+    if (!targetGuildId || message.guildId !== targetGuildId) return;
     awardMessageXp(message);
     if (message.channelId !== COMMAND_CHANNEL_ID) return;
     if (isTopCommand(message.content)) {
