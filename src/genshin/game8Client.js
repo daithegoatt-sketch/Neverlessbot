@@ -81,14 +81,25 @@ async function discoverCharacterUrl(name) {
 function headingText(node, $) { return normalize($(node).text()); }
 function elementStream($) { return $('h2,h3,h4,table').toArray(); }
 
-function precedingHeadings(elements, index, $, limit = 4) {
-  const result = [];
-  for (let i = index - 1; i >= 0 && result.length < limit; i -= 1) {
-    const tag = elements[i].tagName?.toLowerCase();
-    if (!/^h[234]$/.test(tag || '')) continue;
-    result.push({ level: Number(tag[1]), text: headingText(elements[i], $) });
-  }
-  return result;
+function updateHeadingScope(scope, node, $) {
+  const tag = node.tagName?.toLowerCase();
+  if (!/^h[234]$/.test(tag || '')) return false;
+  const level = Number(tag[1]);
+  scope[level] = headingText(node, $);
+  for (let deeper = level + 1; deeper <= 4; deeper += 1) scope[deeper] = null;
+  return true;
+}
+
+function scopedContext(scope) {
+  return [scope[2], scope[3], scope[4]].filter(Boolean).join(' | ');
+}
+
+function teamCategory(scope) {
+  const h2 = scope[2] || '';
+  const context = scopedContext(scope);
+  if (!/team comps|team compositions|best team/i.test(h2) && !/team comps|team compositions/i.test(context)) return null;
+  if (/\bf2p\b|free[ -]?to[ -]?play|free team/i.test(context)) return 'f2p';
+  return 'premium';
 }
 
 function tableRows(table, $) {
@@ -177,10 +188,6 @@ function parseTargetRows(rows) {
   return out.slice(0, 8);
 }
 
-function tableContext(elements, index, $) {
-  return precedingHeadings(elements, index, $, 5).map((h) => h.text).join(' | ');
-}
-
 function extractTeamsFromRows(rows, characterNames, mainName) {
   const teams = [];
   for (const row of rows) {
@@ -215,6 +222,7 @@ async function parseGame8Guide(name, url, html) {
   ]);
 
   const elements = elementStream($);
+  const headingScope = { 2: null, 3: null, 4: null };
   const guide = {
     name, source: 'Game8', url, role: null,
     stats: { main: [], priority: null, targets: [] },
@@ -229,10 +237,11 @@ async function parseGame8Guide(name, url, html) {
 
   for (let i = 0; i < elements.length; i += 1) {
     const node = elements[i];
+    if (updateHeadingScope(headingScope, node, $)) continue;
     if (node.tagName?.toLowerCase() !== 'table') continue;
     const rows = tableRows(node, $);
     if (!rows.length) continue;
-    const context = tableContext(elements, i, $);
+    const context = scopedContext(headingScope);
     const tableText = rows.flat().join(' | ');
     const combined = `${context} | ${tableText}`;
 
@@ -253,11 +262,14 @@ async function parseGame8Guide(name, url, html) {
       if (/free.to.play|f2p|free weapon/i.test(context)) guide.f2pWeapons.push(...weapons);
       else guide.weapons.push(...weapons);
     }
-    if (/team comps|teams|team compositions/i.test(context)) {
+
+    const category = teamCategory(headingScope);
+    if (category) {
       const teams = extractTeamsFromRows(rows, characterNames, name);
-      if (/f2p|free.to.play|free team/i.test(context)) guide.teams.f2p.push(...teams);
+      if (category === 'f2p') guide.teams.f2p.push(...teams);
       else guide.teams.premium.push(...teams);
     }
+
     if (/combo|rotation|how to play/i.test(context)) {
       for (const row of rows) {
         const step = row.join(' → ').replace(/\s+/g, ' ').trim();
