@@ -1,5 +1,7 @@
 'use strict';
 
+const { KNOWN_CHARACTER_NAMES } = require('./characterAliases');
+
 const API = 'https://genshin-db-api.vercel.app/api/v5';
 const CACHE_TTL = 6 * 60 * 60 * 1000;
 const nameCaches = new Map();
@@ -30,7 +32,8 @@ async function getNames(folder) {
 }
 
 async function getCharacterNames() {
-  return getNames('characters');
+  const live = await getNames('characters');
+  return [...new Set([...live, ...KNOWN_CHARACTER_NAMES])];
 }
 
 async function getWeaponNames() {
