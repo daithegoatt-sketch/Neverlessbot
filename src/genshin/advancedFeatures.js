@@ -4,7 +4,7 @@ const { getLinkedUid } = require('./accountStore');
 const { fetchAccount } = require('./enkaClient');
 const { getGuide, normalizeTeams } = require('./guideClient');
 const { resolveCharacter, resolveCharacterMentions } = require('./characterResolver');
-const { reviewTeam, accountTeamCandidates, formatReview, formatAccountCandidates, overlapCount } = require('./teamEvaluator');
+const { reviewTeam, accountTeamCandidates, formatReview, formatAccountCandidates, overlapCount, premiumTeamsFor } = require('./teamEvaluator');
 const { explainCharacter } = require('./characterExplain');
 const { findTeamRotation } = require('./kqmClient');
 const {
@@ -39,7 +39,7 @@ function isTeamCombo(text) {
 }
 
 function isCharacterExplain(text) {
-  return /^(?:اشرح|شرح|explain|guide)\b/iu.test(String(text).trim()) && !isTeamCombo(text);
+  return /^(?:اشرح|شرح|explain|guide)(?:\s|$)/iu.test(String(text).trim()) && !isTeamCombo(text);
 }
 
 function isLeaderboard(text) {
@@ -126,7 +126,7 @@ async function detectMainCharacter(names) {
   const reviews = [];
   for (const name of names) {
     const guide = await getGuide(name).catch(() => null);
-    const premium = normalizeTeams(guide?.teams).premium;
+    const premium = premiumTeamsFor(name, guide);
     let best = 0;
     for (const team of premium) best = Math.max(best, overlapCount(names, team));
     reviews.push({ name, overlap: best });
