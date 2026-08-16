@@ -57,8 +57,17 @@ function groupLabel(value, characterName) {
   return text.replace(/\s+Teams?$/i, '').replace(/^Best\s+/i, '').trim();
 }
 
-function slotTeamLine(slots) {
-  return (slots || []).map((slot) => (slot || []).join(' / ')).join(' • ');
+function reqKey(value) {
+  return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function optionLabel(name, requirements = {}) {
+  const constellation = Number(requirements?.[reqKey(name)]?.constellation);
+  return Number.isInteger(constellation) ? `${name} C${constellation}` : name;
+}
+
+function slotTeamLine(slots, requirements = {}) {
+  return (slots || []).map((slot) => (slot || []).map((name) => optionLabel(name, requirements)).join(' / ')).join(' | ');
 }
 
 function groupedTeamText(guide, lang, type) {
@@ -71,7 +80,7 @@ function groupedTeamText(guide, lang, type) {
   let shownGroups = 0;
 
   for (const group of groups) {
-    if (shownGroups >= 8) break;
+    if (shownGroups >= 10) break;
     const role = groupLabel(group.role, guide.name);
     const category = groupLabel(group.category, guide.name);
     const labels = [category, role].filter((value, index, all) => value && all.indexOf(value) === index);
@@ -79,17 +88,17 @@ function groupedTeamText(guide, lang, type) {
 
     const displays = [];
     for (const slots of group.slotTeams || []) {
-      const line = slotTeamLine(slots);
+      const line = slotTeamLine(slots, group.requirements);
       if (line && !displays.includes(line)) displays.push(line);
     }
     if (!displays.length) {
       for (const team of group.teams || []) {
-        const line = team.join(' • ');
+        const line = team.join(' | ');
         if (line && !displays.includes(line)) displays.push(line);
       }
     }
 
-    displays.slice(0, 2).forEach((line) => lines.push(`• ${line}`));
+    displays.slice(0, 3).forEach((line) => lines.push(`• ${line}`));
     shownGroups += 1;
   }
 
@@ -102,7 +111,7 @@ function teamText(guide, lang, type = 'premium', limit = 4) {
 
   const A = ar(lang), teams = normalizeTeams(guide, type), typeText = type === 'f2p' ? 'F2P' : (A ? 'أفضل التيمات' : 'Best Teams'), lines = [`**${guide.name} — ${typeText}**`];
   if (!teams.length) { lines.push(A ? 'ما لقيت تيم منشور بهذا التصنيف حاليًا.' : 'No published team is available for that category right now.'); return lines.join('\n'); }
-  teams.slice(0, limit).forEach((team, i) => lines.push(`${i + 1}. ${team.join(' • ')}`)); return lines.join('\n');
+  teams.slice(0, limit).forEach((team, i) => lines.push(`${i + 1}. ${team.join(' | ')}`)); return lines.join('\n');
 }
 
 function comboText(guide, lang) {
@@ -130,7 +139,7 @@ function replacementText(character, currentTeam, alternatives, missingNames, lan
   const A = ar(lang), best = closestReplacement(currentTeam, alternatives, missingNames), missing = missingNames.join(', ');
   if (!best) return A ? `بعد استبعاد **${missing}** ما لقيت بديل منشور قريب لنفس تيم **${character}**.` : `After excluding **${missing}**, I couldn't find a close published replacement for that **${character}** team.`;
   const replacement = best.replacements.join(' / ');
-  return A ? `إذا ما عندك **${missing}**، أقرب بديل منشور هو **${replacement || 'تغيير التشكيلة'}**.\nالتيم يصير: **${best.team.join(' • ')}**` : `If you don't have **${missing}**, the closest published replacement is **${replacement || 'a different shell'}**.\nUse: **${best.team.join(' • ')}**`;
+  return A ? `إذا ما عندك **${missing}**، أقرب بديل منشور هو **${replacement || 'تغيير التشكيلة'}**.\nالتيم يصير: **${best.team.join(' | ')}**` : `If you don't have **${missing}**, the closest published replacement is **${replacement || 'a different shell'}**.\nUse: **${best.team.join(' | ')}**`;
 }
 
 function ratingWord(score, lang) {
@@ -200,4 +209,4 @@ function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, ak
   return lines.join('\n');
 }
 
-module.exports = { buildText, artifactsText, weaponsText, statsText, teamText, comboText, baseText, opinionText, replacementText, accountEvaluationText, normalizeTeams, closestReplacement, groupedTeamText };
+module.exports = { buildText, artifactsText, weaponsText, statsText, teamText, comboText, baseText, opinionText, replacementText, accountEvaluationText, normalizeTeams, closestReplacement, groupedTeamText, slotTeamLine };
