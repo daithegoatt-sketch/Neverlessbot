@@ -3,7 +3,9 @@
 const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
+const { handleAdvancedMessage } = require('./advancedFeatures');
 const { rewriteCharacterAliases } = require('./characterAliases');
+const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const originalLogin = Client.prototype.login;
@@ -56,6 +58,13 @@ function wrappedMessage(message, client) {
 Client.prototype.login = function neverlessGenshinLogin(token) {
   if (!this.__neverlessGenshinInstalled) {
     this.__neverlessGenshinInstalled = true;
+
+    this.once('ready', () => {
+      initDiscordPersistence(this, CHANNEL_ID).catch((error) => {
+        console.warn('[genshin-store] Persistent store initialization failed:', error.message);
+      });
+    });
+
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return;
       if (!hasBotMention(message, this)) return;
@@ -63,20 +72,22 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
       const wrapped = wrappedMessage(message, this);
       if (!String(wrapped.content || '').trim()) {
         message.reply({
-          content: 'اسألني عن قينشن بعد المنشن، مثال: `بيلد Alyosha` أو `تقييم Skirk بحسابي`.',
+          content: 'اسألني عن قينشن بعد المنشن، مثال: `بيلد Alyosha` أو `تقييم Skirk بحسابي` أو `Help`.',
           allowedMentions: { repliedUser: false },
         }).catch(() => {});
         return;
       }
 
       Promise.resolve()
-        .then(() => handleRatingMessage(wrapped))
+        .then(() => whenAccountStoreReady())
+        .then(() => handleAdvancedMessage(wrapped))
+        .then((handled) => handled ? true : handleRatingMessage(wrapped))
         .then((handled) => handled ? true : handleGenshinMessage(wrapped))
         .catch((error) => {
           console.error('[genshin] Unhandled message error:', error);
         });
     });
-    console.log('[genshin] Neverless Genshin mention-only reply mode installed.');
+    console.log('[genshin] Neverless Genshin advanced mention-only reply mode installed.');
   }
   return originalLogin.call(this, token);
 };
