@@ -1,7 +1,7 @@
 'use strict';
 
 const ENTRIES = [
-  { name: 'Alyosha', aliases: ['alyosha', 'aylosha', 'alyosha', 'اليوشا', 'أليوشا', 'اليوشا'] },
+  { name: 'Alyosha', aliases: ['alyosha', 'aylosha', 'alyocha', 'اليوشا', 'أليوشا', 'اليوشه'] },
   { name: 'Skirk', aliases: ['skirk', 'سكيرك', 'سكرك'] },
   { name: 'Escoffier', aliases: ['escoffier', 'escofier', 'اسكوفيه', 'اسكوفيير', 'اسكوفر', 'إسكوفييه'] },
   { name: 'Wriothesley', aliases: ['wriothesley', 'wriothesly', 'riothesley', 'ريزلي', 'رايزلي', 'ريوثسلي'] },
@@ -10,11 +10,11 @@ const ENTRIES = [
   { name: 'Flins', aliases: ['flins', 'فلينس'] },
   { name: 'Durin', aliases: ['durin', 'دورين'] },
   { name: 'Sandrone', aliases: ['sandrone', 'ساندروني', 'ساندرون'] },
-  { name: 'Yae Miko', aliases: ['yae miko', 'yaemiko', 'ياي ميكو', 'ياي مiko', 'ميكو'] },
+  { name: 'Yae Miko', aliases: ['yae miko', 'yaemiko', 'ياي ميكو', 'ياي', 'ميكو'] },
   { name: 'Mavuika', aliases: ['mavuika', 'مافويكا', 'مافويكه'] },
   { name: 'Citlali', aliases: ['citlali', 'سيتلالي', 'سيتلاني'] },
   { name: 'Xilonen', aliases: ['xilonen', 'شيلونين', 'زيلونين'] },
-  { name: 'Columbina', aliases: ['columbina', 'كولومبينا', 'كولومبينا'] },
+  { name: 'Columbina', aliases: ['columbina', 'كولومبينا'] },
   { name: 'Ineffa', aliases: ['ineffa', 'اينيفا', 'إينيفا', 'اينفا'] },
   { name: 'Zibai', aliases: ['zibai', 'zi bai', 'زيباي', 'زي باي'] },
   { name: 'Nicole', aliases: ['nicole', 'نيكول'] },
