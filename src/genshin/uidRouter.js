@@ -1,6 +1,5 @@
 'use strict';
 
-const { PermissionFlagsBits } = require('discord.js');
 const { getLinkedUid, getAllLinkedUsers, linkUid, unlinkUid } = require('./accountStore');
 const { fetchAccount, accountSummary } = require('./enkaClient');
 const { clearLeaderboardCache } = require('./leaderboard');
@@ -63,7 +62,7 @@ async function claim(message, uid, lang) {
       return;
     }
     await send(message, lang === 'ar'
-      ? `أنت رابط حساب بالفعل. إذا الـUID الحالي غلط استخدم \`فك ربط UID\` أول، وبعدها اربط الصحيح.`
+      ? 'أنت رابط حساب بالفعل. إذا الـUID الحالي غلط استخدم `فك ربط UID` أول، وبعدها اربط الصحيح.'
       : 'You already have a linked account. Use `unlink UID` first if it is wrong, then link the correct one.');
     return;
   }
@@ -88,8 +87,10 @@ async function claim(message, uid, lang) {
   }
 
   // Serialize the final ownership check + write so two users cannot claim the same UID at once.
-  await new Promise((resolve) => {
-    claimQueue = claimQueue.then(async () => {
+  // Recover from a previous failed operation so one transient Discord/storage failure never poisons the queue.
+  const operation = claimQueue
+    .catch(() => {})
+    .then(async () => {
       const nowCurrent = getLinkedUid(userId);
       const nowOwner = findOwner(uid);
       if (nowCurrent && String(nowCurrent) !== String(uid)) {
@@ -121,8 +122,10 @@ async function claim(message, uid, lang) {
           : ' Enable **Show Character Details** and add the character to Showcase for analysis.';
         await send(message, `Linked **${summary.nickname || uid}** — AR ${summary.adventureRank ?? '?'} — UID **${uid}**.${next}`);
       }
-    }).finally(resolve);
-  });
+    });
+
+  claimQueue = operation;
+  await operation;
 }
 
 async function handleUidMessage(message) {
