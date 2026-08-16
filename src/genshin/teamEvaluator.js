@@ -5,6 +5,19 @@ const { fetchAkashaPercentile } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
 const { findCharacter, getBuildSnapshot, listCharacters } = require('./enkaClient');
 
+const SOURCE_BACKED_PREMIUM = {
+  sandrone: [
+    ['Sandrone', 'Yae Miko', 'Qiqi', 'Escoffier'],
+    ['Sandrone', 'Yae Miko', 'Qiqi', 'Nicole'],
+    ['Sandrone', 'Yae Miko', 'Qiqi', 'Beidou'],
+    ['Sandrone', 'Yae Miko', 'Qiqi', 'Diona'],
+    ['Sandrone', 'Yae Miko', 'Escoffier', 'Nicole'],
+    ['Sandrone', 'Beidou', 'Diona', 'Sucrose'],
+    ['Sandrone', 'Beidou', 'Diona', 'Xilonen'],
+    ['Sandrone', 'Columbina', 'Ineffa', 'Yae Miko'],
+  ],
+};
+
 function key(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
@@ -30,6 +43,23 @@ function exactTeam(a, b) {
   return uniqueNames(a).length === 4 && uniqueNames(b).length === 4 && overlapCount(a, b) === 4;
 }
 
+function dedupeTeams(teams) {
+  const out = [];
+  for (const team of teams || []) {
+    const clean = uniqueNames(team).slice(0, 4);
+    if (clean.length !== 4) continue;
+    if (!out.some((existing) => exactTeam(existing, clean))) out.push(clean);
+  }
+  return out;
+}
+
+function premiumTeamsFor(mainName, guide) {
+  return dedupeTeams([
+    ...normalizeTeams(guide?.teams).premium,
+    ...(SOURCE_BACKED_PREMIUM[key(mainName)] || []),
+  ]);
+}
+
 function visibleMap(account) {
   const map = new Map();
   for (const row of listCharacters(account)) map.set(key(row.name), row);
@@ -39,6 +69,21 @@ function visibleMap(account) {
 function constellationFor(account, name) {
   const row = visibleMap(account).get(key(name));
   return Number.isFinite(row?.constellation) ? row.constellation : null;
+}
+
+function teamConstellationIssues(mainName, team, account) {
+  const issues = [];
+  if (key(mainName) === 'sandrone') {
+    if (team.some((name) => sameName(name, 'Beidou'))) {
+      const constellation = constellationFor(account, 'Beidou');
+      if (constellation != null && constellation < 6) issues.push(`Beidou C${constellation}: تحتاج C6 حتى تكون Stellar-Conduct support موصى بها`);
+    }
+    if (team.some((name) => sameName(name, 'Diona'))) {
+      const constellation = constellationFor(account, 'Diona');
+      if (constellation != null && constellation < 6) issues.push(`Diona C${constellation}: تحتاج C6 حتى تعطي قيمة البافر المطلوبة لهذا الدور`);
+    }
+  }
+  return issues;
 }
 
 function replacementRule(mainName, missingName, candidateName, account) {
@@ -72,8 +117,6 @@ function publishedReplacement(mainName, currentTeam, missingName, candidateName,
   const exact = premiumTeams.some((team) => exactTeam(team, altered));
   if (exact) return { allowed: true, note: 'بديل موجود ضمن Premium team منشور', sourceBacked: true };
 
-  // Accept a replacement only when another published Premium variant keeps the
-  // same main character and at least three of the resulting four members.
   const related = premiumTeams.some((team) =>
     team.some((name) => sameName(name, mainName))
     && team.some((name) => sameName(name, candidateName))
@@ -112,13 +155,16 @@ function bestPublishedMatch(team, premiumTeams) {
   return best;
 }
 
-function synergyScore(team, premiumTeams, replacementUsed = false) {
+function synergyScore(team, premiumTeams, replacementUsed = false, constraintIssues = []) {
   const match = bestPublishedMatch(team, premiumTeams);
-  if (match?.exact) return 100;
-  if (replacementUsed && (match?.overlap || 0) >= 3) return 92;
-  if ((match?.overlap || 0) >= 3) return 86;
-  if ((match?.overlap || 0) === 2) return 68;
-  return 45;
+  let score;
+  if (match?.exact) score = 100;
+  else if (replacementUsed && (match?.overlap || 0) >= 3) score = 92;
+  else if ((match?.overlap || 0) >= 3) score = 86;
+  else if ((match?.overlap || 0) === 2) score = 68;
+  else score = 45;
+  if (constraintIssues.length) score = Math.min(score, 72);
+  return score;
 }
 
 function qualityLabel(score, ar) {
@@ -147,13 +193,14 @@ function buildIssueText(row, ar) {
 
 async function reviewTeam(uid, account, mainName, team, options = {}) {
   const guide = await getGuide(mainName);
-  const premiumTeams = normalizeTeams(guide?.teams).premium;
+  const premiumTeams = premiumTeamsFor(mainName, guide);
   const members = uniqueNames(team).slice(0, 4);
   const rows = [];
   for (const name of members) rows.push(await evaluateCharacter(uid, account, name));
   const rated = rows.filter((row) => Number.isFinite(row.score));
   const buildAverage = rated.length ? rated.reduce((sum, row) => sum + row.score, 0) / rated.length : null;
-  const synergy = synergyScore(members, premiumTeams, Boolean(options.replacementUsed));
+  const constraintIssues = teamConstellationIssues(mainName, members, account);
+  const synergy = synergyScore(members, premiumTeams, Boolean(options.replacementUsed), constraintIssues);
   const total = Number.isFinite(buildAverage) ? Math.round(buildAverage * 0.75 + synergy * 0.25) : null;
   return {
     mainName,
@@ -166,12 +213,13 @@ async function reviewTeam(uid, account, mainName, team, options = {}) {
     score: total,
     match: bestPublishedMatch(members, premiumTeams),
     replacementUsed: options.replacementUsed || null,
+    constraintIssues,
   };
 }
 
 async function accountTeamCandidates(uid, account, mainName, limit = 3) {
   const guide = await getGuide(mainName);
-  const premiumTeams = normalizeTeams(guide?.teams).premium;
+  const premiumTeams = premiumTeamsFor(mainName, guide);
   if (!premiumTeams.length) return { guide, candidates: [] };
   const visible = visibleMap(account);
   const scored = [];
@@ -215,6 +263,10 @@ function formatReview(review, lang = 'ar', options = {}) {
   if (review.replacementUsed) {
     lines.push(`${ar ? 'البديل المستخدم' : 'Replacement used'}: ${review.replacementUsed.missing} → **${review.replacementUsed.replacement}**${review.replacementUsed.note ? ` (${review.replacementUsed.note})` : ''}`);
   }
+  if (review.constraintIssues?.length) {
+    lines.push(`\n**${ar ? 'شروط مهمة' : 'Important requirements'}:**`);
+    review.constraintIssues.forEach((item) => lines.push(`• ${item}`));
+  }
 
   lines.push(`\n**${ar ? 'فحص الشخصيات الظاهرة' : 'Visible build checks'}:**`);
   for (const row of review.rows) {
@@ -250,6 +302,7 @@ function formatAccountCandidates(result, mainName, lang = 'ar') {
     lines.push(`${ar ? 'المتوفر' : 'Available'}: ${candidate.coverage}/4${Number.isFinite(candidate.score) ? ` • ${ar ? 'تقييم التيم' : 'Team score'} ${candidate.score}%` : ''}`);
     if (candidate.replacementUsed) lines.push(`${ar ? 'بديل منطقي منشور' : 'Published replacement'}: ${candidate.replacementUsed.missing} → ${candidate.replacementUsed.replacement}${candidate.replacementUsed.note ? ` (${candidate.replacementUsed.note})` : ''}`);
     if (candidate.finalMissing.length) lines.push(`${ar ? 'الناقص من الـShowcase' : 'Missing from Showcase'}: ${candidate.finalMissing.join(', ')}`);
+    if (candidate.constraintIssues?.length) lines.push(`${ar ? 'شروط' : 'Requirements'}: ${candidate.constraintIssues.join(' • ')}`);
     const issues = candidate.rows
       .filter((row) => row.visible && row.evaluation)
       .flatMap((row) => row.evaluation.notes.filter((note) => note.type === 'down').slice(0, 1).map((note) => `${row.name}: ${note.text}`))
@@ -267,4 +320,5 @@ module.exports = {
   publishedReplacement,
   bestPublishedMatch,
   overlapCount,
+  premiumTeamsFor,
 };
