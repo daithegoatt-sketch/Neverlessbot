@@ -9,6 +9,7 @@ const { handleHelpMessage } = require('./helpRouter');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 const { installModeration } = require('../moderation');
+const { installActivity } = require('../activity');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const originalLogin = Client.prototype.login;
@@ -62,8 +63,8 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
   if (!this.__neverlessGenshinInstalled) {
     this.__neverlessGenshinInstalled = true;
 
-    // Register UID persistence first so moderation can reuse the same hidden
-    // neverless-data channel for link settings/timed VC mute records.
+    // Register UID persistence first so moderation and activity persistence can
+    // reuse the same hidden neverless-data channel safely.
     this.once('ready', () => {
       initDiscordPersistence(this, CHANNEL_ID).catch((error) => {
         console.warn('[genshin-store] Persistent store initialization failed:', error.message);
@@ -71,6 +72,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     });
 
     installModeration(this);
+    installActivity(this);
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return;
