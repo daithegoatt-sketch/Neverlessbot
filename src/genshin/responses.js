@@ -49,7 +49,57 @@ function statsText(guide, lang) {
   return lines.join('\n');
 }
 
+function groupLabel(value, characterName) {
+  let text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const escaped = String(characterName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (escaped) text = text.replace(new RegExp(`^${escaped}\\s*`, 'i'), '');
+  return text.replace(/\s+Teams?$/i, '').replace(/^Best\s+/i, '').trim();
+}
+
+function slotTeamLine(slots) {
+  return (slots || []).map((slot) => (slot || []).join(' / ')).join(' • ');
+}
+
+function groupedTeamText(guide, lang, type) {
+  const A = ar(lang);
+  const groups = (guide.teamGroups || []).filter((group) => (type === 'f2p' ? group.kind === 'f2p' : group.kind !== 'f2p'));
+  if (!groups.length) return null;
+
+  const title = type === 'f2p' ? 'F2P' : (A ? 'أفضل التيمات' : 'Best Teams');
+  const lines = [`**${guide.name} — ${title}**`];
+  let shownGroups = 0;
+
+  for (const group of groups) {
+    if (shownGroups >= 8) break;
+    const role = groupLabel(group.role, guide.name);
+    const category = groupLabel(group.category, guide.name);
+    const labels = [category, role].filter((value, index, all) => value && all.indexOf(value) === index);
+    lines.push(`\n**${labels.join(' — ') || (A ? 'تيم منشور' : 'Published Team')}**`);
+
+    const displays = [];
+    for (const slots of group.slotTeams || []) {
+      const line = slotTeamLine(slots);
+      if (line && !displays.includes(line)) displays.push(line);
+    }
+    if (!displays.length) {
+      for (const team of group.teams || []) {
+        const line = team.join(' • ');
+        if (line && !displays.includes(line)) displays.push(line);
+      }
+    }
+
+    displays.slice(0, 2).forEach((line) => lines.push(`• ${line}`));
+    shownGroups += 1;
+  }
+
+  return lines.join('\n');
+}
+
 function teamText(guide, lang, type = 'premium', limit = 4) {
+  const grouped = groupedTeamText(guide, lang, type);
+  if (grouped) return grouped;
+
   const A = ar(lang), teams = normalizeTeams(guide, type), typeText = type === 'f2p' ? 'F2P' : (A ? 'أفضل التيمات' : 'Best Teams'), lines = [`**${guide.name} — ${typeText}**`];
   if (!teams.length) { lines.push(A ? 'ما لقيت تيم منشور بهذا التصنيف حاليًا.' : 'No published team is available for that category right now.'); return lines.join('\n'); }
   teams.slice(0, limit).forEach((team, i) => lines.push(`${i + 1}. ${team.join(' • ')}`)); return lines.join('\n');
@@ -150,4 +200,4 @@ function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, ak
   return lines.join('\n');
 }
 
-module.exports = { buildText, artifactsText, weaponsText, statsText, teamText, comboText, baseText, opinionText, replacementText, accountEvaluationText, normalizeTeams, closestReplacement };
+module.exports = { buildText, artifactsText, weaponsText, statsText, teamText, comboText, baseText, opinionText, replacementText, accountEvaluationText, normalizeTeams, closestReplacement, groupedTeamText };
