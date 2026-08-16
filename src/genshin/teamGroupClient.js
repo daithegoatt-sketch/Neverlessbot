@@ -12,7 +12,7 @@ const REACTIONS = [
   ['Vaporize', /\bvapori[sz]e\b/ig],
   ['Melt', /\bmelt\b/ig],
   ['Overload', /\boverload(?:ed)?\b/ig],
-  ['Burning', /\bburning\b|\bburn team\b/ig],
+  ['Burning', /\bburning\b|\bburn\b/ig],
   ['Mono-Pyro', /\bmono[ -]?pyro\b/ig],
   ['Freeze', /\bfreeze\b|\bfrozen\b/ig],
   ['Electro-Charged', /\belectro[ -]?charged\b/ig],
@@ -231,8 +231,17 @@ function specificCategory(category) {
 function summaryPairNames(summaryText, reactionName, characterNames) {
   const text = String(summaryText || '');
   const lower = text.toLowerCase();
-  const needle = reactionName.toLowerCase().replace('-', ' ');
-  const variants = [needle, needle.replace('stellar conduct', 'stellar-conduct'), needle.replace('mono pyro', 'mono-pyro')];
+  const aliases = {
+    'Stellar-Conduct': ['stellar-conduct', 'stellar conduct'],
+    Vaporize: ['vaporize', 'vaporise'],
+    Melt: ['melt'],
+    Overload: ['overload', 'overloaded'],
+    Burning: ['burning', 'burn'],
+    'Mono-Pyro': ['mono-pyro', 'mono pyro'],
+    Freeze: ['freeze', 'frozen'],
+    'Electro-Charged': ['electro-charged', 'electro charged'],
+  };
+  const variants = aliases[reactionName] || [reactionName.toLowerCase()];
   let index = -1;
   for (const variant of variants) {
     const next = lower.indexOf(variant);
