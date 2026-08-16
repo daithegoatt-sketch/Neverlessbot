@@ -6,6 +6,12 @@ function normalize(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+function akashaPercent(value) {
+  if (Number.isFinite(value)) return value;
+  const nested = Number(value?.topPercent ?? value?.top_percent);
+  return Number.isFinite(nested) ? nested : null;
+}
+
 function targetScore(value, target) {
   if (!Number.isFinite(value) || !target) return 0;
   if (value >= target.min && (target.max === target.min || value <= target.max)) return 1;
@@ -81,17 +87,18 @@ function weaponMatch(snapshot, guide) {
   return [1, 0.93, 0.88, 0.84, 0.8, 0.76][Math.min(index, 5)];
 }
 
-function akashaScore(percentile) {
+function akashaScore(value) {
+  const percentile = akashaPercent(value);
   if (!Number.isFinite(percentile)) return 0.5;
   if (percentile <= 1) return 1;
-  if (percentile <= 2) return 0.97;
-  if (percentile <= 5) return 0.93;
-  if (percentile <= 10) return 0.88;
-  if (percentile <= 20) return 0.78;
-  if (percentile <= 35) return 0.68;
-  if (percentile <= 50) return 0.57;
-  if (percentile <= 75) return 0.43;
-  return 0.3;
+  if (percentile <= 2) return 0.98;
+  if (percentile <= 5) return 0.95;
+  if (percentile <= 10) return 0.9;
+  if (percentile <= 20) return 0.82;
+  if (percentile <= 35) return 0.72;
+  if (percentile <= 50) return 0.6;
+  if (percentile <= 75) return 0.44;
+  return 0.28;
 }
 
 function statWeight(key, profile) {
@@ -127,17 +134,31 @@ function evaluateBuild(snapshot, guide, options = {}) {
     relevantStats.push({ key, label: LABELS[key], value, target, ratio, status, weight });
   }
 
-  // If a source does not publish numeric targets, don't invent them. The rest of the build still matters.
   const statScore = statWeightTotal ? statPoints / statWeightTotal : 0.5;
+  const percentile = akashaPercent(options.akashaPercentile);
   const akasha = akashaScore(options.akashaPercentile);
-  let raw = statScore * 0.40
-    + completion.score * 0.20
-    + mainsScore * 0.15
-    + setScore * 0.10
-    + weaponScore * 0.10
-    + akasha * 0.05;
+  const hasAkasha = Number.isFinite(percentile);
+
+  // Akasha ranks artifact strength in a normalized leaderboard. When available it should materially
+  // affect a complete build, but it must never bypass the hard caps for missing/underleveled gear.
+  let raw;
+  if (hasAkasha) {
+    raw = statScore * 0.35
+      + completion.score * 0.15
+      + mainsScore * 0.10
+      + setScore * 0.10
+      + weaponScore * 0.10
+      + akasha * 0.20;
+  } else {
+    raw = statScore * 0.42
+      + completion.score * 0.20
+      + mainsScore * 0.15
+      + setScore * 0.10
+      + weaponScore * 0.13;
+  }
 
   let score = Math.round(Math.max(0, Math.min(1, raw)) * 100);
+  const eliteAkasha = hasAkasha && percentile <= 10;
 
   // Hard caps prevent incomplete characters from receiving flattering ratings.
   if (completion.count === 0) score = Math.min(score, 25);
@@ -145,9 +166,12 @@ function evaluateBuild(snapshot, guide, options = {}) {
   else if (completion.count < 5) score = Math.min(score, 62);
   if (completion.count === 5 && completion.avgLevel < 12) score = Math.min(score, 68);
   else if (completion.count === 5 && completion.avgLevel < 18) score = Math.min(score, 82);
-  if (mainsScore < 0.34) score = Math.min(score, 62);
-  else if (mainsScore < 0.67) score = Math.min(score, 80);
-  if (setScore < 0.5 && guide?.artifacts?.length) score = Math.min(score, 86);
+
+  // A genuine high Akasha placement can validate an unconventional but effective main-stat/set choice,
+  // so those caps become softer for Top 10% builds. Missing artifacts still cannot be bypassed.
+  if (mainsScore < 0.34) score = Math.min(score, eliteAkasha ? 78 : 62);
+  else if (mainsScore < 0.67) score = Math.min(score, eliteAkasha ? 92 : 80);
+  if (setScore < 0.5 && guide?.artifacts?.length) score = Math.min(score, eliteAkasha ? 92 : 86);
   if (!snapshot?.weapon?.name) score = Math.min(score, 68);
 
   if (completion.count < 5) notes.unshift({ type: 'down', key: 'artifacts', text: `Artifacts ${completion.count}/5` });
@@ -163,6 +187,7 @@ function evaluateBuild(snapshot, guide, options = {}) {
     artifactSetScore: Math.round(setScore * 100),
     weaponScore: Math.round(weaponScore * 100),
     akashaComponent: Math.round(akasha * 100),
+    akashaPercentile: percentile,
     artifactCount: completion.count,
     artifactAvgLevel: Math.round(completion.avgLevel * 10) / 10,
     relevantStats,

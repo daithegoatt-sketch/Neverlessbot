@@ -94,7 +94,21 @@ function ratingWord(score, lang) {
   return A ? 'غير مكتمل' : 'Incomplete';
 }
 
-function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaPercentile = null) {
+function akashaInfo(value) {
+  if (Number.isFinite(value)) return { topPercent: value };
+  if (!value || typeof value !== 'object') return null;
+  const topPercent = Number(value.topPercent ?? value.top_percent);
+  if (!Number.isFinite(topPercent)) return null;
+  return { ...value, topPercent };
+}
+
+function formatTop(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value >= 10) return Math.round(value).toString();
+  return Number(value.toFixed(2)).toString();
+}
+
+function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaRanking = null) {
   const A = ar(lang), lines = [`**${snapshot.name} — ${A ? 'تقييم البيلد' : 'Build Rating'}: ${evaluation.score}% (${ratingWord(evaluation.score, lang)})**`];
 
   if (evaluation.relevantStats?.length) {
@@ -107,7 +121,6 @@ function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, ak
 
   if (snapshot.weapon?.name) lines.push(`**${A ? 'السلاح' : 'Weapon'}:** ${snapshot.weapon.name}${snapshot.weapon.refinement ? ` R${snapshot.weapon.refinement}` : ''}`);
   lines.push(`**Artifacts:** ${evaluation.artifactCount}/5 • ${A ? 'متوسط المستوى' : 'avg level'} +${evaluation.artifactAvgLevel} • Main Stats ${evaluation.mainStatScore}% • Set ${evaluation.artifactSetScore}%`);
-  if (akashaPercentile != null) lines.push(`**Akasha:** Top ${akashaPercentile}% ${A ? 'للآرتيفاكتات في أفضل leaderboard تم العثور عليه' : 'artifact leaderboard (best category found)'}`);
 
   const weak = evaluation.notes.filter((n) => n.type === 'down' || n.type === 'warn').slice(0, 4);
   if (weak.length) {
@@ -115,13 +128,25 @@ function accountEvaluationText(snapshot, evaluation, comparison, guide, lang, ak
     weak.forEach((n) => lines.push(`• ${n.text}`));
   }
 
-  // Comparison is deliberately shown only for an explicit compare request.
   if (comparison) {
     lines.push(`**${A ? 'المقارنة مع آخر نسخة مختلفة' : 'Compared with the previous different build'}:** ${comparison.previousScore}% → ${comparison.currentScore}% (${pctDelta(comparison.scoreDelta)}%)`);
     const useful = Object.entries(comparison.deltas).filter(([, value]) => value !== 0).slice(0, 6);
     if (useful.length) lines.push(useful.map(([key, value]) => `${LABELS[key] || key} ${value > 0 ? '+' : ''}${value}`).join(' • '));
     lines.push(comparison.scoreDelta > 0 ? (A ? 'البيلد الحالي أفضل من النسخة السابقة.' : 'The current build is stronger than the previous one.') : comparison.scoreDelta < 0 ? (A ? 'البيلد الحالي أضعف إجمالًا؛ راجع الإحصائيات التي نزلت.' : 'The current build is weaker overall; review the stats that dropped.') : (A ? 'التقييم العام لم يتغير فعليًا.' : 'The overall rating is effectively unchanged.'));
   }
+
+  const akasha = akashaInfo(akashaRanking);
+  lines.push(`**${A ? 'الترتيب والتقييم' : 'Ranking & Rating'}:**`);
+  if (akasha) {
+    const parts = [`Top ${formatTop(akasha.topPercent)}%`];
+    if (Number.isFinite(akasha.ranking) && Number.isFinite(akasha.outOf)) parts.push(`#${akasha.ranking.toLocaleString('en-US')} / ${akasha.outOf.toLocaleString('en-US')}`);
+    if (akasha.category) parts.push(String(akasha.category));
+    lines.push(`• **Akasha:** ${parts.join(' • ')}`);
+  } else {
+    lines.push(`• **Akasha:** ${A ? 'لا يوجد ترتيب متاح حاليًا' : 'No ranking available right now'}`);
+  }
+  lines.push(`• **Neverless:** ${evaluation.score}% (${ratingWord(evaluation.score, lang)})`);
+
   return lines.join('\n');
 }
 
