@@ -5,6 +5,7 @@ const { fetchAccount } = require('./enkaClient');
 const { getGuide, normalizeTeams } = require('./guideClient');
 const { resolveCharacter, resolveCharacterMentions } = require('./characterResolver');
 const { reviewTeam, accountTeamCandidates, formatReview, formatAccountCandidates, overlapCount, premiumTeamsFor } = require('./teamEvaluator');
+const { missingAlternativeAdvice, ownedPairAdvice, isMissingAdviceRequest, isOwnedAdviceRequest } = require('./teamAdvisor');
 const { explainCharacter } = require('./characterExplain');
 const { findTeamRotation } = require('./kqmClient');
 const {
@@ -240,6 +241,23 @@ async function handleAdvancedMessage(message) {
     return true;
   }
   if (isLeaderboard(text)) return handleLeaderboard(message, text, lang);
+
+  if (isMissingAdviceRequest(text)) {
+    const advice = await missingAlternativeAdvice(text, lang);
+    if (advice) {
+      await send(message, advice);
+      return true;
+    }
+  }
+
+  if (isOwnedAdviceRequest(text)) {
+    const advice = await ownedPairAdvice(text, lang);
+    if (advice) {
+      await send(message, advice);
+      return true;
+    }
+  }
+
   if (isTeamReview(text)) return handleTeamReview(message, text, lang);
   if (isTeamCombo(text)) return handleTeamCombo(message, text, lang);
   if (isCharacterExplain(text)) {
