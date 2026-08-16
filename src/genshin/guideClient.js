@@ -16,7 +16,7 @@ function normalizeTeams(value) {
 function mergeGuide(live, curated) {
   if (!live) return curated || null;
   if (!curated) return live;
-  const lt = normalizeTeams(live.teams), ct = normalizeTeams(curated.teams);
+  const lt = normalizeTeams(live.teams);
   return {
     ...curated, ...live,
     role: live.role || curated.role,
@@ -30,7 +30,9 @@ function mergeGuide(live, curated) {
     f2pWeapons: nonEmpty(live.f2pWeapons) ? live.f2pWeapons : curated.f2pWeapons || [],
     artifacts: nonEmpty(live.artifacts) ? live.artifacts : curated.artifacts || [],
     combos: nonEmpty(live.combos) ? live.combos : curated.combos || [],
-    teams: { premium: nonEmpty(lt.premium) ? lt.premium : ct.premium, f2p: nonEmpty(lt.f2p) ? lt.f2p : ct.f2p },
+    // Team categories are source-specific. If Game8 has no explicit F2P section,
+    // keep it empty instead of filling it with a curated/premium team by accident.
+    teams: { premium: lt.premium, f2p: lt.f2p },
   };
 }
 
