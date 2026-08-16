@@ -41,8 +41,6 @@ function mergeGuide(live, curated) {
     f2pWeapons: nonEmpty(live.f2pWeapons) ? live.f2pWeapons : curated.f2pWeapons || [],
     artifacts: nonEmpty(live.artifacts) ? live.artifacts : curated.artifacts || [],
     combos: nonEmpty(live.combos) ? live.combos : curated.combos || [],
-    // Team categories are source-specific. Never fill a missing Game8 F2P section
-    // with a Premium/curated team, and preserve reaction/role groups when available.
     teams: { premium: lt.premium, f2p: lt.f2p },
     teamGroups: nonEmpty(live.teamGroups) ? live.teamGroups : [],
   };
@@ -50,8 +48,18 @@ function mergeGuide(live, curated) {
 
 function validateSlotTeam(slots) {
   if (!Array.isArray(slots) || slots.length !== 4) return null;
-  const clean = slots.map((slot) => Array.isArray(slot) ? [...new Set(slot.filter(Boolean))].slice(0, 6) : []);
+  const clean = slots.map((slot) => Array.isArray(slot) ? [...new Set(slot.filter(Boolean))].slice(0, 8) : []);
   return clean.every((slot) => slot.length) ? clean : null;
+}
+
+function validateRequirements(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [name, rule] of Object.entries(value)) {
+    const constellation = Number(rule?.constellation);
+    if (Number.isInteger(constellation) && constellation >= 0 && constellation <= 6) out[String(name).slice(0, 80)] = { constellation };
+  }
+  return out;
 }
 
 function validateGroups(groups) {
@@ -59,9 +67,10 @@ function validateGroups(groups) {
     kind: group?.kind === 'f2p' ? 'f2p' : 'premium',
     category: String(group?.category || 'Team').slice(0, 120),
     role: group?.role ? String(group.role).slice(0, 120) : '',
-    slotTeams: (group?.slotTeams || []).map(validateSlotTeam).filter(Boolean).slice(0, 8),
-    teams: dedupeTeams((group?.teams || []).filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 24),
-  })).filter((group) => group.slotTeams.length || group.teams.length).slice(0, 16);
+    slotTeams: (group?.slotTeams || []).map(validateSlotTeam).filter(Boolean).slice(0, 12),
+    teams: dedupeTeams((group?.teams || []).filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 40),
+    requirements: validateRequirements(group?.requirements),
+  })).filter((group) => group.slotTeams.length || group.teams.length).slice(0, 24);
 }
 
 function validateGuide(guide) {
@@ -74,8 +83,8 @@ function validateGuide(guide) {
     artifacts: (guide.artifacts || []).filter(Boolean).slice(0, 6),
     combos: (guide.combos || []).filter(Boolean).slice(0, 8),
     teams: {
-      premium: dedupeTeams(teams.premium.filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 40),
-      f2p: dedupeTeams(teams.f2p.filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 20),
+      premium: dedupeTeams(teams.premium.filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 60),
+      f2p: dedupeTeams(teams.f2p.filter((team) => Array.isArray(team) && team.length === 4)).slice(0, 40),
     },
     teamGroups: validateGroups(guide.teamGroups),
   };
