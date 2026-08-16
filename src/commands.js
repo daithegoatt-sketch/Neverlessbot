@@ -1,5 +1,11 @@
 const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 
+function addDurationAndReason(command) {
+  return command
+    .addStringOption((o) => o.setName('duration').setDescription('اختياري: 10m / 2h / 1d / 1w — اتركه فاضي للميوت الدائم').setMaxLength(20).setRequired(false))
+    .addStringOption((o) => o.setName('reason').setDescription('السبب').setMaxLength(400).setRequired(false));
+}
+
 const commands = [
   new SlashCommandBuilder()
     .setName('welcome')
@@ -40,6 +46,60 @@ const commands = [
     .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true))
     .addIntegerOption((o) => o.setName('delete_days').setDescription('حذف رسائل آخر كم يوم (0-7)').setMinValue(0).setMaxValue(7).setRequired(false))
     .addStringOption((o) => o.setName('reason').setDescription('السبب').setMaxLength(400).setRequired(false)),
+  addDurationAndReason(
+    new SlashCommandBuilder()
+      .setName('mute')
+      .setDescription('ميوت/Timeout للعضو، والمدة اختيارية')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+      .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  ),
+  new SlashCommandBuilder()
+    .setName('unmute')
+    .setDescription('فك الميوت عن عضو')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  addDurationAndReason(
+    new SlashCommandBuilder()
+      .setName('timeout')
+      .setDescription('Timeout للعضو، والمدة اختيارية')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+      .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  ),
+  new SlashCommandBuilder()
+    .setName('untimeout')
+    .setDescription('فك الـTimeout عن عضو')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  addDurationAndReason(
+    new SlashCommandBuilder()
+      .setName('mutevc')
+      .setDescription('منع عضو من الكلام بالصوت، والمدة اختيارية')
+      .setDefaultMemberPermissions(PermissionFlagsBits.MuteMembers)
+      .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  ),
+  new SlashCommandBuilder()
+    .setName('unmutevc')
+    .setDescription('فك VC Mute عن عضو')
+    .setDefaultMemberPermissions(PermissionFlagsBits.MuteMembers)
+    .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('links')
+    .setDescription('إدارة الرومات المسموح فيها نشر الروابط')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((sub) => sub
+      .setName('allow')
+      .setDescription('السماح بالروابط في روم')
+      .addChannelOption((o) => o.setName('channel').setDescription('الروم').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((sub) => sub
+      .setName('remove')
+      .setDescription('إلغاء السماح بالروابط في روم')
+      .addChannelOption((o) => o.setName('channel').setDescription('الروم').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((sub) => sub.setName('list').setDescription('عرض الرومات المسموح فيها روابط')),
+  new SlashCommandBuilder()
+    .setName('uid-unlink')
+    .setDescription('Admin: فك UID مربوط بعضو آخر')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption((o) => o.setName('uid').setDescription('UID المطلوب فك ربطه').setMinLength(9).setMaxLength(10).setRequired(true)),
   new SlashCommandBuilder()
     .setName('lock')
     .setDescription('قفل الكتابة في شات')

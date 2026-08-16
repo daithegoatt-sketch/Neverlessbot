@@ -5,19 +5,6 @@ const { fetchAkashaPercentile } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
 const { findCharacter, getBuildSnapshot, listCharacters } = require('./enkaClient');
 
-const SOURCE_BACKED_PREMIUM = {
-  sandrone: [
-    ['Sandrone', 'Yae Miko', 'Qiqi', 'Escoffier'],
-    ['Sandrone', 'Yae Miko', 'Qiqi', 'Nicole'],
-    ['Sandrone', 'Yae Miko', 'Qiqi', 'Beidou'],
-    ['Sandrone', 'Yae Miko', 'Qiqi', 'Diona'],
-    ['Sandrone', 'Yae Miko', 'Escoffier', 'Nicole'],
-    ['Sandrone', 'Beidou', 'Diona', 'Sucrose'],
-    ['Sandrone', 'Beidou', 'Diona', 'Xilonen'],
-    ['Sandrone', 'Columbina', 'Ineffa', 'Yae Miko'],
-  ],
-};
-
 function key(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
@@ -54,10 +41,17 @@ function dedupeTeams(teams) {
 }
 
 function premiumTeamsFor(mainName, guide) {
-  return dedupeTeams([
-    ...normalizeTeams(guide?.teams).premium,
-    ...(SOURCE_BACKED_PREMIUM[key(mainName)] || []),
-  ]);
+  // Game8's parsed team tables are the source of truth. Do not append hand-made
+  // combinations because that can mix slots/reactions that the source keeps separate.
+  return dedupeTeams(normalizeTeams(guide?.teams).premium);
+}
+
+function premiumGroupForTeam(guide, team) {
+  for (const group of guide?.teamGroups || []) {
+    if (group?.kind === 'f2p') continue;
+    if ((group.teams || []).some((published) => exactTeam(published, team))) return group;
+  }
+  return null;
 }
 
 function visibleMap(account) {
@@ -91,9 +85,6 @@ function replacementRule(mainName, missingName, candidateName, account) {
   const missing = key(missingName);
   const candidate = key(candidateName);
 
-  // KQM Sandrone guide: C6 Beidou is a viable Electro replacement; pre-C6 is
-  // explicitly not recommended as a Stellar-Conduct support. C6 Diona has the
-  // same published constellation gate for her support slot.
   if (main === 'sandrone' && missing === 'yaemiko' && candidate === 'beidou') {
     const constellation = constellationFor(account, candidateName);
     return constellation != null && constellation >= 6
@@ -110,19 +101,25 @@ function replacementRule(mainName, missingName, candidateName, account) {
 }
 
 function publishedReplacement(mainName, currentTeam, missingName, candidateName, premiumTeams, account) {
+  const candidatePublished = premiumTeams.some((team) =>
+    team.some((name) => sameName(name, mainName))
+    && team.some((name) => sameName(name, candidateName)),
+  );
+  if (!candidatePublished) return null;
+
   const special = replacementRule(mainName, missingName, candidateName, account);
   if (special) return special;
 
   const altered = currentTeam.map((name) => sameName(name, missingName) ? candidateName : name);
   const exact = premiumTeams.some((team) => exactTeam(team, altered));
-  if (exact) return { allowed: true, note: 'بديل موجود ضمن Premium team منشور', sourceBacked: true };
+  if (exact) return { allowed: true, note: 'بديل موجود بنفس التيم المنشور', sourceBacked: true };
 
   const related = premiumTeams.some((team) =>
     team.some((name) => sameName(name, mainName))
     && team.some((name) => sameName(name, candidateName))
     && overlapCount(team, altered) >= 3,
   );
-  return related ? { allowed: true, note: 'بديل من Premium variant منشور', sourceBacked: true } : null;
+  return related ? { allowed: true, note: 'بديل من نفس نوع التيم المنشور', sourceBacked: true } : null;
 }
 
 function findReplacement(mainName, team, missingName, account, premiumTeams) {
@@ -227,12 +224,14 @@ async function accountTeamCandidates(uid, account, mainName, limit = 3) {
   for (const published of premiumTeams) {
     const original = uniqueNames(published).slice(0, 4);
     if (original.length !== 4 || !original.some((name) => sameName(name, mainName))) continue;
+    const group = premiumGroupForTeam(guide, original);
+    const scopedTeams = group?.teams?.length ? dedupeTeams(group.teams) : premiumTeams;
     let team = [...original];
     const missing = team.filter((name) => !visible.has(key(name)));
     let replacementUsed = null;
 
     if (missing.length === 1) {
-      const replacement = findReplacement(mainName, team, missing[0], account, premiumTeams);
+      const replacement = findReplacement(mainName, team, missing[0], account, scopedTeams);
       if (replacement) {
         team = team.map((name) => sameName(name, missing[0]) ? replacement.name : name);
         replacementUsed = { missing: missing[0], replacement: replacement.name, note: replacement.note };
@@ -242,7 +241,15 @@ async function accountTeamCandidates(uid, account, mainName, limit = 3) {
     const finalMissing = team.filter((name) => !visible.has(key(name)));
     const coverage = 4 - finalMissing.length;
     const review = await reviewTeam(uid, account, mainName, team, { replacementUsed });
-    scored.push({ ...review, original, finalMissing, coverage, replacementUsed });
+    scored.push({
+      ...review,
+      original,
+      finalMissing,
+      coverage,
+      replacementUsed,
+      category: group?.category || null,
+      role: group?.role || null,
+    });
   }
 
   scored.sort((a, b) =>
@@ -250,7 +257,16 @@ async function accountTeamCandidates(uid, account, mainName, limit = 3) {
     || Number(Boolean(b.replacementUsed)) - Number(Boolean(a.replacementUsed))
     || (b.score ?? 0) - (a.score ?? 0),
   );
-  return { guide, candidates: scored.slice(0, limit) };
+
+  // Avoid showing the same four-character lineup multiple times when Game8 repeats it
+  // under nearby text sections.
+  const uniqueCandidates = [];
+  for (const candidate of scored) {
+    if (uniqueCandidates.some((row) => exactTeam(row.team, candidate.team))) continue;
+    uniqueCandidates.push(candidate);
+    if (uniqueCandidates.length >= limit) break;
+  }
+  return { guide, candidates: uniqueCandidates };
 }
 
 function formatReview(review, lang = 'ar', options = {}) {
@@ -298,9 +314,11 @@ function formatAccountCandidates(result, mainName, lang = 'ar') {
 
   const lines = [`**${mainName} — ${ar ? 'أفضل احتمالات Premium من الـShowcase' : 'Best Premium options from Showcase'}**`];
   result.candidates.forEach((candidate, index) => {
+    const label = [candidate.category, candidate.role].filter(Boolean).join(' — ');
     lines.push(`\n**${index + 1}. ${candidate.team.join(' • ')}**`);
+    if (label) lines.push(`${ar ? 'نوع التيم' : 'Team type'}: ${label}`);
     lines.push(`${ar ? 'المتوفر' : 'Available'}: ${candidate.coverage}/4${Number.isFinite(candidate.score) ? ` • ${ar ? 'تقييم التيم' : 'Team score'} ${candidate.score}%` : ''}`);
-    if (candidate.replacementUsed) lines.push(`${ar ? 'بديل منطقي منشور' : 'Published replacement'}: ${candidate.replacementUsed.missing} → ${candidate.replacementUsed.replacement}${candidate.replacementUsed.note ? ` (${candidate.replacementUsed.note})` : ''}`);
+    if (candidate.replacementUsed) lines.push(`${ar ? 'بديل منطقي من نفس التيم' : 'Same-shell replacement'}: ${candidate.replacementUsed.missing} → ${candidate.replacementUsed.replacement}${candidate.replacementUsed.note ? ` (${candidate.replacementUsed.note})` : ''}`);
     if (candidate.finalMissing.length) lines.push(`${ar ? 'الناقص من الـShowcase' : 'Missing from Showcase'}: ${candidate.finalMissing.join(', ')}`);
     if (candidate.constraintIssues?.length) lines.push(`${ar ? 'شروط' : 'Requirements'}: ${candidate.constraintIssues.join(' • ')}`);
     const issues = candidate.rows
@@ -321,4 +339,5 @@ module.exports = {
   bestPublishedMatch,
   overlapCount,
   premiumTeamsFor,
+  premiumGroupForTeam,
 };
