@@ -32,7 +32,11 @@ async function linkedGuildUsers(guild) {
   const rows = await mapLimit(links, 5, async (link) => {
     const member = guild.members.cache.get(link.discordUserId)
       || await guild.members.fetch(link.discordUserId).catch(() => null);
-    return member ? { ...link, member } : null;
+    return member ? {
+      ...link,
+      member,
+      displayName: member.displayName || member.user?.globalName || member.user?.username || link.discordUserId,
+    } : null;
   });
   return rows.filter(Boolean);
 }
@@ -59,6 +63,7 @@ async function buildCharacterLeaderboard(guild, characterName) {
     const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
     return {
       discordUserId: link.discordUserId,
+      displayName: link.displayName,
       uid: link.uid,
       score: evaluation.score,
       akasha,
@@ -109,6 +114,7 @@ async function buildAccountScore(link) {
   const accountScore = Math.round(average * (0.65 + 0.35 * breadth) * 10) / 10;
   return {
     discordUserId: link.discordUserId,
+    displayName: link.displayName,
     uid: link.uid,
     accountScore,
     averageBuild: Math.round(average * 10) / 10,
@@ -135,8 +141,8 @@ function formatCharacterLeaderboard(board, lang = 'ar') {
     ? `ما فيه أعضاء رابطين حساباتهم وعندهم **${board.characterName}** ظاهرة في Showcase حاليًا.`
     : `No linked members currently have **${board.characterName}** visible in Showcase.`;
   const lines = [`**${ar ? 'ترتيب' : 'Leaderboard'} ${board.characterName} — Neverless**`];
-  board.rows.slice(0, 15).forEach((row, index) => {
-    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.score}% Neverless** • Akasha ${topText(row.akasha)}`);
+  board.rows.slice(0, 12).forEach((row, index) => {
+    lines.push(`${index + 1}. **@${row.displayName}** — **${row.score}% Neverless** • Akasha ${topText(row.akasha)}`);
   });
   lines.push(ar ? '\nالترتيب يعتمد على آخر Showcase ظاهر للحسابات المربوطة.' : '\nRanking uses the latest visible Showcase builds from linked accounts.');
   return lines.join('\n');
@@ -146,9 +152,9 @@ function formatNeverlessLeaderboard(board, lang = 'ar') {
   const ar = lang === 'ar';
   if (!board.rows.length) return ar ? 'ما فيه حسابات مربوطة كفاية لبناء الترتيب.' : 'Not enough linked accounts to build the leaderboard.';
   const lines = [`**${ar ? 'ترتيب Neverless — قوة الحسابات الظاهرة' : 'Neverless Account Leaderboard'}**`];
-  board.rows.slice(0, 15).forEach((row, index) => {
+  board.rows.slice(0, 10).forEach((row, index) => {
     const best = row.topBuilds.map((item) => `${item.name} ${item.score}%`).join(' • ');
-    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.accountScore}** ${ar ? 'نقطة' : 'pts'} • ${row.ratedCount} ${ar ? 'بيلدات مقيمة' : 'rated builds'}`);
+    lines.push(`${index + 1}. **@${row.displayName}** — **${row.accountScore}** ${ar ? 'نقطة' : 'pts'} • ${row.ratedCount} ${ar ? 'بيلدات مقيمة' : 'rated builds'}`);
     if (best) lines.push(`   ${best}`);
   });
   lines.push(ar
