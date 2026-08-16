@@ -54,12 +54,24 @@ async function findMainCharacter(names) {
       for (const slots of group.slotTeams || []) {
         if (!slotContains(slots[0], name)) continue;
         const matched = names.filter((candidate) => slots.some((slot) => slotContains(slot, candidate))).length;
-        score = Math.max(score, matched * 10 + (slots[0].some((item) => sameName(item, name)) ? 5 : 0));
+        score = Math.max(score, matched * 10 + 5);
       }
     }
     if (!best || score > best.score || (score === best.score && order < best.order)) best = { name, guide, score, order };
   }
   return best;
+}
+
+async function explicitTeamMain(text, names) {
+  const value = String(text || '');
+  const matches = [...value.matchAll(/(?:تيم|فريق|team|comp)\s+([^,؛\n]+)/giu)];
+  if (!matches.length) return null;
+  const tail = matches.at(-1)?.[1] || '';
+  const mentioned = await resolveCharacterMentions(tail, 3);
+  const main = mentioned.find((name) => names.some((candidate) => sameName(candidate, name)));
+  if (!main) return null;
+  const guide = await getGuide(main).catch(() => null);
+  return guide ? { name: main, guide, score: 100, order: -1 } : null;
 }
 
 function groupLabel(group) {
@@ -72,7 +84,7 @@ function groupLabel(group) {
 async function missingAlternativeAdvice(text, lang = 'ar') {
   const names = await resolveCharacterMentions(text, 6);
   if (names.length < 2) return null;
-  const mainResult = await findMainCharacter(names);
+  const mainResult = await explicitTeamMain(text, names) || await findMainCharacter(names);
   if (!mainResult?.guide || mainResult.score < 15) return null;
   const main = mainResult.name;
   const missing = names.find((name) => !sameName(name, main));
@@ -127,9 +139,8 @@ function concreteTeamsForSlots(group, slots, mustInclude, limit = 4) {
 async function ownedPairAdvice(text, lang = 'ar') {
   const names = await resolveCharacterMentions(text, 6);
   if (names.length < 2) return null;
-  const mainResult = await findMainCharacter(names);
+  const mainResult = await explicitTeamMain(text, names) || await findMainCharacter(names);
   if (!mainResult?.guide || mainResult.score < 15) return null;
-  const main = mainResult.name;
   const candidates = [];
 
   for (const group of premiumGroups(mainResult.guide)) {
