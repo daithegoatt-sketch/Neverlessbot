@@ -1,6 +1,6 @@
 'use strict';
 
-const { reviewArtifacts } = require('./artifactEvaluator');
+const { reviewArtifacts, reviewArtifact, maxRollFor, rollKey } = require('./artifactEvaluator');
 const { guideProfile, formatStat } = require('./statProfile');
 
 const LRI = '\u2066';
@@ -10,34 +10,19 @@ function ltr(value) {
   return `${LRI}${String(value)}${PDI}`;
 }
 
-const PROP_KEYS = {
-  FIGHT_PROP_CRITICAL: 'critRate',
-  FIGHT_PROP_CRITICAL_HURT: 'critDmg',
-  FIGHT_PROP_CHARGE_EFFICIENCY: 'er',
-  FIGHT_PROP_ELEMENT_MASTERY: 'em',
-  FIGHT_PROP_ATTACK_PERCENT: 'atkPercent',
-  FIGHT_PROP_ATTACK: 'flatAtk',
-  FIGHT_PROP_HP_PERCENT: 'hpPercent',
-  FIGHT_PROP_HP: 'flatHp',
-  FIGHT_PROP_DEFENSE_PERCENT: 'defPercent',
-  FIGHT_PROP_DEFENSE: 'flatDef',
-};
-
 const ACCOUNT_TO_SUB = {
   critRate: 'critRate', critDmg: 'critDmg', er: 'er', em: 'em',
   atk: 'atkPercent', hp: 'hpPercent', def: 'defPercent',
 };
-
-const MAX_FIVE_ROLL = {
-  critRate: 19.5,
-  critDmg: 38.9,
-  er: 32.4,
-  em: 116.6,
-  atkPercent: 29.2,
-  hpPercent: 29.2,
-  defPercent: 36.5,
+const SUB_TO_ACCOUNT = {
+  critRate: 'critRate', critDmg: 'critDmg', er: 'er', em: 'em',
+  atkPercent: 'atk', hpPercent: 'hp', defPercent: 'def',
+  flatAtk: 'atk', flatHp: 'hp', flatDef: 'def',
 };
-
+const MAX_FIVE_ROLL = {
+  critRate: 19.5, critDmg: 38.9, er: 32.4, em: 116.6,
+  atkPercent: 29.2, hpPercent: 29.2, defPercent: 36.5,
+};
 const LABELS = {
   critRate: 'CRIT Rate', critDmg: 'CRIT DMG', er: 'ER', em: 'EM',
   atk: 'ATK', hp: 'HP', def: 'DEF', atkPercent: 'ATK%', hpPercent: 'HP%', defPercent: 'DEF%',
@@ -48,22 +33,17 @@ function normalize(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-function cleanStatName(name) {
-  const text = String(name || '');
-  if (/crit\s*rate/i.test(text)) return 'CRIT Rate';
-  if (/crit\s*(?:dmg|damage)/i.test(text)) return 'CRIT DMG';
-  if (/energy\s*recharge/i.test(text)) return 'ER';
-  if (/elemental\s*mastery/i.test(text)) return 'EM';
-  if (/attack|atk/i.test(text)) return /%/.test(text) ? 'ATK%' : 'ATK';
-  if (/health|hp/i.test(text)) return /%/.test(text) ? 'HP%' : 'HP';
-  if (/defense|def/i.test(text)) return /%/.test(text) ? 'DEF%' : 'DEF';
-  return text.replace(/^FIGHT_PROP_/i, '').replace(/_/g, ' ');
+function numericSubstat(row) {
+  const direct = Number(row?.numericValue);
+  if (Number.isFinite(direct)) return direct;
+  const parsed = Number.parseFloat(String(row?.value || '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function statKey(row) {
-  const prop = String(row?.fightProp || '').toUpperCase();
-  if (PROP_KEYS[prop]) return PROP_KEYS[prop];
-  const name = String(row?.name || '');
+  const direct = rollKey(row);
+  if (direct) return direct;
+  const name = String(row?.name || row?.fightProp || '');
   if (/crit\s*rate/i.test(name)) return 'critRate';
   if (/crit\s*(?:dmg|damage)/i.test(name)) return 'critDmg';
   if (/energy\s*recharge|\ber\b/i.test(name)) return 'er';
@@ -72,13 +52,6 @@ function statKey(row) {
   if (/health|hp/i.test(name)) return row?.isPercent || /%/.test(row?.value || '') ? 'hpPercent' : 'flatHp';
   if (/defense|def/i.test(name)) return row?.isPercent || /%/.test(row?.value || '') ? 'defPercent' : 'flatDef';
   return null;
-}
-
-function numericSubstat(row) {
-  const value = Number(row?.numericValue);
-  if (Number.isFinite(value)) return value;
-  const parsed = Number.parseFloat(String(row?.value || '').replace(/,/g, ''));
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function substatValue(artifact, key) {
@@ -95,8 +68,6 @@ function mainBlocksSubstat(artifact, key) {
   return Boolean(map[key] && main === map[key]);
 }
 
-// Kept for the compact artifact review. Doctor targeting below uses account-stat
-// deltas; this only provides the simple current/suggested RV line.
 function recommendedRv(row) {
   if (!row?.mainMatch) return 550;
   const value = Number(row?.usefulRv) || 0;
@@ -110,8 +81,12 @@ function recommendedSet(guide) {
   return (guide?.artifacts || []).map((item) => String(item || '').trim()).filter(Boolean)[0] || null;
 }
 
+function cleanSetName(value) {
+  return String(value || '').replace(/\([^)]*piece[^)]*\)/ig, '').replace(/\b[24][- ]?piece\b/ig, '').replace(/\s+/g, ' ').trim();
+}
+
 function setNeedsChange(snapshot, guide) {
-  const candidates = (guide?.artifacts || []).map(normalize).filter(Boolean);
+  const candidates = (guide?.artifacts || []).map((row) => cleanSetName(row)).map(normalize).filter(Boolean);
   if (!candidates.length) return null;
   const current = Object.entries(snapshot?.setCounts || {}).sort((a, b) => b[1] - a[1])[0];
   if (!current || current[1] < 2) return null;
@@ -119,6 +94,97 @@ function setNeedsChange(snapshot, guide) {
   const matched = candidates.some((candidate) => candidate.includes(currentKey) || currentKey.includes(candidate));
   if (matched) return null;
   return { current: current[0], recommended: recommendedSet(guide) };
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function buildStatWeights(snapshot, guide, evaluation = null) {
+  const profile = guideProfile(guide);
+  const ordered = unique([...profile.priority, ...profile.ordered]);
+  const weights = new Map();
+
+  ordered.forEach((accountKey, index) => {
+    let weight = Math.max(0.82, 1.32 - index * 0.11);
+    const target = profile.targetMap[accountKey];
+    const current = Number(snapshot?.stats?.[accountKey]);
+    const evalRow = (evaluation?.relevantStats || []).find((row) => row.key === accountKey);
+
+    if (evalRow?.status === 'down' || (target && Number.isFinite(current) && current < target.min)) weight *= 1.45;
+    else if (target && Number.isFinite(current) && target.max > target.min && current < target.max) weight *= 1.12;
+    else if (target && Number.isFinite(current) && target.max > target.min && current >= target.max) weight *= 0.92;
+
+    const sub = ACCOUNT_TO_SUB[accountKey];
+    if (sub) weights.set(sub, Math.max(weights.get(sub) || 0, weight));
+    if (accountKey === 'atk') weights.set('flatAtk', Math.max(weights.get('flatAtk') || 0, weight * 0.32));
+    if (accountKey === 'hp') weights.set('flatHp', Math.max(weights.get('flatHp') || 0, weight * 0.32));
+    if (accountKey === 'def') weights.set('flatDef', Math.max(weights.get('flatDef') || 0, weight * 0.32));
+  });
+
+  // A guide without usable priority data gets a conservative generic fallback.
+  if (!weights.size) {
+    weights.set('critRate', 1);
+    weights.set('critDmg', 1);
+  }
+  return weights;
+}
+
+function pieceQuality(artifact, reviewed, snapshot, guide, evaluation = null) {
+  const row = reviewed || reviewArtifact(artifact, guide);
+  const weights = buildStatWeights(snapshot, guide, evaluation);
+  let weightedRv = 0;
+  const parts = [];
+
+  for (const sub of artifact?.substats || []) {
+    const key = statKey(sub);
+    const weight = weights.get(key) || 0;
+    const max = maxRollFor(key, artifact?.rarity || 5);
+    const value = numericSubstat(sub);
+    if (!key || !weight || !Number.isFinite(max) || max <= 0) continue;
+    const rv = Math.max(0, (value / max) * 100);
+    weightedRv += rv * weight;
+    parts.push({ key, value, rv: Math.round(rv), weight });
+  }
+
+  const critRelevant = (weights.get('critRate') || 0) > 0 || (weights.get('critDmg') || 0) > 0;
+  const critWeight = Math.max(weights.get('critRate') || 0, weights.get('critDmg') || 0, 1);
+  // CV is kept as a second signal, like Akasha's RV/CV toggle. It never matters for
+  // non-crit builds, and it is intentionally a minority of the final fit score so
+  // HP/DEF/EM/ER requirements can beat raw crit value when the guide calls for them.
+  const cvEquivalentRv = critRelevant ? ((Number(row.cv) || 0) / 7.77) * 100 : 0;
+  let score = weightedRv * 0.84 + cvEquivalentRv * critWeight * 0.16;
+  if (!row.mainMatch) score -= 1200;
+  if (row.level < 20) score -= (20 - row.level) * 35;
+
+  return {
+    score: Math.round(score * 10) / 10,
+    weightedRv: Math.round(weightedRv),
+    cv: Number(row.cv) || 0,
+    critRelevant,
+    parts,
+  };
+}
+
+function rankArtifactPieces(snapshot, guide, evaluation = null) {
+  const report = reviewArtifacts(snapshot, guide);
+  const rawBySlot = new Map((snapshot?.artifacts || []).map((row) => [row.slot, row]));
+  return report.pieces.map((row) => {
+    const artifact = rawBySlot.get(row.slot);
+    return { row, artifact, quality: pieceQuality(artifact, row, snapshot, guide, evaluation) };
+  }).sort((a, b) => a.quality.score - b.quality.score || a.row.usefulRv - b.row.usefulRv);
+}
+
+function cleanStatName(name) {
+  const text = String(name || '');
+  if (/crit\s*rate/i.test(text)) return 'CRIT Rate';
+  if (/crit\s*(?:dmg|damage)/i.test(text)) return 'CRIT DMG';
+  if (/energy\s*recharge/i.test(text)) return 'ER';
+  if (/elemental\s*mastery/i.test(text)) return 'EM';
+  if (/attack|atk/i.test(text)) return /%/.test(text) ? 'ATK%' : 'ATK';
+  if (/health|hp/i.test(text)) return /%/.test(text) ? 'HP%' : 'HP';
+  if (/defense|def/i.test(text)) return /%/.test(text) ? 'DEF%' : 'DEF';
+  return text.replace(/^FIGHT_PROP_/i, '').replace(/_/g, ' ');
 }
 
 function formatSubstats(artifact, lang) {
@@ -170,23 +236,18 @@ function defaultGoals(snapshot, guide, evaluation) {
     const target = profile.targetMap[key];
     const current = Number(snapshot?.stats?.[key]);
     if (!target || !Number.isFinite(current)) continue;
-    if (Number(target.max) > Number(target.min) && current < Number(target.max)) {
-      soft.push({ key, target: Number(target.max), explicit: false, hard: false });
-    }
+    if (target.max > target.min && current < target.max) soft.push({ key, target: Number(target.max), explicit: false, hard: false });
   }
   return soft;
 }
 
-function preservationKeys(guide, targetKey) {
-  const profile = guideProfile(guide);
-  const keys = [...profile.priority, ...profile.ordered, 'critRate', 'critDmg'];
-  const mapped = [];
-  for (const key of keys) {
-    if (key === targetKey) continue;
-    const sub = ACCOUNT_TO_SUB[key];
-    if (sub && !mapped.includes(sub)) mapped.push(sub);
-  }
-  return mapped.slice(0, 4);
+function preservationKeys(snapshot, guide, evaluation, targetKey) {
+  const weights = buildStatWeights(snapshot, guide, evaluation);
+  return [...weights.entries()]
+    .filter(([key]) => SUB_TO_ACCOUNT[key] !== targetKey && !key.startsWith('flat'))
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => key)
+    .slice(0, 4);
 }
 
 function fmtSub(key, value) {
@@ -195,57 +256,74 @@ function fmtSub(key, value) {
   return `${Math.round(value)}`;
 }
 
-function improvementCandidates(snapshot, guide, report, goal) {
+function improvementCandidates(snapshot, guide, report, goal, evaluation = null) {
   const accountKey = goal.key;
   const subKey = ACCOUNT_TO_SUB[accountKey];
   if (!subKey) return [];
   const currentTotal = Number(snapshot?.stats?.[accountKey]);
   const direct = ['critRate', 'critDmg', 'er', 'em'].includes(accountKey);
-  const gap = direct && Number.isFinite(currentTotal) ? Math.max(0, goal.target - currentTotal) : null;
   const rawBySlot = new Map((snapshot?.artifacts || []).map((row) => [row.slot, row]));
-  const preserveKeys = preservationKeys(guide, accountKey);
+  const preserveKeys = preservationKeys(snapshot, guide, evaluation, accountKey);
 
-  return report.pieces
-    .filter((row) => row.mainMatch && row.level >= 20)
-    .map((row) => {
-      const raw = rawBySlot.get(row.slot);
-      if (!raw || mainBlocksSubstat(raw, subKey)) return null;
-      const currentOnPiece = substatValue(raw, subKey);
-      let wanted = currentOnPiece;
-      if (direct && Number.isFinite(gap)) wanted = currentOnPiece + gap;
-      else wanted = currentOnPiece + (MAX_FIVE_ROLL[subKey] || 0) * 0.22;
-      wanted = Math.round(wanted * 10) / 10;
-      const ceiling = MAX_FIVE_ROLL[subKey] || Infinity;
-      const fitsOnePiece = wanted <= ceiling + 0.15;
-      const preserve = preserveKeys.map((key) => ({ key, value: substatValue(raw, key) })).filter((row) => row.value > 0);
-      return { row, raw, subKey, currentOnPiece, wanted, ceiling, fitsOnePiece, preserve };
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.fitsOnePiece !== b.fitsOnePiece) return a.fitsOnePiece ? -1 : 1;
-      return a.row.usefulRv - b.row.usefulRv || a.preserve.length - b.preserve.length;
-    });
+  return report.pieces.map((row) => {
+    const raw = rawBySlot.get(row.slot);
+    if (!raw || !row.mainMatch || row.level < 20 || mainBlocksSubstat(raw, subKey)) return null;
+    const currentOnPiece = substatValue(raw, subKey);
+    let wanted;
+    if (direct && Number.isFinite(currentTotal)) {
+      // Exact replacement math: remove the old piece's contribution first, then ask
+      // how much the new piece needs. Example 71.8 CR, old piece 5.8, target 80 -> 14 CR.
+      wanted = Math.max(0, goal.target - (currentTotal - currentOnPiece));
+    } else {
+      // ATK/HP/DEF totals mix base and percentage scaling. Use the account gap only as
+      // a conservative percentage estimate instead of pretending we know an exact base.
+      const gapPct = Number.isFinite(currentTotal) && currentTotal > 0
+        ? Math.max(0, ((goal.target - currentTotal) / currentTotal) * 100)
+        : 0;
+      wanted = currentOnPiece + Math.max(maxRollFor(subKey, 5) || 0, gapPct);
+    }
+    wanted = Math.round(wanted * 10) / 10;
+    const ceiling = MAX_FIVE_ROLL[subKey] || Infinity;
+    const preserve = preserveKeys.map((key) => ({ key, value: substatValue(raw, key) })).filter((item) => item.value > 0);
+    const quality = pieceQuality(raw, row, snapshot, guide, evaluation);
+    return { row, raw, subKey, currentOnPiece, wanted, ceiling, fitsOnePiece: wanted <= ceiling + 0.15, preserve, quality };
+  }).filter(Boolean).sort((a, b) => {
+    if (a.fitsOnePiece !== b.fitsOnePiece) return a.fitsOnePiece ? -1 : 1;
+    return a.quality.score - b.quality.score || a.row.usefulRv - b.row.usefulRv;
+  });
 }
 
 function formatPlan(snapshot, guide, evaluation, requestText, lang) {
   const ar = lang === 'ar';
   const explicit = parseRequestedTargets(requestText);
   const goals = explicit.length ? explicit : defaultGoals(snapshot, guide, evaluation);
-  const goal = goals[0] || null;
+  const ranked = rankArtifactPieces(snapshot, guide, evaluation);
   const report = reviewArtifacts(snapshot, guide);
+  const goal = goals[0] || null;
+
+  // A wrong main stat is a real build problem; otherwise main stat value is not used
+  // to compare pieces because every +20 artifact with that main stat has the same value.
+  const wrongMain = ranked.find((item) => !item.row.mainMatch);
+  if (wrongMain) {
+    return ar
+      ? `**ابدأ بـ ${ltr(wrongMain.row.slotLabel)}:** الـMain Stat غير مناسب. المطلوب ${ltr(wrongMain.row.mainOptions.join(' / '))}. بعدها نرجع نقارن جودة السب ستات بالـRV والـCV.`
+      : `**Start with ${wrongMain.row.slotLabel}:** its main stat is wrong. Use ${wrongMain.row.mainOptions.join(' / ')} first, then compare substat quality by RV/CV.`;
+  }
+
   if (!goal) {
-    const weakest = report.prioritized.find((row) => row.mainMatch && row.level >= 20) || report.prioritized[0];
+    const weakest = ranked[0];
     if (!weakest) return ar ? 'ما لقيت قطعة واضحة تحتاج تغيير.' : 'No obvious artifact replacement was found.';
     return ar
-      ? `**الخطة:** بيلدك محقق الأهداف الأساسية. إذا تبي Min-Max، ابدأ بـ ${ltr(weakest.slotLabel)} لأنها أضعف قطعة عندك حاليًا.`
-      : `**Plan:** your main build targets are already met. For min-maxing, start with ${weakest.slotLabel}, your weakest current piece.`;
+      ? `**الخطة:** بيلدك محقق التارقت الأساسي. أضعف حلقة حاليًا ${ltr(weakest.row.slotLabel)} — ${ltr(`RV ${weakest.row.usefulRv}% • CV ${weakest.row.cv}`)}. إذا تبي Min-Max ابدأ منها، مع المحافظة على الستات المهمة للشخصية.`
+      : `**Plan:** your main targets are met. The weakest link is ${weakest.row.slotLabel} — RV ${weakest.row.usefulRv}% • CV ${weakest.row.cv}. Min-max this piece while preserving the character's important stats.`;
   }
 
   const current = Number(snapshot?.stats?.[goal.key]);
-  const candidates = improvementCandidates(snapshot, guide, report, goal);
-  const best = candidates.find((row) => row.fitsOnePiece) || candidates[0] || null;
-  if (!best) return ar ? 'ما لقيت قطعة مناسبة أغيّرها بدون تعارض مع الـMain Stat.' : 'No suitable piece can be changed without conflicting with its main stat.';
+  const candidates = improvementCandidates(snapshot, guide, report, goal, evaluation);
+  const best = candidates[0] || ranked[0] || null;
+  if (!best) return ar ? 'ما لقيت قطعة مناسبة أغيّرها بدون تخريب البيلد.' : 'No suitable replacement was found without damaging the build.';
 
+  const row = best.row || best?.row;
   const lines = [];
   if (Number.isFinite(current)) {
     lines.push(ar
@@ -253,29 +331,33 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
       : `**Goal:** ${LABELS[goal.key] || goal.key} from ${formatStat(goal.key, current)} to ${formatStat(goal.key, goal.target)}.`);
   }
   lines.push(ar
-    ? `**ابدأ بـ ${ltr(best.row.slotLabel)} +${best.row.level}:** هي أفضل حلقة للتعديل بدون التضحية بقطعة أقوى.`
-    : `**Start with ${best.row.slotLabel} +${best.row.level}:** it is the best weak link to replace without sacrificing a stronger piece.`);
+    ? `**أضعف حلقة مناسبة للتحسين: ${ltr(row.slotLabel)} +${row.level}** — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}.`
+    : `**Best weak link to improve: ${row.slotLabel} +${row.level}** — RV ${row.usefulRv}% • CV ${row.cv}.`);
 
-  if (!best.fitsOnePiece) {
-    const second = candidates.find((row) => row !== best) || null;
-    lines.push(ar
-      ? `الفرق المطلوب أكبر من رول منطقي على قطعة واحدة. لا تتجاوز تقريبًا 4–5 رولات لنفس السب ستات؛ وزّع التحسين${second ? ` بين ${ltr(best.row.slotLabel)} و${ltr(second.row.slotLabel)}` : ' على أكثر من قطعة'}.`
-      : `The gap is larger than a realistic single-piece roll. Keep one substat to roughly 4–5 rolls and split the gain across multiple pieces.`);
-  } else {
-    lines.push(ar ? 'ابحث عن نفس الـMain Stat وبالسب ستات التالية:' : 'Look for the same main stat with:');
-    lines.push(ar
-      ? `• ${ltr(`${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+`)}${best.currentOnPiece > 0 ? ` بدل ${ltr(fmtSub(best.subKey, best.currentOnPiece))}` : ''}`
-      : `• ${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+${best.currentOnPiece > 0 ? ` (currently ${fmtSub(best.subKey, best.currentOnPiece)})` : ''}`);
-    best.preserve.slice(0, 3).forEach((row) => {
+  if (best.subKey) {
+    if (!best.fitsOnePiece) {
+      const second = candidates.find((item) => item !== best) || null;
       lines.push(ar
-        ? `• حافظ على ${ltr(`${LABELS[row.key] || row.key}: ${fmtSub(row.key, row.value)}+`)}`
-        : `• Keep ${LABELS[row.key] || row.key}: ${fmtSub(row.key, row.value)}+`);
-    });
-    if (Number.isFinite(current) && ['critRate', 'critDmg', 'er', 'em'].includes(goal.key)) {
-      const projected = current - best.currentOnPiece + best.wanted;
-      lines.push(ar
-        ? `بهالشكل توصل تقريبًا إلى ${ltr(formatStat(goal.key, projected))} مع المحافظة على الستات المهمة الموجودة بالقطعة.`
-        : `That projects to about ${formatStat(goal.key, projected)} while preserving the important stats already on the piece.`);
+        ? `الفرق المطلوب أكبر من 4–5 رولات واقعية على سب ستات واحد. وزّع الزيادة${second ? ` بين ${ltr(row.slotLabel)} و${ltr(second.row.slotLabel)}` : ' على أكثر من قطعة'} بدل طلب رول مستحيل.`
+        : 'The gap is larger than a realistic 4–5 rolls on one substat. Split the gain across pieces instead of chasing an impossible roll.');
+    } else {
+      lines.push(ar ? 'ابحث عن نفس الـMain Stat، وحاول توصل تقريبًا إلى:' : 'Keep the same main stat and look for roughly:');
+      lines.push(`• ${ltr(`${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+`)}`);
+      best.preserve.slice(0, 3).forEach((item) => {
+        lines.push(ar
+          ? `• حافظ قدر الإمكان على ${ltr(`${LABELS[item.key] || item.key}: ${fmtSub(item.key, item.value)}`)}`
+          : `• Preserve ${LABELS[item.key] || item.key}: about ${fmtSub(item.key, item.value)}`);
+      });
+      if (Number.isFinite(current) && ['critRate', 'critDmg', 'er', 'em'].includes(goal.key)) {
+        const projected = current - best.currentOnPiece + best.wanted;
+        lines.push(ar
+          ? `**النتيجة المتوقعة:** حوالي ${ltr(formatStat(goal.key, projected))} بدون التضحية بالستات المهمة الموجودة بالقطعة.`
+          : `**Projected result:** about ${formatStat(goal.key, projected)} without sacrificing the important stats on the piece.`);
+      } else if (['atk', 'hp', 'def'].includes(goal.key)) {
+        lines.push(ar
+          ? 'الرقم المقترح هنا تقريبي لأن ATK/HP/DEF النهائي يعتمد على الـBase Stat؛ البوت يستخدمه كهدف تحسين للقطعة، مو كضمان للرقم النهائي.'
+          : 'This substat number is approximate because final ATK/HP/DEF depends on the base stat; it is an upgrade target, not a guaranteed final total.');
+      }
     }
   }
   return lines.join('\n');
@@ -289,7 +371,7 @@ function formatArtifactDoctor(snapshot, guide, evaluation, lang = 'ar', requestT
 
   for (const row of report.pieces) {
     const raw = rawBySlot.get(row.slot);
-    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)}**`);
+    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)} — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}`);
     lines.push(formatSubstats(raw, lang));
   }
 
@@ -302,18 +384,43 @@ function formatArtifactDoctor(snapshot, guide, evaluation, lang = 'ar', requestT
       ? `\n**الـSet:** إذا هدفك البيلد القياسي، بدّل ${ltr(setIssue.current)} إلى ${ltr(setIssue.recommended)}.`
       : `\n**Set:** for the standard build, replace ${setIssue.current} with ${setIssue.recommended}.`);
   }
-
   return lines.join('\n');
+}
+
+function directStatDelta(oldArtifact, newArtifact) {
+  const keys = ['critRate', 'critDmg', 'er', 'em'];
+  const out = {};
+  for (const key of keys) out[key] = substatValue(newArtifact, key) - substatValue(oldArtifact, key);
+  return out;
+}
+
+function applyArtifactReplacement(snapshot, slot, artifact) {
+  const current = (snapshot?.artifacts || []).find((row) => row.slot === slot) || null;
+  const artifacts = (snapshot?.artifacts || []).filter((row) => row.slot !== slot).concat([{ ...artifact, slot }]);
+  const stats = { ...(snapshot?.stats || {}) };
+  const delta = directStatDelta(current, artifact);
+  for (const [key, value] of Object.entries(delta)) {
+    if (Number.isFinite(stats[key]) && Number.isFinite(value)) stats[key] = Math.round((stats[key] + value) * 10) / 10;
+  }
+  const setCounts = {};
+  artifacts.forEach((row) => { if (row.set) setCounts[row.set] = (setCounts[row.set] || 0) + 1; });
+  return { ...snapshot, artifacts, stats, setCounts };
 }
 
 module.exports = {
   formatArtifactDoctor,
   setNeedsChange,
+  cleanSetName,
   recommendedRv,
   parseRequestedTargets,
+  buildStatWeights,
+  pieceQuality,
+  rankArtifactPieces,
   improvementCandidates,
   formatPlan,
   mainBlocksSubstat,
   substatValue,
+  directStatDelta,
+  applyArtifactReplacement,
   ltr,
 };
