@@ -74,22 +74,32 @@ function rollKey(roll) {
   return rollKeyFromFightProp(roll?.fightProp) || rollKeyFromName(roll?.name, Boolean(roll?.isPercent));
 }
 
-function maxRollFor(roll, rarity = 5) {
+function maxRollFor(rollOrKey, rarity = 5) {
   const table = MAX_ROLLS[Number(rarity)] || MAX_ROLLS[5];
-  return table[rollKey(roll)] || null;
+  const key = typeof rollOrKey === 'string' ? rollOrKey : rollKey(rollOrKey);
+  return table[key] || null;
+}
+
+function numericValue(row) {
+  const direct = Number(row?.numericValue);
+  if (Number.isFinite(direct)) return direct;
+  const parsed = Number.parseFloat(String(row?.value || '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function rollValue(roll, rarity = 5) {
-  const value = Number(roll?.numericValue);
+  const value = numericValue(roll);
   const max = maxRollFor(roll, rarity);
   if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) return 0;
-  return Math.max(0, Math.min(110, (value / max) * 100));
+  return Math.max(0, (value / max) * 100);
 }
 
 function usefulRollKeys(guide) {
   const profile = guideProfile(guide);
-  const useful = new Set(['critRate', 'critDmg']);
-  for (const key of [...profile.priority, ...profile.ordered]) {
+  const useful = new Set();
+  const source = [...profile.priority, ...profile.ordered];
+
+  for (const key of source) {
     if (key === 'atk') { useful.add('atkPercent'); useful.add('flatAtk'); }
     else if (key === 'hp') { useful.add('hpPercent'); useful.add('flatHp'); }
     else if (key === 'def') { useful.add('defPercent'); useful.add('flatDef'); }
@@ -98,7 +108,25 @@ function usefulRollKeys(guide) {
     else if (key === 'critRate') useful.add('critRate');
     else if (key === 'critDmg') useful.add('critDmg');
   }
+
+  // Only fall back to classic CR/CD when the guide has no usable stat profile at all.
+  // This prevents HP/DEF/EM support builds from being judged as generic crit DPS builds.
+  if (!useful.size) {
+    useful.add('critRate');
+    useful.add('critDmg');
+  }
   return useful;
+}
+
+function artifactCritValue(artifact) {
+  let cr = 0;
+  let cd = 0;
+  for (const row of artifact?.substats || []) {
+    const key = rollKey(row);
+    if (key === 'critRate') cr += numericValue(row);
+    if (key === 'critDmg') cd += numericValue(row);
+  }
+  return Math.round((cr * 2 + cd) * 10) / 10;
 }
 
 function actualMainTokens(artifact) {
@@ -165,23 +193,22 @@ function reviewArtifact(artifact, guide) {
   let usefulRv = 0;
   const usefulParts = new Map();
 
-  for (const roll of rolls) {
-    const rv = rollValue(roll, artifact?.rarity || 5);
-    const key = rollKey(roll);
-    totalRv += rv;
-    if (key && useful.has(key)) {
-      usefulRv += rv;
-      usefulParts.set(key, (usefulParts.get(key) || 0) + rv);
+  if (rolls.length) {
+    for (const roll of rolls) {
+      const rv = rollValue(roll, artifact?.rarity || 5);
+      const key = rollKey(roll);
+      totalRv += rv;
+      if (key && useful.has(key)) {
+        usefulRv += rv;
+        usefulParts.set(key, (usefulParts.get(key) || 0) + rv);
+      }
     }
-  }
-
-  // Older stored snapshots do not have split rolls. Estimate from total substats so
-  // comparisons remain usable, but live Showcase reads use the exact split-roll path.
-  if (!rolls.length) {
+  } else {
+    // Aggregated substats still give a useful estimate for OCR candidates and old snapshots.
     for (const sub of artifact?.substats || []) {
       const key = rollKey(sub);
       const max = maxRollFor(sub, artifact?.rarity || 5);
-      const value = Number(sub?.numericValue);
+      const value = numericValue(sub);
       if (!key || !Number.isFinite(max) || !Number.isFinite(value)) continue;
       const rv = Math.max(0, (value / max) * 100);
       totalRv += rv;
@@ -211,6 +238,7 @@ function reviewArtifact(artifact, guide) {
     totalRolls: Number.isFinite(artifact?.totalRolls) ? artifact.totalRolls : rolls.length,
     totalRv: Math.round(totalRv),
     usefulRv: Math.round(usefulRv),
+    cv: artifactCritValue(artifact),
     usefulKeys,
     priorityScore,
   };
@@ -249,30 +277,12 @@ function formatArtifactReview(snapshot, guide, lang = 'ar') {
   for (const row of report.pieces) {
     const grade = rvGrade(row.usefulRv, row.mainMatch, row.level, lang);
     const useful = row.usefulKeys.slice(0, 3).map(formatKey).join(' / ');
-    lines.push(`• **${row.slotLabel} +${row.level}** — RV **${row.totalRv}%** • Useful RV **${row.usefulRv}%** • ${grade}`);
-    if (useful) lines.push(`  ${ar ? 'أفضل الرولات' : 'Useful rolls'}: ${useful}`);
+    lines.push(`• **${row.slotLabel} +${row.level}** — RV **${row.usefulRv}%** • CV **${row.cv}** • ${grade}`);
+    if (useful) lines.push(`  ${ar ? 'الستات المحتسبة' : 'Counted stats'}: ${useful}`);
     const mainAdvice = mainStatAdvice(row, lang);
     if (mainAdvice) lines.push(`  ⚠ ${mainAdvice}`);
   }
 
-  const priorities = report.prioritized.filter((row) => !row.mainMatch || row.level < 20 || row.usefulRv < 550).slice(0, 3);
-  if (priorities.length) {
-    lines.push(`\n**${ar ? 'أولوية التطوير' : 'Upgrade priority'}:**`);
-    priorities.forEach((row, index) => {
-      const reason = !row.mainMatch
-        ? (ar ? `بدّل الـMain Stat إلى ${row.mainOptions.join(' / ')}` : `change main stat to ${row.mainOptions.join(' / ')}`)
-        : row.level < 20
-          ? (ar ? `ارفعها إلى +20 أولًا` : 'level it to +20 first')
-          : (ar ? `Useful RV منخفض (${row.usefulRv}%)؛ ابحث عن رولات أفضل في الستات المهمة` : `low Useful RV (${row.usefulRv}%); look for better relevant rolls`);
-      lines.push(`${index + 1}. **${row.slotLabel}** — ${reason}`);
-    });
-  } else {
-    lines.push(`\n${ar ? 'القطع الحالية قوية من ناحية Main Stats وRV؛ التحسين القادم بيكون Min-Max على القطع الأقل Useful RV.' : 'Your current pieces are strong on main stats and RV; further gains are mostly min-maxing the lowest Useful RV pieces.'}`);
-  }
-
-  lines.push(ar
-    ? '\n*RV محسوب من الرولات الفعلية اللي Enka يعرضها، وUseful RV يحسب الرولات المفيدة لبيلد الشخصية حسب الـGuide.*'
-    : '\n*RV uses the individual rolls exposed by Enka; Useful RV counts rolls relevant to this character guide.*');
   return lines.join('\n');
 }
 
@@ -294,22 +304,26 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
       ? `**لرفع Akasha${category}:** قبل الـmin-max ركز على ${missing.join(' / ')}؛ هذي أكبر مساحة تحسين واضحة حاليًا.`
       : `**To improve Akasha${category}:** before min-maxing, fix ${missing.join(' / ')}; these are the clearest current gaps.`);
   } else if (topPercent > 1) {
-    const weakText = weakest.map((row) => `${row.slotLabel} Useful RV ${row.usefulRv}%`).join(' • ');
+    const weakText = weakest.map((row) => `${row.slotLabel} RV ${row.usefulRv}% • CV ${row.cv}`).join(' • ');
     lines.push(ar
-      ? `**لرفع Akasha${category}:** أنت محقق التارقت الأساسي. التحسين الآن يكون برفع جودة الرولات بدون ما تنزل عن التارقت؛ ${weakText || 'ركز على أضعف قطعتين بالـUseful RV'}.`
-      : `**To improve Akasha${category}:** your core targets are met. The next gains come from stronger rolls without dropping below targets; ${weakText || 'focus on the two lowest Useful RV pieces'}.`);
+      ? `**لرفع Akasha${category}:** أنت محقق التارقت الأساسي. التحسين الآن يكون برفع جودة القطع بدون النزول عن التارقت؛ ${weakText || 'ركز على أضعف قطعتين'}.`
+      : `**To improve Akasha${category}:** your core targets are met. Improve piece quality without dropping below targets; ${weakText || 'focus on the two weakest pieces'}.`);
   } else {
     lines.push(ar
-      ? `**Akasha:** أنت داخل Top ${topPercent}%؛ أي تقدم إضافي غالبًا يحتاج Min-Max قوي جدًا في RV والـcrit/الستات الأساسية مع الحفاظ على التارقت.`
-      : `**Akasha:** you are already Top ${topPercent}%; further gains usually require heavy RV/stat min-maxing while preserving target thresholds.`);
+      ? `**Akasha:** أنت داخل Top ${topPercent}%؛ أي تقدم إضافي غالبًا يحتاج Min-Max قوي مع الحفاظ على التارقت.`
+      : `**Akasha:** you are already Top ${topPercent}%; further gains usually require heavy min-maxing while preserving target thresholds.`);
   }
 
   return lines.join('\n');
 }
 
 module.exports = {
+  MAX_ROLLS,
   rollKey,
+  maxRollFor,
   rollValue,
+  usefulRollKeys,
+  artifactCritValue,
   mainStatOptions,
   mainStatMatches,
   reviewArtifact,
