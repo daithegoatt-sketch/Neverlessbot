@@ -19,18 +19,20 @@ function accountPhrase(text) {
   return /بحسابي|في\s+حسابي|من\s+حسابي|my\s+account|in\s+my\s+account|on\s+my\s+account/i.test(String(text || ''));
 }
 
+function hasArtifactWord(value) {
+  return /[اآأإ]?رت[يى]?[فڤ]ا?كت(?:ات)?|artifact(?:s)?/iu.test(String(value || ''));
+}
+
 function isArtifactDoctor(text) {
   const value = String(text || '');
-  const hasArtifact = /[اآأإ]?رت[يى]?فا?كت(?:ات)?|artifact(?:s)?/iu.test(value);
   const hasImprove = /تحسين|حس[ّ]?ن|طور|طوّر|رفع|ارفع|أرفع|improve|upgrade|doctor|increase|raise/iu.test(value);
-  return hasArtifact && hasImprove;
+  return hasArtifactWord(value) && hasImprove;
 }
 
 function isArtifactReview(text) {
   const value = String(text || '');
-  const hasArtifact = /[اآأإ]?رت[يى]?فا?كت(?:ات)?|artifact(?:s)?/iu.test(value);
   const hasReview = /تقييم|قيّم|قيم|حلل|راجع|rate|review|evaluate/iu.test(value);
-  return hasArtifact && hasReview && accountPhrase(value);
+  return hasArtifactWord(value) && hasReview && accountPhrase(value);
 }
 
 async function send(message, text, files = []) {
@@ -116,4 +118,4 @@ async function handleArtifactReviewMessage(message) {
   return true;
 }
 
-module.exports = { handleArtifactReviewMessage, isArtifactReview, isArtifactDoctor };
+module.exports = { handleArtifactReviewMessage, isArtifactReview, isArtifactDoctor, hasArtifactWord };
