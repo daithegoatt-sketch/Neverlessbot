@@ -13,8 +13,8 @@ function formatArtifactReview(snapshot, guide, lang = 'ar') {
     const target = recommendedRv(row);
     lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)}**`);
     lines.push(ar
-      ? `الحالي: **${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}**`
-      : `Current: **RV ${row.usefulRv}% • CV ${row.cv}**`);
+      ? `RV الحالي: **${ltr(`${row.usefulRv}%`)}** • CV: **${ltr(row.cv)}**`
+      : `Current RV: **${row.usefulRv}%** • CV: **${row.cv}**`);
     lines.push(ar
       ? `RV المقترح: **${ltr(`${target}%+`)}**${row.usefulRv >= target ? ' ✓' : ''}`
       : `Suggested RV: **${target}%+**${row.usefulRv >= target ? ' ✓' : ''}`);
