@@ -95,6 +95,17 @@ function mainBlocksSubstat(artifact, key) {
   return Boolean(map[key] && main === map[key]);
 }
 
+// Kept for the compact artifact review. Doctor targeting below uses account-stat
+// deltas; this only provides the simple current/suggested RV line.
+function recommendedRv(row) {
+  if (!row?.mainMatch) return 550;
+  const value = Number(row?.usefulRv) || 0;
+  if (value < 400) return 500;
+  if (value < 500) return 550;
+  if (value < 600) return 600;
+  return 650;
+}
+
 function recommendedSet(guide) {
   return (guide?.artifacts || []).map((item) => String(item || '').trim()).filter(Boolean)[0] || null;
 }
@@ -251,7 +262,7 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
       ? `الفرق المطلوب أكبر من رول منطقي على قطعة واحدة. لا تتجاوز تقريبًا 4–5 رولات لنفس السب ستات؛ وزّع التحسين${second ? ` بين ${ltr(best.row.slotLabel)} و${ltr(second.row.slotLabel)}` : ' على أكثر من قطعة'}.`
       : `The gap is larger than a realistic single-piece roll. Keep one substat to roughly 4–5 rolls and split the gain across multiple pieces.`);
   } else {
-    lines.push(ar ? `ابحث عن نفس الـMain Stat وبالسب ستات التالية:` : 'Look for the same main stat with:');
+    lines.push(ar ? 'ابحث عن نفس الـMain Stat وبالسب ستات التالية:' : 'Look for the same main stat with:');
     lines.push(ar
       ? `• ${ltr(`${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+`)}${best.currentOnPiece > 0 ? ` بدل ${ltr(fmtSub(best.subKey, best.currentOnPiece))}` : ''}`
       : `• ${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+${best.currentOnPiece > 0 ? ` (currently ${fmtSub(best.subKey, best.currentOnPiece)})` : ''}`);
@@ -298,6 +309,7 @@ function formatArtifactDoctor(snapshot, guide, evaluation, lang = 'ar', requestT
 module.exports = {
   formatArtifactDoctor,
   setNeedsChange,
+  recommendedRv,
   parseRequestedTargets,
   improvementCandidates,
   formatPlan,
