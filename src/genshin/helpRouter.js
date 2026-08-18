@@ -18,9 +18,7 @@ function helpText(lang) {
       '`Skirk team` / `Skirk f2p team` — published Premium/F2P teams',
       '`rate Skirk on my account` — rate a visible Showcase build',
       '`rate Skirk artifacts on my account` — compact RV/CV artifact review',
-      '`artifact doctor` — interactive character/slot menu for build upgrades',
-      '`improve Skirk artifacts` — direct Artifact Doctor plan for one character',
-      '`pick best Skirk Circlet artifact` — compare 1–10 screenshots directly',
+      '`improve Skirk artifacts` — text-only artifact improvement plan',
       '`Skirk stats on my account` — current account stats only',
       '`compare Skirk on my account` — compare with an older saved build',
       '`rate team Sandrone on my account` — review Premium options from your Showcase',
@@ -31,7 +29,7 @@ function helpText(lang) {
       '`my characters` — visible Showcase characters',
       '`link UID 7XXXXXXXXX` / `unlink UID` — manage your linked account',
       '',
-      'Mention Neverless Bot in the Genshin channel before the command. During an active Artifact Doctor session, follow-up image messages do not need another mention.',
+      'Mention Neverless Bot in the Genshin channel before the command.',
     ].join('\n');
   }
 
@@ -41,9 +39,7 @@ function helpText(lang) {
     '`تيم Skirk` / `تيم F2P Skirk` — تيمات Premium/F2P المنشورة',
     '`تقييم Skirk بحسابي` — تقييم الشخصية الظاهرة بالـShowcase',
     '`قيم ارتيفاكتات Skirk بحسابي` — تقييم مختصر للقطع بـRV وCV',
-    '`طبيب الارتيفاكتات` — واجهة تفاعلية لاختيار الشخصية والقطع وإرسال الصور',
-    '`تحسين ارتيفاكتات Skirk` — خطة تطوير مباشرة حسب بيلد الشخصية',
-    '`اختر أفضل Circlet ارتيفاكت لـ Skirk` — مقارنة 1–10 صور مباشرة',
+    '`تحسين ارتيفاكتات Skirk` — خطة تحسين نصية حسب بيلد الشخصية',
     '`إحصائيات Skirk بحسابي` — إحصائيات الحساب فقط',
     '`قارن Skirk بحسابي` — مقارنة البيلد بنسخة سابقة',
     '`قيم تيم Sandrone بحسابي` — يراجع تيمات Premium حسب الـShowcase',
@@ -54,7 +50,7 @@ function helpText(lang) {
     '`شخصياتي` — الشخصيات الظاهرة في Showcase',
     '`ربط UID 7XXXXXXXXX` / `فك ربط UID` — إدارة الحساب المربوط',
     '',
-    'لازم تمنشن Neverless Bot داخل روم Genshin قبل الأمر. داخل جلسة طبيب الارتيفاكتات، رسائل الصور التالية ما تحتاج منشن جديد.',
+    'لازم تمنشن Neverless Bot داخل روم Genshin قبل الأمر.',
   ].join('\n');
 }
 
