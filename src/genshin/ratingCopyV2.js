@@ -2,80 +2,53 @@
 
 const { reviewArtifacts } = require('./artifactEvaluator');
 const { formatStat, formatTarget } = require('./statProfile');
-
-function pieceGrade(row, lang = 'ar') {
-  const ar = lang === 'ar';
-  if (!row.mainMatch) return ar ? 'Main Stat غير مناسب' : 'Wrong main stat';
-  if (row.level < 20) return ar ? 'غير مكتمل' : 'Not finished';
-  if (row.usefulRv >= 650) return ar ? 'ممتاز جدًا' : 'Excellent';
-  if (row.usefulRv >= 550) return ar ? 'ممتاز' : 'Very good';
-  if (row.usefulRv >= 450) return ar ? 'جيد' : 'Good';
-  if (row.usefulRv >= 330) return ar ? 'متوسط' : 'Average';
-  return ar ? 'أولوية للتبديل' : 'Replace first';
-}
-
-function statLabel(key) {
-  const labels = {
-    critRate: 'CRIT Rate', critDmg: 'CRIT DMG', er: 'ER', em: 'EM',
-    atkPercent: 'ATK%', flatAtk: 'ATK', hpPercent: 'HP%', flatHp: 'HP', defPercent: 'DEF%', flatDef: 'DEF',
-  };
-  return labels[key] || key;
-}
+const { recommendedRv, setNeedsChange, ltr } = require('./artifactDoctor');
 
 function formatArtifactReview(snapshot, guide, lang = 'ar') {
   const ar = lang === 'ar';
   const report = reviewArtifacts(snapshot, guide);
-  const lines = [`**${snapshot.name} — ${ar ? 'تقييم الآرتيفاكتات' : 'Artifact Review'}**`];
+  const lines = [`**${snapshot.name} — ${ar ? 'تقييم الارتيفاكتات' : 'Artifact Review'}**`];
 
   for (const row of report.pieces) {
-    const useful = row.usefulKeys.slice(0, 4).map(statLabel).join(' / ');
-    lines.push(`\n**${row.slotLabel} +${row.level} — ${pieceGrade(row, lang)}**`);
+    const target = recommendedRv(row);
+    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)}**`);
     lines.push(ar
-      ? `• RV الكلي: **${row.totalRv}%** | RV المفيد للشخصية: **${row.usefulRv}%**`
-      : `• Total RV: **${row.totalRv}%** | Useful RV: **${row.usefulRv}%**`);
-    if (useful) lines.push(ar ? `• الرولات المفيدة: ${useful}` : `• Useful rolls: ${useful}`);
+      ? `RV الحالي: **${ltr(`${row.usefulRv}%`)}**`
+      : `Current RV: **${row.usefulRv}%**`);
+    lines.push(ar
+      ? `RV المقترح: **${ltr(`${target}%+`)}**${row.usefulRv >= target ? ' ✓' : ''}`
+      : `Suggested RV: **${target}%+**${row.usefulRv >= target ? ' ✓' : ''}`);
     if (!row.mainMatch && row.mainOptions.length) {
       lines.push(ar
-        ? `• ⚠ الـMain Stat الحالي **${row.mainStat}${row.mainValue ? ` ${row.mainValue}` : ''}**؛ الأفضل **${row.mainOptions.join(' / ')}**.`
-        : `• ⚠ Current main stat: **${row.mainStat}${row.mainValue ? ` ${row.mainValue}` : ''}**; recommended: **${row.mainOptions.join(' / ')}**.`);
+        ? `Main Stat: ${ltr(row.mainStat)} → ${ltr(row.mainOptions.join(' / '))}`
+        : `Main Stat: ${row.mainStat} → ${row.mainOptions.join(' / ')}`);
     }
   }
 
-  const priorities = report.prioritized.filter((row) => !row.mainMatch || row.level < 20 || row.usefulRv < 550).slice(0, 3);
-  lines.push(`\n**${ar ? 'وش تطور أول؟' : 'What to improve first'}**`);
-  if (!priorities.length) {
-    lines.push(ar
-      ? 'قطعك الأساسية قوية. من هنا التحسين يكون Min-Max: ابدأ بأقل قطعة Useful RV وحاول ترفع الرولات المفيدة بدون تخريب الـMain Stats.'
-      : 'Your core pieces are strong. From here, min-max the lowest Useful RV piece without sacrificing correct main stats.');
-  } else {
-    priorities.forEach((row, index) => {
-      let reason;
-      if (!row.mainMatch) {
-        reason = ar
-          ? `غيّر الـMain Stat إلى **${row.mainOptions.join(' / ')}**.`
-          : `change the main stat to **${row.mainOptions.join(' / ')}**.`;
-      } else if (row.level < 20) {
-        reason = ar ? 'ارفعها إلى **+20** قبل الحكم النهائي عليها.' : 'level it to **+20** before judging it.';
-      } else {
-        const useful = row.usefulKeys.slice(0, 3).map(statLabel).join(' / ');
-        reason = ar
-          ? `هي من أضعف قطعك حاليًا بـUseful RV **${row.usefulRv}%**؛ دور على نفس الـMain Stat مع رولات أكثر في ${useful || 'الستات المهمة'}.`
-          : `it is one of your weakest pieces at **${row.usefulRv}% Useful RV**; keep the main stat and look for stronger relevant rolls.`;
-      }
-      lines.push(`${index + 1}. **${row.slotLabel}:** ${reason}`);
-    });
+  const weakest = report.prioritized[0] || null;
+  if (weakest) {
+    const target = recommendedRv(weakest);
+    if (ar) {
+      const reason = !weakest.mainMatch && weakest.mainOptions.length
+        ? `غيّر الـMain Stat إلى ${ltr(weakest.mainOptions.join(' / '))}`
+        : `حاول ترفعها من ${ltr(`${weakest.usefulRv}%`)} إلى ${ltr(`${target}%+`)} مع نفس الـMain Stat`;
+      lines.push(`\n**الخلاصة:** أضعف قطعة عندك ${ltr(weakest.slotLabel)}؛ ${reason}.`);
+    } else {
+      const reason = !weakest.mainMatch && weakest.mainOptions.length
+        ? `change the main stat to ${weakest.mainOptions.join(' / ')}`
+        : `raise it from ${weakest.usefulRv}% to ${target}%+ while keeping the same main stat`;
+      lines.push(`\n**Summary:** your weakest piece is ${weakest.slotLabel}; ${reason}.`);
+    }
   }
 
-  lines.push(ar
-    ? '\n*RV هنا مجموع جودة الرولات: الرول بأعلى قيمة = 100% تقريبًا، لذلك طبيعي مجموع القطعة يتجاوز 100%. Useful RV يحسب فقط الرولات المفيدة لهذه الشخصية.*'
-    : '\n*RV is the sum of roll quality: a max-value roll is about 100%, so a piece can exceed 100% total. Useful RV only counts stats relevant to this character.*');
-  return lines.join('\n');
-}
+  const setIssue = setNeedsChange(snapshot, guide);
+  if (setIssue?.recommended) {
+    lines.push(ar
+      ? `**الـSet:** ${ltr(setIssue.current)} خارج الخيارات المقترحة؛ جرّب ${ltr(setIssue.recommended)}.`
+      : `**Set:** ${setIssue.current} is outside the recommended options; consider ${setIssue.recommended}.`);
+  }
 
-function weakestPieceText(report, lang = 'ar') {
-  const rows = report.prioritized.filter((row) => row.level >= 20 && row.mainMatch).slice(0, 2);
-  if (!rows.length) return null;
-  return rows.map((row) => `${row.slotLabel} (${row.usefulRv}% Useful RV)`).join(lang === 'ar' ? ' ثم ' : ', then ');
+  return lines.join('\n');
 }
 
 function targetAdviceLine(snapshot, row, lang = 'ar') {
@@ -85,13 +58,21 @@ function targetAdviceLine(snapshot, row, lang = 'ar') {
 
   if (String(snapshot?.name || '').toLowerCase() === 'sandrone' && row.key === 'er') {
     return ar
-      ? `• **ER:** ${current} → ${target} إذا تبي الـBurst كل روتيشن؛ 100% ممكن يكون كافي إذا تستخدم الـBurst كل روتيشنين.`
-      : `• **ER:** ${current} → ${target} if you want Burst every rotation; 100% can be enough when Bursting every other rotation.`;
+      ? `• ${ltr(`ER ${current} → ${target}`)} إذا تبي الـBurst كل Rotation.`
+      : `• ER ${current} → ${target} if you want Burst every rotation.`;
   }
 
   return ar
-    ? `• **${row.label}:** ${current} → الهدف ${target}`
-    : `• **${row.label}:** ${current} → target ${target}`;
+    ? `• ${ltr(`${row.label} ${current} → ${target}`)}`
+    : `• ${row.label} ${current} → ${target}`;
+}
+
+function formatTopPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '?';
+  if (number > 0 && number < 0.01) return '<0.01';
+  if (number >= 10) return String(Math.round(number));
+  return Number(number.toFixed(2)).toString();
 }
 
 function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lang = 'ar') {
@@ -101,32 +82,40 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
   const report = reviewArtifacts(snapshot, guide);
   const targetProblems = (evaluation?.relevantStats || []).filter((row) => row.status === 'down');
   const mainProblems = report.pieces.filter((row) => !row.mainMatch);
-  const weakest = weakestPieceText(report, lang);
-  const category = akashaRanking?.category ? String(akashaRanking.category) : null;
+  const weakest = report.prioritized[0] || null;
+  const setIssue = setNeedsChange(snapshot, guide);
 
-  const lines = [`**${ar ? 'خطة رفع ترتيب Akasha' : 'Akasha improvement plan'}**`];
+  const lines = [`**${ar ? 'لرفع ترتيب Akasha' : 'Improve Akasha rank'}**`];
   lines.push(ar
-    ? `• ترتيبك الحالي: **Top ${topPercent}%**${category ? ` — ${category}` : ''}`
-    : `• Current rank: **Top ${topPercent}%**${category ? ` — ${category}` : ''}`);
+    ? `• الحالي: **${ltr(`Top ${formatTopPercent(topPercent)}%`)}**`
+    : `• Current: **Top ${formatTopPercent(topPercent)}%**`);
 
-  if (targetProblems.length || mainProblems.length) {
-    lines.push(ar ? '• **الأولوية الآن:** أصلح النواقص الواضحة قبل الـMin-Max.' : '• **Priority now:** fix clear gaps before min-maxing.');
-    targetProblems.slice(0, 3).forEach((row) => lines.push(targetAdviceLine(snapshot, row, lang)));
-    mainProblems.slice(0, 2).forEach((row) => lines.push(ar
-      ? `• **${row.slotLabel}:** غيّر الـMain Stat إلى ${row.mainOptions.join(' / ')}.`
-      : `• **${row.slotLabel}:** change main stat to ${row.mainOptions.join(' / ')}.`));
-    if (weakest) lines.push(ar
-      ? `• بعد ما تضبط هذي النقاط، ابدأ بالـMin-Max من **${weakest}**.`
-      : `• After those are fixed, start min-maxing **${weakest}**.`);
-  } else if (topPercent > 1) {
-    lines.push(ar ? '• أهداف البيلد الأساسية محققة؛ لا تحتاج تغيّر الستات الرئيسية.' : '• Core build targets are met; you do not need to change the main stat plan.');
+  if (targetProblems.length) {
+    targetProblems.slice(0, 2).forEach((row) => lines.push(targetAdviceLine(snapshot, row, lang)));
+  }
+
+  if (mainProblems.length) {
+    const row = mainProblems[0];
     lines.push(ar
-      ? `• الخطوة التالية: ${weakest ? `ابدأ بـ **${weakest}**` : 'ارفع جودة أضعف قطعتين'} وحاول تزيد CRIT/الستات المفيدة بدون ما تنزل تحت التارقت الحالي.`
-      : `• Next: ${weakest ? `start with **${weakest}**` : 'improve the two weakest pieces'} while keeping your current target thresholds.`);
-  } else {
+      ? `• ${ltr(row.slotLabel)}: غيّر الـMain Stat إلى ${ltr(row.mainOptions.join(' / '))}.`
+      : `• ${row.slotLabel}: change the main stat to ${row.mainOptions.join(' / ')}.`);
+  } else if (weakest) {
+    const target = recommendedRv(weakest);
     lines.push(ar
-      ? `• أنت أصلًا داخل Top ${topPercent}%. أي تقدم إضافي غالبًا يحتاج تبديل أضعف قطعة بقطعة أعلى Useful RV مع الحفاظ على نفس التوازن.`
-      : `• You are already Top ${topPercent}%. Further gains usually require replacing the weakest piece with higher Useful RV while preserving the same balance.`);
+      ? `• بعدها: ${ltr(`${weakest.slotLabel} RV ${weakest.usefulRv}% → ${target}%+`)}`
+      : `• Next: ${weakest.slotLabel} RV ${weakest.usefulRv}% → ${target}%+`);
+  }
+
+  if (setIssue?.recommended) {
+    lines.push(ar
+      ? `• الـSet: جرّب ${ltr(setIssue.recommended)} بدل ${ltr(setIssue.current)}.`
+      : `• Set: consider ${setIssue.recommended} instead of ${setIssue.current}.`);
+  }
+
+  if (!targetProblems.length && !mainProblems.length && weakest?.usefulRv >= recommendedRv(weakest)) {
+    lines.push(ar
+      ? '• البيلد متوازن؛ التحسين من هنا Min-Max بسيط على أضعف قطعة.'
+      : '• The build is balanced; further gains are small min-max upgrades on the weakest piece.');
   }
 
   return lines.join('\n');
