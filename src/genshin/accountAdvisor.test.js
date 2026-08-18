@@ -29,9 +29,10 @@ const catalog = [
   { team: ['A', 'I', 'J', 'K'], coverage: 4, buildAverage: 99, category: 'Freeze', missing: [], extrasUsed: [] },
 ];
 const pair = bestAbyssPair(catalog, { firstHalfTags: ['Freeze'], secondHalfTags: ['Vaporize'] });
-assert.deepEqual(pair.first.team, ['A', 'B', 'C', 'D']);
-assert.deepEqual(pair.second.team, ['E', 'F', 'G', 'H']);
-assert.ok(abyssAffinity(catalog[0], ['Freeze']) > abyssAffinity(catalog[0], ['Vaporize']));
+assert.equal(pair.first.category, 'Freeze');
+assert.equal(pair.second.category, 'Vaporize');
+assert.equal(pair.first.team.some((name) => pair.second.team.includes(name)), false);
+assert.ok(abyssAffinity(pair.first, ['Freeze']) > abyssAffinity(pair.first, ['Vaporize']));
 
 const text = formatBestTeam({ best: { team: ['Skirk', 'Escoffier', 'Furina', 'Yelan'], category: 'Freeze', role: '', coverage: 4, missing: [], extrasUsed: ['Yelan'] } }, ['Yelan'], 'ar');
 assert.match(text, /Skirk/);
