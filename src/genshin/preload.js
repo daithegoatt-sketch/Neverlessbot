@@ -3,7 +3,7 @@ const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
 const { handleAdvancedMessage } = require('./advancedFeatures');
-const { handleArtifactReviewMessage } = require('./artifactRouter');
+const { handleArtifactReviewMessage, hasArtifactPickerSession } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { rewriteCharacterAliases } = require('./characterAliases');
@@ -55,9 +55,6 @@ function wrappedMessage(message, client) {
     get(target, prop) {
       if (prop === 'content') return content;
       if (prop === 'channel') return channel;
-      // Older Genshin handlers keep their own primary-channel guard. In the private
-      // test room only, expose the primary ID to those handlers while replies still
-      // go to the real test channel above. No production-room behavior changes.
       if (prop === 'channelId' && target.channelId === TEST_CHANNEL_ID) return CHANNEL_ID;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -80,10 +77,12 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      if (!hasBotMention(message, this)) return;
+      const mentioned = hasBotMention(message, this);
+      const pickerImageFollowup = !mentioned && hasArtifactPickerSession(message) && Number(message.attachments?.size || 0) > 0;
+      if (!mentioned && !pickerImageFollowup) return;
 
       const wrapped = wrappedMessage(message, this);
-      if (!String(wrapped.content || '').trim()) {
+      if (!String(wrapped.content || '').trim() && Number(message.attachments?.size || 0) === 0) {
         message.reply({
           content: 'اسألني عن قينشن بعد المنشن، مثال: `بيلد Alyosha` أو `تقييم Skirk بحسابي` أو `Help`.',
           allowedMentions: { repliedUser: false },
