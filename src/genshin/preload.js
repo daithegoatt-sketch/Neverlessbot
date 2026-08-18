@@ -3,6 +3,7 @@ const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
 const { handleAdvancedMessage } = require('./advancedFeatures');
+const { handleAccountAdvisorMessage } = require('./accountAdvisor');
 const { handleArtifactReviewMessage } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
@@ -30,12 +31,19 @@ function cleanContent(message, client) {
   return rewriteCharacterAliases(value.replace(/\s+/g, ' ').trim());
 }
 
+function sanitizeLegacyExamples(content) {
+  return String(content || '')
+    .replace(/ربط\s+UID\s+729663359/giu, 'ربط UID 7XXXXXXXXX')
+    .replace(/link\s+UID\s+729663359/giu, 'link UID 7XXXXXXXXX');
+}
+
 function replyPayload(message, payload) {
-  if (typeof payload === 'string') return { content: payload, allowedMentions: { repliedUser: false } };
+  if (typeof payload === 'string') return { content: sanitizeLegacyExamples(payload), allowedMentions: { repliedUser: false } };
   const next = { ...(payload || {}) };
   if (typeof next.content === 'string') {
     const authorId = message.author?.id;
     if (authorId) next.content = next.content.replace(new RegExp(`^<@!?${authorId}>\\s*`), '');
+    next.content = sanitizeLegacyExamples(next.content);
   }
   next.allowedMentions = { ...(next.allowedMentions || {}), repliedUser: false };
   return next;
@@ -93,6 +101,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
         .then(() => handleUidMessage(wrapped))
         .then((handled) => handled ? true : handleHelpMessage(wrapped))
         .then((handled) => handled ? true : handleArtifactReviewMessage(wrapped))
+        .then((handled) => handled ? true : handleAccountAdvisorMessage(wrapped))
         .then((handled) => handled ? true : handleAdvancedMessage(wrapped))
         .then((handled) => handled ? true : handleRatingMessage(wrapped))
         .then((handled) => handled ? true : handleGenshinMessage(wrapped))
