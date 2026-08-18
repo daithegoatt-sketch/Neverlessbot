@@ -1,7 +1,13 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { parseArtifactText, scoreCandidateArtifact, projectedRecommendedSetCount, slotFromText } = require('./artifactImagePicker');
+const {
+  parseArtifactText,
+  scoreCandidateArtifact,
+  projectedRecommendedSetCount,
+  slotFromText,
+  normalizeOcrText,
+} = require('./artifactImagePicker');
 const { artifactCritValue } = require('./artifactEvaluator');
 
 const guide = {
@@ -15,29 +21,53 @@ const guide = {
 
 assert.equal(slotFromText('اختر أفضل Circlet ارتيفاكت لـ Skirk'), 'circlet');
 assert.equal(slotFromText('best goblet artifact'), 'goblet');
+assert.equal(slotFromText('Goblet of Eonothem'), 'goblet');
+assert.equal(slotFromText('Circlet of Logos'), 'circlet');
+assert.match(normalizeOcrText('CRlT Rate＋6.2％'), /CRIT Rate\+6\.2%/i);
 
-const ocrText = `
-Veteran Circlet
+// Layout like the full character artifact screen: main-stat title/value above +20.
+const circletText = `
+Deep Gallery's Lost Crown
 Circlet of Logos
-CRIT DMG
-62.2%
+CRIT DMG 62.2%
 +20
-ATK+51
-ATK+8.7%
-CRIT Rate+5.8%
-DEF+5.1%
-Finale of the Deep Galleries:
+ATK+47
+CRIT Rate+6.6%
+DEF+14.6%
+HP+269
+Finale of the Deep Galleries:(4)
+2-Piece Set: Cryo DMG Bonus +15%
 4-Piece Set: test
 `;
-const parsed = parseArtifactText(ocrText, guide, 'circlet');
-assert.equal(parsed.ok, true);
-assert.equal(parsed.artifact.slot, 'circlet');
-assert.equal(parsed.artifact.mainStatKey, 'FIGHT_PROP_CRITICAL_HURT');
-assert.equal(parsed.artifact.set, 'Finale of the Deep Galleries');
-assert.equal(parsed.artifact.substats.length, 4);
-assert.equal(artifactCritValue(parsed.artifact), 11.6);
+const circletParsed = parseArtifactText(circletText, guide, null);
+assert.equal(circletParsed.ok, true);
+assert.equal(circletParsed.artifact.slot, 'circlet');
+assert.equal(circletParsed.artifact.mainStatKey, 'FIGHT_PROP_CRITICAL_HURT');
+assert.equal(circletParsed.artifact.substats.length, 4);
+assert.equal(circletParsed.artifact.set, 'Finale of the Deep Galleries');
 
-// Screenshot style shown by the user: main-stat and substats can be on separate lines.
+// Tight in-game detail card like the user's Flower screenshot.
+const flowerText = `
+Deep Gallery's Echoing Song
+Flower of Life
+HP
+4,780
++20
+DEF+20.4%
+CRIT Rate+6.2%
+ATK+5.8%
+CRIT DMG+21.0%
+Finale of the Deep Galleries:
+2-Piece Set: Cryo DMG Bonus +15%
+`;
+const flower = parseArtifactText(flowerText, guide, null);
+assert.equal(flower.ok, true);
+assert.equal(flower.artifact.slot, 'flower');
+assert.equal(flower.artifact.mainStatKey, 'FIGHT_PROP_HP');
+assert.equal(flower.artifact.substats.length, 4);
+assert.equal(flower.artifact.substats.find((row) => row.fightProp === 'FIGHT_PROP_CRITICAL').numericValue, 6.2);
+
+// OCR may split the main-stat label and value onto separate lines.
 const hpText = `
 Veteran's Visage
 Circlet of Logos
@@ -56,6 +86,27 @@ const hp = parseArtifactText(hpText, hpGuide, 'circlet');
 assert.equal(hp.ok, true);
 assert.equal(hp.artifact.mainStatKey, 'FIGHT_PROP_HP_PERCENT');
 assert.equal(hp.artifact.substats.find((row) => row.fightProp === 'FIGHT_PROP_CRITICAL_HURT').numericValue, 35.7);
+
+// A +0 artifact can legitimately have only three visible substats and should still be readable.
+const freshText = `
+Deep Gallery's Lost Crown
+Circlet of Logos
+CRIT DMG
+62.2%
++0
+ATK+19
+CRIT Rate+3.1%
+DEF+23
+Finale of the Deep Galleries:
+2-Piece Set: Cryo DMG Bonus +15%
+`;
+const fresh = parseArtifactText(freshText, guide, 'circlet');
+assert.equal(fresh.ok, true);
+assert.equal(fresh.artifact.level, 0);
+assert.equal(fresh.artifact.substats.length, 3);
+
+const parsed = circletParsed;
+assert.equal(artifactCritValue(parsed.artifact), 13.2);
 
 const snapshot = {
   name: 'Skirk',
@@ -91,6 +142,7 @@ assert.equal(oldScore.valid, true);
 assert.equal(newScore.valid, true);
 assert.ok(newScore.score > oldScore.score);
 assert.ok(newScore.projected.stats.critRate > snapshot.stats.critRate);
+assert.ok(newScore.quality.displayRv > oldScore.quality.displayRv);
 
 const offSet = { ...better, set: 'Random Set' };
 const setFit = projectedRecommendedSetCount(snapshot, 'circlet', offSet, guide);
