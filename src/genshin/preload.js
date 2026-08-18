@@ -31,12 +31,19 @@ function cleanContent(message, client) {
   return rewriteCharacterAliases(value.replace(/\s+/g, ' ').trim());
 }
 
+function sanitizeLegacyExamples(content) {
+  return String(content || '')
+    .replace(/ربط\s+UID\s+729663359/giu, 'ربط UID 7XXXXXXXXX')
+    .replace(/link\s+UID\s+729663359/giu, 'link UID 7XXXXXXXXX');
+}
+
 function replyPayload(message, payload) {
-  if (typeof payload === 'string') return { content: payload, allowedMentions: { repliedUser: false } };
+  if (typeof payload === 'string') return { content: sanitizeLegacyExamples(payload), allowedMentions: { repliedUser: false } };
   const next = { ...(payload || {}) };
   if (typeof next.content === 'string') {
     const authorId = message.author?.id;
     if (authorId) next.content = next.content.replace(new RegExp(`^<@!?${authorId}>\\s*`), '');
+    next.content = sanitizeLegacyExamples(next.content);
   }
   next.allowedMentions = { ...(next.allowedMentions || {}), repliedUser: false };
   return next;
