@@ -9,7 +9,7 @@ const { evaluateBuild, compareSnapshots } = require('./buildEvaluator');
 const { getEntries, record } = require('./buildHistory');
 const { buildRatingCard, buildStatsCard } = require('./buildCard');
 const { fetchAkashaPercentile } = require('./akashaClient');
-const { accountEvaluationText } = require('./responses');
+const { enhancedAccountEvaluationText } = require('./enhancedRatingText');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 
@@ -146,7 +146,9 @@ async function getLinkedCharacter(message, characterName, lang) {
   }
   let account;
   try {
-    account = await fetchAccount(uid);
+    // Explicit rating/stats requests must use a fresh Showcase snapshot. This keeps
+    // the text stats in sync with the freshly generated Enka/Kirara build card.
+    account = await fetchAccount(uid, { forceRefresh: true });
   } catch (error) {
     console.warn('[genshin-account-v5] Enka fetch failed:', error.message);
     await send(message, lang === 'ar' ? 'ما قدرت أقرأ Enka الآن. تأكد أن الشخصية موجودة في الـShowcase وأن **Show Character Details** مفعّل.' : 'I could not read Enka right now. Make sure the character is in Showcase and **Show Character Details** is enabled.');
@@ -185,7 +187,7 @@ async function handleRating(message, characterName, lang, type) {
     return;
   }
 
-  const akashaPercentile = await fetchAkashaPercentile(uid, characterName);
+  const akashaPercentile = await fetchAkashaPercentile(uid, characterName, { forceRefresh: true });
   const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile });
   const current = { snapshot, evaluation };
   const entries = getEntries(message.author.id, uid, characterName);
@@ -216,7 +218,7 @@ async function handleRating(message, characterName, lang, type) {
     console.warn('[genshin-account-v5] Rating card generation failed:', error.message);
   }
 
-  await send(message, accountEvaluationText(snapshot, evaluation, type === 'compare' ? comparison : null, guide, lang, akashaPercentile), files);
+  await send(message, enhancedAccountEvaluationText(snapshot, evaluation, type === 'compare' ? comparison : null, guide, lang, akashaPercentile), files);
 }
 
 async function handleRatingMessage(message) {
