@@ -80,13 +80,14 @@ assert.equal(split[0].row.slot, 'circlet');
 const totalGain = split.reduce((sum, row) => sum + row.gain, 0);
 assert.ok(totalGain >= 8.1 && totalGain <= 8.3);
 assert.ok(split.every((row) => row.targetOnPiece <= row.ceiling + 0.15));
+assert.ok(split.every((row) => row.gain <= row.headroom + 0.15));
 
 const doctorText = formatArtifactDoctor(snapshot, guide, evaluation, 'ar', 'تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
 assert.match(doctorText, /Circlet/);
 assert.match(doctorText, /Sands/);
 assert.match(doctorText, /وزّع/);
 assert.match(doctorText, /80%/);
-assert.doesNotMatch(doctorText, /6–7|5–7/);
+assert.match(doctorText, /حدود رول 5★ منطقي/);
 assert.equal(mainBlocksSubstat(snapshot.artifacts[4], 'critDmg'), true);
 
 // Non-crit profiles: raw CV must not dominate EM/HP/DEF requirements.
