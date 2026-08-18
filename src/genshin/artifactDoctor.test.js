@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { setNeedsChange, formatArtifactDoctor, parseRequestedTargets, mainBlocksSubstat } = require('./artifactDoctor');
+const { setNeedsChange, formatArtifactDoctor, parseRequestedTargets, mainBlocksSubstat, improvementCandidates } = require('./artifactDoctor');
 const { formatArtifactReview } = require('./ratingCopyV2');
 const { formatCharacterLeaderboard } = require('./leaderboard');
 const { isUnlink } = require('./uidRouter');
@@ -50,10 +50,14 @@ const evaluation = { relevantStats: [
 const doctorText = formatArtifactDoctor(snapshot, guide, evaluation, 'ar', 'تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
 assert.match(doctorText, /80%/);
 assert.match(doctorText, /CRIT Rate/);
-assert.match(doctorText, /4–5/);
 assert.doesNotMatch(doctorText, /5–7/);
 assert.doesNotMatch(doctorText, /CRIT DMG: 30%\+.*Circlet/i);
 assert.equal(mainBlocksSubstat(snapshot.artifacts[4], 'critDmg'), true);
+
+const report = require('./artifactEvaluator').reviewArtifacts(snapshot, guide);
+const candidates = improvementCandidates(snapshot, guide, report, { key: 'critRate', target: 80, explicit: true });
+assert.ok(candidates.some((row) => row.fitsOnePiece));
+assert.ok(candidates.filter((row) => row.fitsOnePiece).every((row) => row.wanted <= 19.65));
 
 // A misspelling of artifacts must never be interpreted as "فك ربط".
 assert.equal(isUnlink('قيم ارتفكتات ساندورني في حسابي'), false);
