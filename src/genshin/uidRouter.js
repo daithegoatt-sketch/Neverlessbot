@@ -22,7 +22,10 @@ function isLink(text) {
 }
 
 function isUnlink(text) {
-  return /فك\s*(?:ربط)?|الغاء\s*ربط|إلغاء\s*ربط|\bunlink\b|remove\s+uid/iu.test(String(text || ''));
+  const value = String(text || '').trim();
+  // Only explicit unlink commands count. The old substring check matched common
+  // misspellings such as "ارتفكتات" because they contain the letters "فك".
+  return /^(?:فك\s*(?:ربط(?:\s*(?:uid|الحساب|حسابي|قينشن|genshin))?)?|(?:الغاء|إلغاء)\s*ربط(?:\s*(?:uid|الحساب|حسابي|قينشن|genshin))?|unlink(?:\s+uid)?|remove\s+uid)(?:\s+\d{9,10})?\s*$/iu.test(value);
 }
 
 function isBareLinkPrompt(text) {
@@ -86,8 +89,6 @@ async function claim(message, uid, lang) {
     return;
   }
 
-  // Serialize the final ownership check + write so two users cannot claim the same UID at once.
-  // Recover from a previous failed operation so one transient Discord/storage failure never poisons the queue.
   const operation = claimQueue
     .catch(() => {})
     .then(async () => {
@@ -140,7 +141,6 @@ async function handleUidMessage(message) {
       await send(message, lang === 'ar' ? 'ما عندك UID مربوط حاليًا.' : 'You do not have a linked UID right now.');
       return true;
     }
-    // Regular members can only release their own claim. Admin force-unlink is a slash command.
     if (uid && String(uid) !== String(current)) {
       await send(message, lang === 'ar'
         ? 'تقدر تفك فقط الـUID المربوط بحسابك. الإدارة تقدر تحل تعارضات الـUID.'
