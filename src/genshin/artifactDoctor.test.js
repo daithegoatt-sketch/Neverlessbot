@@ -8,6 +8,8 @@ const {
   mainBlocksSubstat,
   improvementCandidates,
   rankArtifactPieces,
+  buildSplitPlan,
+  effectiveRv,
 } = require('./artifactDoctor');
 const { formatArtifactReview } = require('./ratingCopyV2');
 const { formatCharacterLeaderboard } = require('./leaderboard');
@@ -43,38 +45,52 @@ assert.match(reviewText, /RV/);
 assert.match(reviewText, /CV/);
 assert.match(reviewText, /Circlet/);
 
-// The flower has much stronger relevant substats/CV. The weak link must be the circlet,
-// not whichever piece happens to have a slightly lower legacy RV threshold.
-const ranked = rankArtifactPieces(snapshot, guide, { relevantStats: [] });
-assert.equal(ranked[0].row.slot, 'circlet');
-assert.ok(ranked.find((row) => row.row.slot === 'flower').quality.score > ranked[0].quality.score);
-
-const requested = parseRequestedTargets('تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
-assert.equal(requested[0].key, 'critRate');
-assert.equal(requested[0].target, 80);
-
 const evaluation = { relevantStats: [
   { key: 'critRate', label: 'CRIT Rate', value: 71.8, target: { key: 'critRate', min: 70, max: 80 }, status: 'ok' },
   { key: 'critDmg', label: 'CRIT DMG', value: 229.1, target: { key: 'critDmg', min: 200, max: 200 }, status: 'ok' },
   { key: 'atk', label: 'ATK', value: 2001, target: { key: 'atk', min: 2100, max: 2100 }, status: 'down' },
 ] };
-const doctorText = formatArtifactDoctor(snapshot, guide, evaluation, 'ar', 'تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
-assert.match(doctorText, /Circlet/);
-assert.match(doctorText, /14(?:\.0)?%/);
-assert.match(doctorText, /RV/);
-assert.match(doctorText, /CV/);
-assert.doesNotMatch(doctorText, /5–7/);
-assert.doesNotMatch(doctorText, /CRIT DMG: 30%\+/i);
-assert.equal(mainBlocksSubstat(snapshot.artifacts[4], 'critDmg'), true);
+
+// Skirk's Flat ATK must not inflate the circlet RV like a full Akasha-relevant roll.
+// The strong Flower stays much better, while the Circlet becomes the real weak link.
+const ranked = rankArtifactPieces(snapshot, guide, evaluation);
+assert.equal(ranked[0].row.slot, 'circlet');
+const flower = ranked.find((row) => row.row.slot === 'flower');
+const circlet = ranked.find((row) => row.row.slot === 'circlet');
+assert.ok(flower.quality.score > circlet.quality.score);
+assert.ok(effectiveRv(circlet.row) < effectiveRv(flower.row));
+assert.ok(effectiveRv(circlet.row) < 400);
+
+const requested = parseRequestedTargets('تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
+assert.equal(requested[0].key, 'critRate');
+assert.equal(requested[0].target, 80);
 
 const report = reviewArtifacts(snapshot, guide);
 const candidates = improvementCandidates(snapshot, guide, report, { key: 'critRate', target: 80, explicit: true }, evaluation);
 assert.equal(candidates[0].row.slot, 'circlet');
+// Single-piece math is still exact: 80 - (71.8 - 5.8) = 14.
 assert.ok(candidates[0].wanted >= 13.9 && candidates[0].wanted <= 14.1);
-assert.ok(candidates[0].wanted <= 19.65);
+assert.ok(candidates[0].wanted <= candidates[0].ceiling + 0.15);
 
-// Non-crit profiles: CV is displayed but must not drive the Doctor. EM/HP/DEF can be
-// the actual useful stats depending on the character guide.
+// But the Doctor should prefer a realistic split when the gap is large enough:
+// improve weak pieces together instead of demanding one near-perfect roll.
+const split = buildSplitPlan(snapshot, { key: 'critRate', target: 80 }, candidates);
+assert.ok(split.length >= 2);
+assert.equal(split[0].row.slot, 'circlet');
+const totalGain = split.reduce((sum, row) => sum + row.gain, 0);
+assert.ok(totalGain >= 8.1 && totalGain <= 8.3);
+assert.ok(split.every((row) => row.targetOnPiece <= row.ceiling + 0.15));
+assert.ok(split.every((row) => row.gain <= row.headroom + 0.15));
+
+const doctorText = formatArtifactDoctor(snapshot, guide, evaluation, 'ar', 'تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80');
+assert.match(doctorText, /Circlet/);
+assert.match(doctorText, /Sands/);
+assert.match(doctorText, /وزّع/);
+assert.match(doctorText, /80%/);
+assert.match(doctorText, /حدود رول 5★ منطقي/);
+assert.equal(mainBlocksSubstat(snapshot.artifacts[4], 'critDmg'), true);
+
+// Non-crit profiles: raw CV must not dominate EM/HP/DEF requirements.
 const emGuide = {
   artifacts: ['Paradise Lost (4-Piece)'],
   stats: { main: ['Sands: Elemental Mastery', 'Goblet: Elemental Mastery', 'Circlet: Elemental Mastery'], priority: 'Elemental Mastery > HP%', targets: ['Elemental Mastery: 900+'] },

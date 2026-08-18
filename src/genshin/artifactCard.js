@@ -2,10 +2,9 @@
 
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const { buildAccountCard } = require('./buildCard');
-const { reviewArtifacts } = require('./artifactEvaluator');
+const { rankArtifactPieces, effectiveRv } = require('./artifactDoctor');
 
 const SLOT_ORDER = ['flower', 'plume', 'sands', 'goblet', 'circlet'];
-const SLOT_LABELS = { flower: 'Flower', plume: 'Plume', sands: 'Sands', goblet: 'Goblet', circlet: 'Circlet' };
 
 function roundedRect(ctx, x, y, w, h, r) {
   const radius = Math.min(r, w / 2, h / 2);
@@ -18,77 +17,91 @@ function roundedRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-async function buildArtifactCard(character, snapshot, guide) {
+function borderFor(rv, cv) {
+  if (rv >= 650 || cv >= 45) return '#d7a72d';
+  if (rv >= 550 || cv >= 35) return '#b96f26';
+  if (rv >= 450 || cv >= 25) return '#7653b8';
+  if (rv >= 330 || cv >= 15) return '#3c78a8';
+  return '#506173';
+}
+
+async function buildArtifactCard(character, snapshot, guide, evaluation = null) {
   const full = await buildAccountCard(character);
   const source = await loadImage(full);
   const sourceW = Number(source.width) || 0;
   const sourceH = Number(source.height) || 0;
   if (!sourceW || !sourceH) throw new Error('ARTIFACT_CARD_IMAGE_INVALID');
 
-  const report = reviewArtifacts(snapshot, guide);
-  const bySlot = new Map(report.pieces.map((row) => [row.slot, row]));
+  const ranked = rankArtifactPieces(snapshot, guide, evaluation);
+  const bySlot = new Map(ranked.map((item) => [item.row.slot, item]));
   const equipped = new Set((snapshot?.artifacts || []).map((row) => row.slot));
 
-  // The Kirara renderer is the same proven source used by the character card.
-  // Its five artifact panels are stacked on the right. We extract those real panels
-  // and rearrange them into the five-card horizontal layout used by Akasha.
+  // Five large compact panels, deliberately matching the visual reading order used
+  // by Akasha: Flower / Plume / Sands / Goblet / Circlet. The source panels come from
+  // the same Kirara/Enka renderer used by the proven character build card, so the
+  // artifact art and substats remain the real equipped data rather than placeholders.
   const width = 1500;
-  const height = 330;
+  const height = 390;
+  const margin = 12;
+  const gap = 8;
+  const cardW = Math.floor((width - margin * 2 - gap * 4) / 5);
+  const cardH = height - margin * 2;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#11171f';
+  ctx.fillStyle = '#0d141c';
   ctx.fillRect(0, 0, width, height);
 
-  const margin = 18;
-  const gap = 10;
-  const cardW = Math.floor((width - margin * 2 - gap * 4) / 5);
-  const cardH = 292;
-  const y = 18;
-
-  const cropX = Math.floor(sourceW * 0.665);
-  const cropW = Math.max(1, Math.floor(sourceW * 0.325));
-  const firstY = Math.floor(sourceH * 0.025);
-  const cropH = Math.max(1, Math.floor(sourceH * 0.165));
+  // Kirara stacks its five artifact panels on the right side. These coordinates are
+  // intentionally based on ratios so upstream render-size changes do not break them.
+  const cropX = Math.floor(sourceW * 0.625);
+  const cropW = Math.max(1, Math.floor(sourceW * 0.365));
+  const firstY = Math.floor(sourceH * 0.018);
+  const cropH = Math.max(1, Math.floor(sourceH * 0.174));
   const stepY = Math.floor(sourceH * 0.18);
 
   for (let i = 0; i < SLOT_ORDER.length; i += 1) {
     const slot = SLOT_ORDER[i];
-    const row = bySlot.get(slot);
+    const item = bySlot.get(slot);
     const x = margin + i * (cardW + gap);
+    const y = margin;
+    const rv = item ? effectiveRv(item.row) : 0;
+    const cv = Number(item?.row?.cv) || 0;
 
-    ctx.fillStyle = '#182434';
-    roundedRect(ctx, x, y, cardW, cardH, 14);
-    ctx.fill();
-    ctx.strokeStyle = '#3d5269';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.save();
+    roundedRect(ctx, x, y, cardW, cardH, 10);
+    ctx.clip();
+    ctx.fillStyle = '#162333';
+    ctx.fillRect(x, y, cardW, cardH);
 
     if (equipped.has(slot)) {
       const sy = Math.min(Math.max(0, firstY + i * stepY), Math.max(0, sourceH - cropH));
-      ctx.save();
-      roundedRect(ctx, x + 5, y + 5, cardW - 10, 222, 10);
-      ctx.clip();
-      ctx.drawImage(source, cropX, sy, cropW, cropH, x + 5, y + 5, cardW - 10, 222);
-      ctx.restore();
+      ctx.drawImage(source, cropX, sy, cropW, cropH, x, y, cardW, cardH);
     } else {
-      ctx.fillStyle = '#0b1119';
-      roundedRect(ctx, x + 5, y + 5, cardW - 10, 222, 10);
-      ctx.fill();
-      ctx.fillStyle = '#718096';
+      ctx.fillStyle = '#0a1119';
+      ctx.fillRect(x, y, cardW, cardH);
+      ctx.fillStyle = '#65788c';
       ctx.textAlign = 'center';
-      ctx.font = '700 42px sans-serif';
-      ctx.fillText('×', x + cardW / 2, y + 120);
+      ctx.font = '700 58px sans-serif';
+      ctx.fillText('×', x + cardW / 2, y + cardH / 2 + 20);
     }
+    ctx.restore();
 
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#eef4fb';
-    ctx.font = '700 17px sans-serif';
-    ctx.fillText(`${SLOT_LABELS[slot]}${row ? ` +${row.level}` : ''}`, x + 12, y + 248);
+    ctx.strokeStyle = borderFor(rv, cv);
+    ctx.lineWidth = 4;
+    roundedRect(ctx, x + 1, y + 1, cardW - 2, cardH - 2, 10);
+    ctx.stroke();
 
-    ctx.fillStyle = '#9dd2ff';
-    ctx.font = '700 17px sans-serif';
-    const metric = row ? `RV ${row.usefulRv}%  •  CV ${row.cv}` : 'Empty slot';
-    ctx.fillText(metric, x + 12, y + 274);
+    if (item) {
+      const badge = `RV ${rv}%  •  CV ${cv}`;
+      ctx.font = '700 19px sans-serif';
+      const badgeW = Math.min(cardW - 16, ctx.measureText(badge).width + 22);
+      ctx.fillStyle = 'rgba(7, 12, 18, 0.9)';
+      roundedRect(ctx, x + 8, y + 8, badgeW, 34, 8);
+      ctx.fill();
+      ctx.fillStyle = '#f3f6f9';
+      ctx.textAlign = 'left';
+      ctx.fillText(badge, x + 18, y + 31);
+    }
   }
 
   return canvas.toBuffer('image/png');
