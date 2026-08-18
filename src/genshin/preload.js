@@ -3,7 +3,7 @@ const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
 const { handleAdvancedMessage } = require('./advancedFeatures');
-const { handleArtifactReviewMessage, handleArtifactInteraction, hasArtifactPickerSession } = require('./artifactRouter');
+const { handleArtifactReviewMessage } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { rewriteCharacterAliases } = require('./characterAliases');
@@ -75,25 +75,14 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installModeration(this);
     installActivity(this);
 
-    this.on('interactionCreate', (interaction) => {
-      if (!interaction?.guildId || !ALLOWED_CHANNELS.has(interaction.channelId)) return;
-      if (!String(interaction.customId || '').startsWith('gdoc:')) return;
-      Promise.resolve()
-        .then(() => whenAccountStoreReady())
-        .then(() => handleArtifactInteraction(interaction))
-        .catch((error) => console.error('[genshin-artifact-ui] interaction error:', error));
-    });
-
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      const mentioned = hasBotMention(message, this);
-      const pickerImageFollowup = !mentioned && hasArtifactPickerSession(message) && Number(message.attachments?.size || 0) > 0;
-      if (!mentioned && !pickerImageFollowup) return;
+      if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
-      if (!String(wrapped.content || '').trim() && Number(message.attachments?.size || 0) === 0) {
+      if (!String(wrapped.content || '').trim()) {
         message.reply({
-          content: 'اسألني عن قينشن بعد المنشن، مثال: `بيلد Alyosha` أو `تقييم Skirk بحسابي` أو `طبيب الارتيفاكتات` أو `Help`.',
+          content: 'اسألني عن قينشن بعد المنشن، مثال: `بيلد Alyosha` أو `تقييم Skirk بحسابي` أو `Help`.',
           allowedMentions: { repliedUser: false },
         }).catch(() => {});
         return;
