@@ -122,7 +122,6 @@ function buildStatWeights(snapshot, guide, evaluation = null) {
     if (accountKey === 'def') weights.set('flatDef', Math.max(weights.get('flatDef') || 0, weight * 0.32));
   });
 
-  // A guide without usable priority data gets a conservative generic fallback.
   if (!weights.size) {
     weights.set('critRate', 1);
     weights.set('critDmg', 1);
@@ -149,9 +148,6 @@ function pieceQuality(artifact, reviewed, snapshot, guide, evaluation = null) {
 
   const critRelevant = (weights.get('critRate') || 0) > 0 || (weights.get('critDmg') || 0) > 0;
   const critWeight = Math.max(weights.get('critRate') || 0, weights.get('critDmg') || 0, 1);
-  // CV is kept as a second signal, like Akasha's RV/CV toggle. It never matters for
-  // non-crit builds, and it is intentionally a minority of the final fit score so
-  // HP/DEF/EM/ER requirements can beat raw crit value when the guide calls for them.
   const cvEquivalentRv = critRelevant ? ((Number(row.cv) || 0) / 7.77) * 100 : 0;
   let score = weightedRv * 0.84 + cvEquivalentRv * critWeight * 0.16;
   if (!row.mainMatch) score -= 1200;
@@ -271,12 +267,8 @@ function improvementCandidates(snapshot, guide, report, goal, evaluation = null)
     const currentOnPiece = substatValue(raw, subKey);
     let wanted;
     if (direct && Number.isFinite(currentTotal)) {
-      // Exact replacement math: remove the old piece's contribution first, then ask
-      // how much the new piece needs. Example 71.8 CR, old piece 5.8, target 80 -> 14 CR.
       wanted = Math.max(0, goal.target - (currentTotal - currentOnPiece));
     } else {
-      // ATK/HP/DEF totals mix base and percentage scaling. Use the account gap only as
-      // a conservative percentage estimate instead of pretending we know an exact base.
       const gapPct = Number.isFinite(currentTotal) && currentTotal > 0
         ? Math.max(0, ((goal.target - currentTotal) / currentTotal) * 100)
         : 0;
@@ -301,8 +293,6 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
   const report = reviewArtifacts(snapshot, guide);
   const goal = goals[0] || null;
 
-  // A wrong main stat is a real build problem; otherwise main stat value is not used
-  // to compare pieces because every +20 artifact with that main stat has the same value.
   const wrongMain = ranked.find((item) => !item.row.mainMatch);
   if (wrongMain) {
     return ar
@@ -323,7 +313,7 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
   const best = candidates[0] || ranked[0] || null;
   if (!best) return ar ? 'ما لقيت قطعة مناسبة أغيّرها بدون تخريب البيلد.' : 'No suitable replacement was found without damaging the build.';
 
-  const row = best.row || best?.row;
+  const row = best.row;
   const lines = [];
   if (Number.isFinite(current)) {
     lines.push(ar
@@ -371,7 +361,7 @@ function formatArtifactDoctor(snapshot, guide, evaluation, lang = 'ar', requestT
 
   for (const row of report.pieces) {
     const raw = rawBySlot.get(row.slot);
-    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)} — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}`);
+    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)} — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}**`);
     lines.push(formatSubstats(raw, lang));
   }
 
