@@ -17,7 +17,10 @@ function helpText(lang) {
       '`build Skirk` — artifacts, weapons, main stats and targets',
       '`Skirk team` / `Skirk f2p team` — published Premium/F2P teams',
       '`rate Skirk on my account` — rate a visible Showcase build',
-      '`rate Skirk artifacts on my account` — artifact RV, useful rolls and upgrade priority',
+      '`rate Skirk artifacts on my account` — artifact RV + CV and weakest-link review',
+      '`improve Skirk artifacts` — Artifact Doctor fixes the weakest piece around the build targets',
+      '`improve Skirk artifacts, raise CRIT Rate to 80` — Doctor with a specific stat target',
+      '`pick best Skirk Circlet artifact` — start screenshot picker; then send 1–10 artifact screenshots',
       '`Skirk stats on my account` — current account stats only',
       '`compare Skirk on my account` — compare with an older saved build',
       '`rate team Sandrone on my account` — review Premium options from your Showcase',
@@ -29,7 +32,7 @@ function helpText(lang) {
       '`my characters` — visible Showcase characters',
       '`link UID 7XXXXXXXXX` / `unlink UID` — manage your linked account',
       '',
-      'Mention Neverless Bot in the Genshin channel before the command.',
+      'Mention Neverless Bot in the Genshin channel before the command. During an active Artifact Picker session, the next image batch can be sent without another mention.',
     ].join('\n');
   }
 
@@ -38,7 +41,10 @@ function helpText(lang) {
     '`بيلد Skirk` — الارتيفاكتات، الأسلحة والستات المطلوبة',
     '`تيم Skirk` / `تيم F2P Skirk` — تيمات Premium/F2P المنشورة',
     '`تقييم Skirk بحسابي` — تقييم الشخصية الظاهرة بالـShowcase',
-    '`قيم ارتيفاكتات Skirk بحسابي` — RV والرولات المفيدة وأولوية تبديل القطع',
+    '`قيم ارتيفاكتات Skirk بحسابي` — تقييم القطع بالـRV والـCV وتحديد أضعف حلقة',
+    '`تحسين ارتيفاكتات Skirk` — Artifact Doctor يحسن أضعف قطعة حسب تارقت البيلد',
+    '`تحسين ارتيفاكتات Skirk ارفع الكريت ريت إلى 80` — تحسين بهدف Stat محدد',
+    '`اختر أفضل Circlet ارتيفاكت لـ Skirk` — يبدأ اختيار أفضل قطعة من الصور؛ بعدها أرسل 1–10 صور',
     '`إحصائيات Skirk بحسابي` — إحصائيات الحساب فقط',
     '`قارن Skirk بحسابي` — مقارنة البيلد بنسخة سابقة',
     '`قيم تيم Sandrone بحسابي` — يراجع تيمات Premium حسب الـShowcase',
@@ -50,7 +56,7 @@ function helpText(lang) {
     '`شخصياتي` — الشخصيات الظاهرة في Showcase',
     '`ربط UID 7XXXXXXXXX` / `فك ربط UID` — إدارة الحساب المربوط',
     '',
-    'لازم تمنشن Neverless Bot داخل روم Genshin قبل الأمر.',
+    'الأوامر تبدأ بمنشن Neverless Bot داخل روم Genshin. بعد بدء Artifact Picker تقدر ترسل دفعة الصور التالية بدون منشن جديد.',
   ].join('\n');
 }
 
