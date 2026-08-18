@@ -4,7 +4,7 @@ const { getLinkedUid } = require('./accountStore');
 const { fetchAccount, findCharacter, getBuildSnapshot } = require('./enkaClient');
 const { getGuide } = require('./guideClient');
 const { resolveCharacter } = require('./characterResolver');
-const { formatArtifactReview } = require('./artifactEvaluator');
+const { formatArtifactReview } = require('./ratingCopyV2');
 
 function language(text) {
   const ar = (String(text).match(/[\u0600-\u06ff]/g) || []).length;

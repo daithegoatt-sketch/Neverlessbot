@@ -1,7 +1,7 @@
 'use strict';
 
 const { accountEvaluationText } = require('./responses');
-const { akashaImprovementAdvice } = require('./artifactEvaluator');
+const { akashaImprovementAdvice } = require('./ratingCopyV2');
 
 function enhancedAccountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaRanking = null) {
   const base = accountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaRanking);

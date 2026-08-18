@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyKnownComputedStats } = require('./computedStats');
+
 let client = null;
 const accountCache = new Map();
 
@@ -165,8 +167,20 @@ function getBuildSnapshot(character) {
     || assetUrl(character?.characterData?.costume?.icon)
     || assetUrl(character?.characterData?.icon);
 
+  const name = characterName(character);
+  const snapshotStats = applyKnownComputedStats(name, {
+    hp: rounded(statValue(stats.maxHealth), 0),
+    atk: rounded(statValue(stats.attack), 0),
+    def: rounded(statValue(stats.defense), 0),
+    critRate: rounded(statValue(stats.critRate)),
+    critDmg: rounded(statValue(stats.critDamage)),
+    er: rounded(statValue(stats.chargeEfficiency)),
+    em: rounded(statValue(stats.elementMastery), 0),
+    elementalDmg: rounded(statValue(stats.matchedElementDamage)),
+  }, artifactRows);
+
   return {
-    name: characterName(character),
+    name,
     level: character.level ?? null,
     constellation: character.unlockedConstellations?.length ?? 0,
     artUrl: characterArtUrl,
@@ -181,16 +195,7 @@ function getBuildSnapshot(character) {
     },
     artifacts: artifactRows,
     setCounts,
-    stats: {
-      hp: rounded(statValue(stats.maxHealth), 0),
-      atk: rounded(statValue(stats.attack), 0),
-      def: rounded(statValue(stats.defense), 0),
-      critRate: rounded(statValue(stats.critRate)),
-      critDmg: rounded(statValue(stats.critDamage)),
-      er: rounded(statValue(stats.chargeEfficiency)),
-      em: rounded(statValue(stats.elementMastery), 0),
-      elementalDmg: rounded(statValue(stats.matchedElementDamage)),
-    },
+    stats: snapshotStats,
   };
 }
 

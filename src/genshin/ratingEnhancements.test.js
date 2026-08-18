@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const { reviewArtifact, mainStatMatches } = require('./artifactEvaluator');
+const { formatArtifactReview, akashaImprovementAdvice } = require('./ratingCopyV2');
+const { applyKnownComputedStats } = require('./computedStats');
 const { accountScoreFromRated } = require('./leaderboard');
 
 const guide = {
@@ -29,6 +31,12 @@ const atkGoblet = {
     { fightProp: 'FIGHT_PROP_ATTACK_PERCENT', numericValue: 5.83, isPercent: true },
     { fightProp: 'FIGHT_PROP_CHARGE_EFFICIENCY', numericValue: 6.48, isPercent: true },
   ],
+  substats: [
+    { fightProp: 'FIGHT_PROP_CRITICAL', numericValue: 3.89, isPercent: true },
+    { fightProp: 'FIGHT_PROP_CRITICAL_HURT', numericValue: 7.77, isPercent: true },
+    { fightProp: 'FIGHT_PROP_ATTACK_PERCENT', numericValue: 5.83, isPercent: true },
+    { fightProp: 'FIGHT_PROP_CHARGE_EFFICIENCY', numericValue: 6.48, isPercent: true },
+  ],
   totalRolls: 4,
 };
 
@@ -44,6 +52,37 @@ const cryoGoblet = {
   mainStatKey: 'FIGHT_PROP_ICE_ADD_HURT',
 };
 assert.equal(mainStatMatches(cryoGoblet, guide), true);
+
+const sandroneArtifacts = [{
+  slot: 'flower',
+  mainStatKey: 'FIGHT_PROP_HP',
+  mainValue: '4,780',
+  substats: [{ fightProp: 'FIGHT_PROP_ELEMENT_MASTERY', numericValue: 124 }],
+}];
+const corrected = applyKnownComputedStats('Sandrone', { atk: 2613, em: 124, er: 100 }, sandroneArtifacts);
+assert.equal(corrected.em, 284);
+assert.equal(corrected.er, 100);
+const alreadyComputed = applyKnownComputedStats('Sandrone', { atk: 2613, em: 284, er: 100 }, sandroneArtifacts);
+assert.equal(alreadyComputed.em, 284);
+
+const artifactCopy = formatArtifactReview({ name: 'Test', artifacts: [atkGoblet] }, guide, 'ar');
+assert.match(artifactCopy, /RV الكلي/);
+assert.match(artifactCopy, /RV المفيد للشخصية/);
+assert.match(artifactCopy, /وش تطور أول/);
+
+const akashaCopy = akashaImprovementAdvice(
+  { name: 'Sandrone', artifacts: [cryoGoblet] },
+  guide,
+  { relevantStats: [
+    { key: 'em', label: 'EM', value: 284, target: { key: 'em', min: 150, max: 200 }, status: 'ok' },
+    { key: 'er', label: 'ER', value: 100, target: { key: 'er', min: 125, max: 145 }, status: 'down' },
+  ] },
+  { topPercent: 25, category: 'Stellar-Conduct Basic Team' },
+  'ar',
+);
+assert.match(akashaCopy, /ER/);
+assert.doesNotMatch(akashaCopy, /\*\*EM:\*\*/);
+assert.match(akashaCopy, /Burst كل روتيشن/);
 
 const scored = accountScoreFromRated([
   { score: 96, akasha: { topPercent: 2 }, artifactQuality: 650 },
