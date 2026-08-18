@@ -2,7 +2,7 @@
 
 const { reviewArtifacts } = require('./artifactEvaluator');
 const { formatStat, formatTarget } = require('./statProfile');
-const { recommendedRv, setNeedsChange, ltr } = require('./artifactDoctor');
+const { recommendedRv, setNeedsChange, rankArtifactPieces, ltr } = require('./artifactDoctor');
 
 function formatArtifactReview(snapshot, guide, lang = 'ar') {
   const ar = lang === 'ar';
@@ -13,8 +13,8 @@ function formatArtifactReview(snapshot, guide, lang = 'ar') {
     const target = recommendedRv(row);
     lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)}**`);
     lines.push(ar
-      ? `RV الحالي: **${ltr(`${row.usefulRv}%`)}**`
-      : `Current RV: **${row.usefulRv}%**`);
+      ? `الحالي: **${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}**`
+      : `Current: **RV ${row.usefulRv}% • CV ${row.cv}**`);
     lines.push(ar
       ? `RV المقترح: **${ltr(`${target}%+`)}**${row.usefulRv >= target ? ' ✓' : ''}`
       : `Suggested RV: **${target}%+**${row.usefulRv >= target ? ' ✓' : ''}`);
@@ -25,19 +25,20 @@ function formatArtifactReview(snapshot, guide, lang = 'ar') {
     }
   }
 
-  const weakest = report.prioritized[0] || null;
+  const weakest = rankArtifactPieces(snapshot, guide)[0] || null;
   if (weakest) {
-    const target = recommendedRv(weakest);
+    const row = weakest.row;
+    const target = recommendedRv(row);
     if (ar) {
-      const reason = !weakest.mainMatch && weakest.mainOptions.length
-        ? `غيّر الـMain Stat إلى ${ltr(weakest.mainOptions.join(' / '))}`
-        : `حاول ترفعها من ${ltr(`${weakest.usefulRv}%`)} إلى ${ltr(`${target}%+`)} مع نفس الـMain Stat`;
-      lines.push(`\n**الخلاصة:** أضعف قطعة عندك ${ltr(weakest.slotLabel)}؛ ${reason}.`);
+      const reason = !row.mainMatch && row.mainOptions.length
+        ? `غيّر الـMain Stat إلى ${ltr(row.mainOptions.join(' / '))}`
+        : `هي أضعف حلقة بعد موازنة الستات المطلوبة وRV وCV؛ حاول ترفع RV من ${ltr(`${row.usefulRv}%`)} إلى ${ltr(`${target}%+`)}`;
+      lines.push(`\n**الخلاصة:** ابدأ بـ ${ltr(row.slotLabel)}؛ ${reason}.`);
     } else {
-      const reason = !weakest.mainMatch && weakest.mainOptions.length
-        ? `change the main stat to ${weakest.mainOptions.join(' / ')}`
-        : `raise it from ${weakest.usefulRv}% to ${target}%+ while keeping the same main stat`;
-      lines.push(`\n**Summary:** your weakest piece is ${weakest.slotLabel}; ${reason}.`);
+      const reason = !row.mainMatch && row.mainOptions.length
+        ? `change the main stat to ${row.mainOptions.join(' / ')}`
+        : `it is the weakest link after build-stat, RV and CV weighting; raise RV from ${row.usefulRv}% toward ${target}%+`;
+      lines.push(`\n**Summary:** start with ${row.slotLabel}; ${reason}.`);
     }
   }
 
@@ -47,7 +48,6 @@ function formatArtifactReview(snapshot, guide, lang = 'ar') {
       ? `**الـSet:** ${ltr(setIssue.current)} خارج الخيارات المقترحة؛ جرّب ${ltr(setIssue.recommended)}.`
       : `**Set:** ${setIssue.current} is outside the recommended options; consider ${setIssue.recommended}.`);
   }
-
   return lines.join('\n');
 }
 
@@ -61,10 +61,7 @@ function targetAdviceLine(snapshot, row, lang = 'ar') {
       ? `• ${ltr(`ER ${current} → ${target}`)} إذا تبي الـBurst كل Rotation.`
       : `• ER ${current} → ${target} if you want Burst every rotation.`;
   }
-
-  return ar
-    ? `• ${ltr(`${row.label} ${current} → ${target}`)}`
-    : `• ${row.label} ${current} → ${target}`;
+  return ar ? `• ${ltr(`${row.label} ${current} → ${target}`)}` : `• ${row.label} ${current} → ${target}`;
 }
 
 function formatTopPercent(value) {
@@ -82,7 +79,7 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
   const report = reviewArtifacts(snapshot, guide);
   const targetProblems = (evaluation?.relevantStats || []).filter((row) => row.status === 'down');
   const mainProblems = report.pieces.filter((row) => !row.mainMatch);
-  const weakest = report.prioritized[0] || null;
+  const weakest = rankArtifactPieces(snapshot, guide, evaluation)[0] || null;
   const setIssue = setNeedsChange(snapshot, guide);
 
   const lines = [`**${ar ? 'لرفع ترتيب Akasha' : 'Improve Akasha rank'}**`];
@@ -90,9 +87,7 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
     ? `• الحالي: **${ltr(`Top ${formatTopPercent(topPercent)}%`)}**`
     : `• Current: **Top ${formatTopPercent(topPercent)}%**`);
 
-  if (targetProblems.length) {
-    targetProblems.slice(0, 2).forEach((row) => lines.push(targetAdviceLine(snapshot, row, lang)));
-  }
+  if (targetProblems.length) targetProblems.slice(0, 2).forEach((row) => lines.push(targetAdviceLine(snapshot, row, lang)));
 
   if (mainProblems.length) {
     const row = mainProblems[0];
@@ -100,10 +95,11 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
       ? `• ${ltr(row.slotLabel)}: غيّر الـMain Stat إلى ${ltr(row.mainOptions.join(' / '))}.`
       : `• ${row.slotLabel}: change the main stat to ${row.mainOptions.join(' / ')}.`);
   } else if (weakest) {
-    const target = recommendedRv(weakest);
+    const row = weakest.row;
+    const target = recommendedRv(row);
     lines.push(ar
-      ? `• بعدها: ${ltr(`${weakest.slotLabel} RV ${weakest.usefulRv}% → ${target}%+`)}`
-      : `• Next: ${weakest.slotLabel} RV ${weakest.usefulRv}% → ${target}%+`);
+      ? `• بعدها: ${ltr(`${row.slotLabel} — RV ${row.usefulRv}% → ${target}%+ • CV ${row.cv}`)}`
+      : `• Next: ${row.slotLabel} — RV ${row.usefulRv}% → ${target}%+ • CV ${row.cv}`);
   }
 
   if (setIssue?.recommended) {
@@ -112,12 +108,11 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
       : `• Set: consider ${setIssue.recommended} instead of ${setIssue.current}.`);
   }
 
-  if (!targetProblems.length && !mainProblems.length && weakest?.usefulRv >= recommendedRv(weakest)) {
+  if (!targetProblems.length && !mainProblems.length && weakest?.row?.usefulRv >= recommendedRv(weakest.row)) {
     lines.push(ar
-      ? '• البيلد متوازن؛ التحسين من هنا Min-Max بسيط على أضعف قطعة.'
-      : '• The build is balanced; further gains are small min-max upgrades on the weakest piece.');
+      ? '• البيلد متوازن؛ التحسين من هنا Min-Max على أضعف قطعة بدون خسارة الستات اللي حافظت على التارقت.'
+      : '• The build is balanced; further gains are min-max upgrades on the weakest piece without losing target stats.');
   }
-
   return lines.join('\n');
 }
 
