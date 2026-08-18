@@ -146,8 +146,8 @@ async function artifactCardFile(character, snapshot, guide, characterName) {
 function pickerPrompt(session, lang) {
   const label = session.slot[0].toUpperCase() + session.slot.slice(1);
   return lang === 'ar'
-    ? `**Artifact Picker — ${session.characterName} / ${label}**\nأرسل من **1 إلى 10 صور** للـ${label}. خلي تفاصيل القطعة ظاهرة: Main Stat، الأربع Substats والـSet. ما تحتاج تمنشن البوت في رسالة الصور التالية.\nبعد الاختيار تقدر تكتب Slot ثاني مثل \`Goblet\` أو \`Circlet\` وتكمل نفس الجلسة.`
-    : `**Artifact Picker — ${session.characterName} / ${label}**\nSend **1–10 screenshots** with the main stat, four substats and set visible. You do not need to mention the bot in the next image message. Then switch slots with a word such as \`Goblet\` or \`Circlet\`.`;
+    ? `**Artifact Picker — ${session.characterName} / ${label}**\nأرسل من **1 إلى 10 صور** للـ${label}. خلي تفاصيل القطعة ظاهرة: Main Stat، الأربع Substats والـSet. قراءة الصور أدق حاليًا إذا لغة اللعبة **English**. ما تحتاج تمنشن البوت في رسالة الصور التالية.\nبعد الاختيار تقدر تكتب Slot ثاني مثل \`Goblet\` أو \`Circlet\` وتكمل نفس الجلسة.`
+    : `**Artifact Picker — ${session.characterName} / ${label}**\nSend **1–10 screenshots** with the main stat, four substats and set visible. OCR is currently most reliable with the game UI in **English**. You do not need to mention the bot in the next image message. Then switch slots with a word such as \`Goblet\` or \`Circlet\`.`;
 }
 
 async function processPickerImages(message, session, lang) {
@@ -157,6 +157,7 @@ async function processPickerImages(message, session, lang) {
     return true;
   }
 
+  const beforeBatch = session.snapshot;
   const parsed = [];
   for (let index = 0; index < images.length; index += 1) {
     try {
@@ -165,7 +166,7 @@ async function processPickerImages(message, session, lang) {
         parsed.push({ index, valid: false, reason: result.reason });
         continue;
       }
-      const scored = scoreCandidateArtifact(result.artifact, session.snapshot, session.guide, session.evaluation, session.slot);
+      const scored = scoreCandidateArtifact(result.artifact, beforeBatch, session.guide, session.evaluation, session.slot);
       parsed.push({ ...scored, index, artifact: result.artifact });
     } catch (error) {
       console.warn('[artifact-picker] OCR failed:', error.message);
@@ -183,12 +184,16 @@ async function processPickerImages(message, session, lang) {
   }
 
   const best = valid[0];
+  const resultText = formatPickerResult(best, parsed, beforeBatch, session.guide, lang);
   session.snapshot = best.projected;
   session.selected[session.slot] = best.artifact;
+  // Re-evaluate after every accepted piece so the next slot knows which targets were
+  // fixed and which are still missing. This is the core of the multi-slot session.
+  session.evaluation = evaluateBuild(session.snapshot, session.guide);
   session.updatedAt = Date.now();
   pickerSessions.set(sessionKey(message), session);
 
-  await send(message, formatPickerResult(best, parsed, session.snapshot, session.guide, lang));
+  await send(message, resultText);
   return true;
 }
 
@@ -196,7 +201,7 @@ async function startPicker(message, text, lang) {
   const slot = slotFromText(text);
   if (!slot) {
     await send(message, lang === 'ar'
-      ? 'حدد نوع القطعة داخل الأمر: `Flower` أو `Plume` أو `Sands` أو `Goblet` أو `Circlet`. مثال: `اختر أفضل Circlet لـ Skirk`.'
+      ? 'حدد نوع القطعة داخل الأمر: `Flower` أو `Plume` أو `Sands` أو `Goblet` أو `Circlet`. مثال: `اختر أفضل Circlet ارتيفاكت لـ Skirk`.'
       : 'Include the slot: Flower, Plume, Sands, Goblet, or Circlet.');
     return true;
   }
@@ -213,6 +218,7 @@ async function startPicker(message, text, lang) {
     snapshot: linked.snapshot,
     selected: {},
     slot,
+    language: lang,
     channelId: message?.channel?.id || message?.channelId,
     updatedAt: Date.now(),
   };
@@ -224,7 +230,7 @@ async function handleArtifactReviewMessage(message) {
   const text = String(message?.content || '').trim();
   const session = getPickerSession(message);
   const attachments = imageAttachments(message);
-  const lang = language(text || session?.language || 'ar');
+  const lang = text ? language(text) : (session?.language || 'ar');
 
   if (session && attachments.length) return processPickerImages(message, session, lang);
 
