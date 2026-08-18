@@ -5,6 +5,7 @@ const { guideProfile, formatStat } = require('./statProfile');
 
 const LRI = '\u2066';
 const PDI = '\u2069';
+const SLOT_ORDER = ['flower', 'plume', 'sands', 'goblet', 'circlet'];
 
 function ltr(value) {
   return `${LRI}${String(value)}${PDI}`;
@@ -18,10 +19,6 @@ const SUB_TO_ACCOUNT = {
   critRate: 'critRate', critDmg: 'critDmg', er: 'er', em: 'em',
   atkPercent: 'atk', hpPercent: 'hp', defPercent: 'def',
   flatAtk: 'atk', flatHp: 'hp', flatDef: 'def',
-};
-const MAX_FIVE_ROLL = {
-  critRate: 19.5, critDmg: 38.9, er: 32.4, em: 116.6,
-  atkPercent: 29.2, hpPercent: 29.2, defPercent: 36.5,
 };
 const LABELS = {
   critRate: 'CRIT Rate', critDmg: 'CRIT DMG', er: 'ER', em: 'EM',
@@ -68,12 +65,17 @@ function mainBlocksSubstat(artifact, key) {
   return Boolean(map[key] && main === map[key]);
 }
 
+function effectiveRv(row) {
+  const value = Number(row?.effectiveRv ?? row?.usefulRv);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function recommendedRv(row) {
   if (!row?.mainMatch) return 550;
-  const value = Number(row?.usefulRv) || 0;
-  if (value < 400) return 500;
-  if (value < 500) return 550;
-  if (value < 600) return 600;
+  const value = effectiveRv(row);
+  if (value < 350) return 500;
+  if (value < 450) return 550;
+  if (value < 550) return 600;
   return 650;
 }
 
@@ -82,11 +84,15 @@ function recommendedSet(guide) {
 }
 
 function cleanSetName(value) {
-  return String(value || '').replace(/\([^)]*piece[^)]*\)/ig, '').replace(/\b[24][- ]?piece\b/ig, '').replace(/\s+/g, ' ').trim();
+  return String(value || '')
+    .replace(/\([^)]*(?:pc|piece)[^)]*\)/ig, '')
+    .replace(/\b[24]\s*(?:pc|piece)(?:\s*set)?\b/ig, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function setNeedsChange(snapshot, guide) {
-  const candidates = (guide?.artifacts || []).map((row) => cleanSetName(row)).map(normalize).filter(Boolean);
+  const candidates = (guide?.artifacts || []).map(cleanSetName).map(normalize).filter(Boolean);
   if (!candidates.length) return null;
   const current = Object.entries(snapshot?.setCounts || {}).sort((a, b) => b[1] - a[1])[0];
   if (!current || current[1] < 2) return null;
@@ -106,20 +112,24 @@ function buildStatWeights(snapshot, guide, evaluation = null) {
   const weights = new Map();
 
   ordered.forEach((accountKey, index) => {
-    let weight = Math.max(0.82, 1.32 - index * 0.11);
+    let weight = Math.max(0.8, 1.34 - index * 0.11);
     const target = profile.targetMap[accountKey];
     const current = Number(snapshot?.stats?.[accountKey]);
     const evalRow = (evaluation?.relevantStats || []).find((row) => row.key === accountKey);
 
-    if (evalRow?.status === 'down' || (target && Number.isFinite(current) && current < target.min)) weight *= 1.45;
+    if (evalRow?.status === 'down' || (target && Number.isFinite(current) && current < target.min)) weight *= 1.5;
     else if (target && Number.isFinite(current) && target.max > target.min && current < target.max) weight *= 1.12;
     else if (target && Number.isFinite(current) && target.max > target.min && current >= target.max) weight *= 0.92;
 
     const sub = ACCOUNT_TO_SUB[accountKey];
     if (sub) weights.set(sub, Math.max(weights.get(sub) || 0, weight));
-    if (accountKey === 'atk') weights.set('flatAtk', Math.max(weights.get('flatAtk') || 0, weight * 0.32));
-    if (accountKey === 'hp') weights.set('flatHp', Math.max(weights.get('flatHp') || 0, weight * 0.32));
-    if (accountKey === 'def') weights.set('flatDef', Math.max(weights.get('flatDef') || 0, weight * 0.32));
+
+    // Flat stats can still help, but Akasha-style RV normally values the percentage
+    // form for ordinary scaling characters. Keep flat stats as a small fit tiebreaker
+    // instead of letting Flat ATK make a weak Skirk circlet look stronger than it is.
+    if (accountKey === 'atk') weights.set('flatAtk', Math.max(weights.get('flatAtk') || 0, weight * 0.2));
+    if (accountKey === 'hp') weights.set('flatHp', Math.max(weights.get('flatHp') || 0, weight * 0.2));
+    if (accountKey === 'def') weights.set('flatDef', Math.max(weights.get('flatDef') || 0, weight * 0.2));
   });
 
   if (!weights.size) {
@@ -133,6 +143,7 @@ function pieceQuality(artifact, reviewed, snapshot, guide, evaluation = null) {
   const row = reviewed || reviewArtifact(artifact, guide);
   const weights = buildStatWeights(snapshot, guide, evaluation);
   let weightedRv = 0;
+  let displayRv = 0;
   const parts = [];
 
   for (const sub of artifact?.substats || []) {
@@ -143,19 +154,21 @@ function pieceQuality(artifact, reviewed, snapshot, guide, evaluation = null) {
     if (!key || !weight || !Number.isFinite(max) || max <= 0) continue;
     const rv = Math.max(0, (value / max) * 100);
     weightedRv += rv * weight;
+    if (!key.startsWith('flat')) displayRv += rv;
     parts.push({ key, value, rv: Math.round(rv), weight });
   }
 
-  const critRelevant = (weights.get('critRate') || 0) > 0 || (weights.get('critDmg') || 0) > 0;
+  const critRelevant = (weights.get('critRate') || 0) >= 0.5 || (weights.get('critDmg') || 0) >= 0.5;
   const critWeight = Math.max(weights.get('critRate') || 0, weights.get('critDmg') || 0, 1);
   const cvEquivalentRv = critRelevant ? ((Number(row.cv) || 0) / 7.77) * 100 : 0;
-  let score = weightedRv * 0.84 + cvEquivalentRv * critWeight * 0.16;
+  let score = weightedRv * 0.88 + cvEquivalentRv * critWeight * 0.12;
   if (!row.mainMatch) score -= 1200;
   if (row.level < 20) score -= (20 - row.level) * 35;
 
   return {
     score: Math.round(score * 10) / 10,
     weightedRv: Math.round(weightedRv),
+    displayRv: Math.round(displayRv),
     cv: Number(row.cv) || 0,
     critRelevant,
     parts,
@@ -167,8 +180,9 @@ function rankArtifactPieces(snapshot, guide, evaluation = null) {
   const rawBySlot = new Map((snapshot?.artifacts || []).map((row) => [row.slot, row]));
   return report.pieces.map((row) => {
     const artifact = rawBySlot.get(row.slot);
-    return { row, artifact, quality: pieceQuality(artifact, row, snapshot, guide, evaluation) };
-  }).sort((a, b) => a.quality.score - b.quality.score || a.row.usefulRv - b.row.usefulRv);
+    const quality = pieceQuality(artifact, row, snapshot, guide, evaluation);
+    return { row: { ...row, effectiveRv: quality.displayRv }, artifact, quality };
+  }).sort((a, b) => a.quality.score - b.quality.score || effectiveRv(a.row) - effectiveRv(b.row));
 }
 
 function cleanStatName(name) {
@@ -197,7 +211,7 @@ function formatSubstats(artifact, lang) {
 function explicitTarget(text, aliases) {
   const body = String(text || '');
   const group = `(?:${aliases.join('|')})`;
-  const preferred = new RegExp(`${group}.{0,28}?(?:إلى|الى|لـ|ل|to|target|هدف)\\s*(\\d+(?:\\.\\d+)?)`, 'iu');
+  const preferred = new RegExp(`${group}.{0,32}?(?:إلى|الى|لـ|ل|to|target|هدف)\\s*(\\d+(?:\\.\\d+)?)`, 'iu');
   const match = body.match(preferred);
   return match ? Number(match[1]) : null;
 }
@@ -228,7 +242,7 @@ function defaultGoals(snapshot, guide, evaluation) {
   if (hard.length) return hard;
 
   const soft = [];
-  for (const key of [...profile.priority, ...profile.ordered]) {
+  for (const key of unique([...profile.priority, ...profile.ordered])) {
     const target = profile.targetMap[key];
     const current = Number(snapshot?.stats?.[key]);
     if (!target || !Number.isFinite(current)) continue;
@@ -240,7 +254,7 @@ function defaultGoals(snapshot, guide, evaluation) {
 function preservationKeys(snapshot, guide, evaluation, targetKey) {
   const weights = buildStatWeights(snapshot, guide, evaluation);
   return [...weights.entries()]
-    .filter(([key]) => SUB_TO_ACCOUNT[key] !== targetKey && !key.startsWith('flat'))
+    .filter(([key, weight]) => SUB_TO_ACCOUNT[key] !== targetKey && !key.startsWith('flat') && weight >= 0.5)
     .sort((a, b) => b[1] - a[1])
     .map(([key]) => key)
     .slice(0, 4);
@@ -261,28 +275,107 @@ function improvementCandidates(snapshot, guide, report, goal, evaluation = null)
   const rawBySlot = new Map((snapshot?.artifacts || []).map((row) => [row.slot, row]));
   const preserveKeys = preservationKeys(snapshot, guide, evaluation, accountKey);
 
-  return report.pieces.map((row) => {
-    const raw = rawBySlot.get(row.slot);
-    if (!raw || !row.mainMatch || row.level < 20 || mainBlocksSubstat(raw, subKey)) return null;
+  return report.pieces.map((sourceRow) => {
+    const raw = rawBySlot.get(sourceRow.slot);
+    if (!raw || !sourceRow.mainMatch || sourceRow.level < 20 || mainBlocksSubstat(raw, subKey)) return null;
+    const quality = pieceQuality(raw, sourceRow, snapshot, guide, evaluation);
+    const row = { ...sourceRow, effectiveRv: quality.displayRv };
     const currentOnPiece = substatValue(raw, subKey);
+    const maxOneRoll = maxRollFor(subKey, 5) || 0;
+    const ceiling = maxOneRoll * 5;
     let wanted;
-    if (direct && Number.isFinite(currentTotal)) {
-      wanted = Math.max(0, goal.target - (currentTotal - currentOnPiece));
-    } else {
+    if (direct && Number.isFinite(currentTotal)) wanted = Math.max(0, goal.target - (currentTotal - currentOnPiece));
+    else {
       const gapPct = Number.isFinite(currentTotal) && currentTotal > 0
         ? Math.max(0, ((goal.target - currentTotal) / currentTotal) * 100)
         : 0;
-      wanted = currentOnPiece + Math.max(maxRollFor(subKey, 5) || 0, gapPct);
+      wanted = currentOnPiece + Math.max(maxOneRoll, Math.min(maxOneRoll * 2, gapPct));
     }
     wanted = Math.round(wanted * 10) / 10;
-    const ceiling = MAX_FIVE_ROLL[subKey] || Infinity;
     const preserve = preserveKeys.map((key) => ({ key, value: substatValue(raw, key) })).filter((item) => item.value > 0);
-    const quality = pieceQuality(raw, row, snapshot, guide, evaluation);
-    return { row, raw, subKey, currentOnPiece, wanted, ceiling, fitsOnePiece: wanted <= ceiling + 0.15, preserve, quality };
+    return {
+      row, raw, subKey, currentOnPiece, wanted, ceiling,
+      headroom: Math.max(0, ceiling - currentOnPiece),
+      fitsOnePiece: wanted <= ceiling + 0.15,
+      preserve, quality,
+    };
   }).filter(Boolean).sort((a, b) => {
     if (a.fitsOnePiece !== b.fitsOnePiece) return a.fitsOnePiece ? -1 : 1;
-    return a.quality.score - b.quality.score || a.row.usefulRv - b.row.usefulRv;
+    return a.quality.score - b.quality.score || effectiveRv(a.row) - effectiveRv(b.row);
   });
+}
+
+function buildSplitPlan(snapshot, goal, candidates) {
+  if (!goal || !['critRate', 'critDmg', 'er', 'em'].includes(goal.key)) return [];
+  const current = Number(snapshot?.stats?.[goal.key]);
+  if (!Number.isFinite(current) || current >= goal.target) return [];
+  const gap = goal.target - current;
+  const subKey = ACCOUNT_TO_SUB[goal.key];
+  const maxRoll = maxRollFor(subKey, 5) || 0;
+  const viable = candidates.filter((item) => item.headroom > 0.05).slice(0, 4);
+  if (!viable.length) return [];
+
+  // A small gap stays on the weakest suitable piece. Larger gaps are deliberately
+  // spread across 2–3 weak links so the Doctor does not demand a near-perfect single
+  // artifact when two realistic upgrades can reach the same account target.
+  let useCount = 1;
+  if (viable.length >= 2 && gap > maxRoll * 1.35) useCount = 2;
+  if (viable.length >= 3 && gap > maxRoll * 2.7) useCount = 3;
+  const chosen = viable.slice(0, useCount);
+  let remaining = gap;
+  const plan = [];
+
+  for (let i = 0; i < chosen.length; i += 1) {
+    const item = chosen[i];
+    const remainingPieces = chosen.length - i;
+    let gain;
+    if (remainingPieces === 1) gain = remaining;
+    else {
+      const bias = i === 0 ? 1.18 : 1;
+      gain = (remaining / remainingPieces) * bias;
+    }
+    gain = Math.max(0, Math.min(item.headroom, gain));
+    remaining -= gain;
+    plan.push({ ...item, gain, targetOnPiece: item.currentOnPiece + gain });
+  }
+
+  // If the first allocation hit a headroom cap, distribute the leftover across any
+  // selected piece that still has legal room before considering a fourth piece.
+  if (remaining > 0.05) {
+    for (const item of plan) {
+      const extraRoom = Math.max(0, item.ceiling - item.targetOnPiece);
+      if (!extraRoom) continue;
+      const extra = Math.min(extraRoom, remaining);
+      item.gain += extra;
+      item.targetOnPiece += extra;
+      remaining -= extra;
+      if (remaining <= 0.05) break;
+    }
+  }
+
+  if (remaining > 0.05) {
+    for (const candidate of viable.slice(useCount)) {
+      if (remaining <= 0.05) break;
+      const gain = Math.min(candidate.headroom, remaining);
+      plan.push({ ...candidate, gain, targetOnPiece: candidate.currentOnPiece + gain });
+      remaining -= gain;
+    }
+  }
+
+  return plan.filter((item) => item.gain > 0.05).map((item) => ({
+    ...item,
+    gain: Math.round(item.gain * 10) / 10,
+    targetOnPiece: Math.round(item.targetOnPiece * 10) / 10,
+  }));
+}
+
+function formatPreserveLines(item, lang) {
+  const ar = lang === 'ar';
+  const preserved = item.preserve.slice(0, 2);
+  if (!preserved.length) return [];
+  return preserved.map((row) => ar
+    ? `  حافظ قدر الإمكان على ${ltr(`${LABELS[row.key] || row.key} ${fmtSub(row.key, row.value)}`)}`
+    : `  Preserve about ${LABELS[row.key] || row.key} ${fmtSub(row.key, row.value)}`);
 }
 
 function formatPlan(snapshot, guide, evaluation, requestText, lang) {
@@ -296,7 +389,7 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
   const wrongMain = ranked.find((item) => !item.row.mainMatch);
   if (wrongMain) {
     return ar
-      ? `**ابدأ بـ ${ltr(wrongMain.row.slotLabel)}:** الـMain Stat غير مناسب. المطلوب ${ltr(wrongMain.row.mainOptions.join(' / '))}. بعدها نرجع نقارن جودة السب ستات بالـRV والـCV.`
+      ? `**ابدأ بـ ${ltr(wrongMain.row.slotLabel)}:** الـMain Stat غير مناسب. المطلوب ${ltr(wrongMain.row.mainOptions.join(' / '))}. بعد تصحيحه نقارن جودة السب ستات بالـRV والـCV.`
       : `**Start with ${wrongMain.row.slotLabel}:** its main stat is wrong. Use ${wrongMain.row.mainOptions.join(' / ')} first, then compare substat quality by RV/CV.`;
   }
 
@@ -304,64 +397,69 @@ function formatPlan(snapshot, guide, evaluation, requestText, lang) {
     const weakest = ranked[0];
     if (!weakest) return ar ? 'ما لقيت قطعة واضحة تحتاج تغيير.' : 'No obvious artifact replacement was found.';
     return ar
-      ? `**الخطة:** بيلدك محقق التارقت الأساسي. أضعف حلقة حاليًا ${ltr(weakest.row.slotLabel)} — ${ltr(`RV ${weakest.row.usefulRv}% • CV ${weakest.row.cv}`)}. إذا تبي Min-Max ابدأ منها، مع المحافظة على الستات المهمة للشخصية.`
-      : `**Plan:** your main targets are met. The weakest link is ${weakest.row.slotLabel} — RV ${weakest.row.usefulRv}% • CV ${weakest.row.cv}. Min-max this piece while preserving the character's important stats.`;
+      ? `**الخطة:** التارقت الأساسي محقق. أضعف حلقة حاليًا ${ltr(weakest.row.slotLabel)} — ${ltr(`RV ${effectiveRv(weakest.row)}% • CV ${weakest.row.cv}`)}. ابدأ منها إذا تبي Min-Max بدون النزول عن الستات المطلوبة.`
+      : `**Plan:** core targets are met. Your weakest link is ${weakest.row.slotLabel} — RV ${effectiveRv(weakest.row)}% • CV ${weakest.row.cv}. Min-max it without dropping required stats.`;
   }
 
   const current = Number(snapshot?.stats?.[goal.key]);
   const candidates = improvementCandidates(snapshot, guide, report, goal, evaluation);
-  const best = candidates[0] || ranked[0] || null;
-  if (!best) return ar ? 'ما لقيت قطعة مناسبة أغيّرها بدون تخريب البيلد.' : 'No suitable replacement was found without damaging the build.';
+  if (!candidates.length) return ar ? 'ما لقيت قطعة مناسبة أغيّرها بدون تخريب الـMain Stat.' : 'No suitable piece can be changed without breaking its main stat.';
 
-  const row = best.row;
   const lines = [];
   if (Number.isFinite(current)) {
     lines.push(ar
-      ? `**الهدف:** ${ltr(LABELS[goal.key] || goal.key)} من ${ltr(formatStat(goal.key, current))} إلى ${ltr(formatStat(goal.key, goal.target))}.`
-      : `**Goal:** ${LABELS[goal.key] || goal.key} from ${formatStat(goal.key, current)} to ${formatStat(goal.key, goal.target)}.`);
+      ? `**الهدف:** ${ltr(`${LABELS[goal.key] || goal.key} ${formatStat(goal.key, current)} → ${formatStat(goal.key, goal.target)}`)}`
+      : `**Goal:** ${LABELS[goal.key] || goal.key} ${formatStat(goal.key, current)} → ${formatStat(goal.key, goal.target)}`);
   }
-  lines.push(ar
-    ? `**أضعف حلقة مناسبة للتحسين: ${ltr(row.slotLabel)} +${row.level}** — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}.`
-    : `**Best weak link to improve: ${row.slotLabel} +${row.level}** — RV ${row.usefulRv}% • CV ${row.cv}.`);
 
-  if (best.subKey) {
-    if (!best.fitsOnePiece) {
-      const second = candidates.find((item) => item !== best) || null;
+  if (['critRate', 'critDmg', 'er', 'em'].includes(goal.key)) {
+    const plan = buildSplitPlan(snapshot, goal, candidates);
+    if (!plan.length) return lines.concat(ar ? 'التارقت محقق أو ما في مساحة رول منطقية إضافية.' : 'Target is already met or there is no realistic roll room left.').join('\n');
+
+    lines.push(ar
+      ? `**أفضل مسار:** ${plan.length > 1 ? 'وزّع التحسين على أكثر من قطعة بدل مطاردة رول شبه مثالي بقطعة واحدة.' : `ابدأ بـ ${ltr(plan[0].row.slotLabel)} لأنها أضعف قطعة مناسبة.`}`
+      : `**Best path:** ${plan.length > 1 ? 'split the gain across weak pieces instead of chasing one near-perfect artifact.' : `start with ${plan[0].row.slotLabel}.`}`);
+
+    for (const item of plan) {
       lines.push(ar
-        ? `الفرق المطلوب أكبر من 4–5 رولات واقعية على سب ستات واحد. وزّع الزيادة${second ? ` بين ${ltr(row.slotLabel)} و${ltr(second.row.slotLabel)}` : ' على أكثر من قطعة'} بدل طلب رول مستحيل.`
-        : 'The gap is larger than a realistic 4–5 rolls on one substat. Split the gain across pieces instead of chasing an impossible roll.');
-    } else {
-      lines.push(ar ? 'ابحث عن نفس الـMain Stat، وحاول توصل تقريبًا إلى:' : 'Keep the same main stat and look for roughly:');
-      lines.push(`• ${ltr(`${LABELS[best.subKey] || best.subKey}: ${fmtSub(best.subKey, best.wanted)}+`)}`);
-      best.preserve.slice(0, 3).forEach((item) => {
-        lines.push(ar
-          ? `• حافظ قدر الإمكان على ${ltr(`${LABELS[item.key] || item.key}: ${fmtSub(item.key, item.value)}`)}`
-          : `• Preserve ${LABELS[item.key] || item.key}: about ${fmtSub(item.key, item.value)}`);
-      });
-      if (Number.isFinite(current) && ['critRate', 'critDmg', 'er', 'em'].includes(goal.key)) {
-        const projected = current - best.currentOnPiece + best.wanted;
-        lines.push(ar
-          ? `**النتيجة المتوقعة:** حوالي ${ltr(formatStat(goal.key, projected))} بدون التضحية بالستات المهمة الموجودة بالقطعة.`
-          : `**Projected result:** about ${formatStat(goal.key, projected)} without sacrificing the important stats on the piece.`);
-      } else if (['atk', 'hp', 'def'].includes(goal.key)) {
-        lines.push(ar
-          ? 'الرقم المقترح هنا تقريبي لأن ATK/HP/DEF النهائي يعتمد على الـBase Stat؛ البوت يستخدمه كهدف تحسين للقطعة، مو كضمان للرقم النهائي.'
-          : 'This substat number is approximate because final ATK/HP/DEF depends on the base stat; it is an upgrade target, not a guaranteed final total.');
-      }
+        ? `• ${ltr(item.row.slotLabel)}: ${ltr(`${LABELS[item.subKey]} ${fmtSub(item.subKey, item.currentOnPiece)} → ~${fmtSub(item.subKey, item.targetOnPiece)}`)} — ${ltr(`RV ${effectiveRv(item.row)}% • CV ${item.row.cv}`)}`
+        : `• ${item.row.slotLabel}: ${LABELS[item.subKey]} ${fmtSub(item.subKey, item.currentOnPiece)} → ~${fmtSub(item.subKey, item.targetOnPiece)} — RV ${effectiveRv(item.row)}% • CV ${item.row.cv}`);
+      lines.push(...formatPreserveLines(item, lang));
     }
+
+    const projected = Number.isFinite(current) ? current + plan.reduce((sum, item) => sum + item.gain, 0) : null;
+    if (Number.isFinite(projected)) {
+      lines.push(ar
+        ? `**النتيجة المتوقعة:** حوالي ${ltr(formatStat(goal.key, projected))}. كل رقم داخل حدود رول 5★ منطقي، ولا يطلب 6–7 رولات على سب ستات واحد.`
+        : `**Projected result:** about ${formatStat(goal.key, projected)}. Every requested value stays within a realistic 5★ substat ceiling.`);
+    }
+    return lines.join('\n');
   }
+
+  const best = candidates[0];
+  const maxRoll = maxRollFor(best.subKey, 5) || 0;
+  const suggested = Math.min(best.ceiling, best.currentOnPiece + maxRoll * 1.5);
+  lines.push(ar
+    ? `**ابدأ بـ ${ltr(best.row.slotLabel)}:** هي أضعف حلقة مناسبة. استهدف تقريبًا ${ltr(`${LABELS[best.subKey]} ${fmtSub(best.subKey, suggested)}`)} مع المحافظة على الستات المهمة الموجودة فيها.`
+    : `**Start with ${best.row.slotLabel}:** target roughly ${LABELS[best.subKey]} ${fmtSub(best.subKey, suggested)} while preserving its important existing stats.`);
+  lines.push(ar
+    ? 'ATK/HP/DEF النهائي يعتمد على الـBase Stat، لذلك الهدف هنا تحسين منطقي للسب ستات وليس وعدًا برقم نهائي دقيق.'
+    : 'Final ATK/HP/DEF depends on base stats, so this is a realistic substat upgrade target rather than a guaranteed final total.');
   return lines.join('\n');
 }
 
 function formatArtifactDoctor(snapshot, guide, evaluation, lang = 'ar', requestText = '') {
   const ar = lang === 'ar';
-  const report = reviewArtifacts(snapshot, guide);
+  const ranked = rankArtifactPieces(snapshot, guide, evaluation);
   const rawBySlot = new Map((snapshot?.artifacts || []).map((row) => [row.slot, row]));
+  const bySlot = new Map(ranked.map((item) => [item.row.slot, item]));
   const lines = [`**${snapshot.name} — Artifact Doctor**`];
 
-  for (const row of report.pieces) {
-    const raw = rawBySlot.get(row.slot);
-    lines.push(`\n**${ltr(`${row.slotLabel} +${row.level}`)} — ${ltr(`RV ${row.usefulRv}% • CV ${row.cv}`)}**`);
+  for (const slot of SLOT_ORDER) {
+    const item = bySlot.get(slot);
+    if (!item) continue;
+    const raw = rawBySlot.get(slot);
+    lines.push(`\n**${ltr(`${item.row.slotLabel} +${item.row.level}`)} — ${ltr(`RV ${effectiveRv(item.row)}% • CV ${item.row.cv}`)}**`);
     lines.push(formatSubstats(raw, lang));
   }
 
@@ -407,10 +505,12 @@ module.exports = {
   pieceQuality,
   rankArtifactPieces,
   improvementCandidates,
+  buildSplitPlan,
   formatPlan,
   mainBlocksSubstat,
   substatValue,
   directStatDelta,
   applyArtifactReplacement,
+  effectiveRv,
   ltr,
 };
