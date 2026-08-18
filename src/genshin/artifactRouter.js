@@ -21,14 +21,14 @@ function accountPhrase(text) {
 
 function isArtifactDoctor(text) {
   const value = String(text || '');
-  const hasArtifact = /[اآأإ]?رت[يى]فاكت(?:ات)?|artifact(?:s)?/iu.test(value);
-  const hasImprove = /تحسين|حس[ّ]?ن|طور|طوّر|improve|upgrade|doctor/iu.test(value);
+  const hasArtifact = /[اآأإ]?رت[يى]?فا?كت(?:ات)?|artifact(?:s)?/iu.test(value);
+  const hasImprove = /تحسين|حس[ّ]?ن|طور|طوّر|رفع|ارفع|أرفع|improve|upgrade|doctor|increase|raise/iu.test(value);
   return hasArtifact && hasImprove;
 }
 
 function isArtifactReview(text) {
   const value = String(text || '');
-  const hasArtifact = /[اآأإ]?رت[يى]فاكت(?:ات)?|artifact(?:s)?/iu.test(value);
+  const hasArtifact = /[اآأإ]?رت[يى]?فا?كت(?:ات)?|artifact(?:s)?/iu.test(value);
   const hasReview = /تقييم|قيّم|قيم|حلل|راجع|rate|review|evaluate/iu.test(value);
   return hasArtifact && hasReview && accountPhrase(value);
 }
@@ -84,9 +84,9 @@ async function loadLinkedBuild(message, text, lang) {
   return { characterName, character, guide, snapshot: getBuildSnapshot(character) };
 }
 
-async function artifactCardFile(snapshot, guide, characterName) {
+async function artifactCardFile(character, characterName) {
   try {
-    const buffer = await buildArtifactCard(snapshot, guide);
+    const buffer = await buildArtifactCard(character);
     return [{ attachment: buffer, name: `${characterName.replace(/[^a-z0-9]+/gi, '-')}-artifacts.png` }];
   } catch (error) {
     console.warn('[artifact-card] generation failed:', error.message);
@@ -103,12 +103,12 @@ async function handleArtifactReviewMessage(message) {
   const lang = language(text);
   const linked = await loadLinkedBuild(message, text, lang);
   if (!linked) return true;
-  const { characterName, guide, snapshot } = linked;
-  const files = await artifactCardFile(snapshot, guide, characterName);
+  const { characterName, character, guide, snapshot } = linked;
+  const files = await artifactCardFile(character, characterName);
 
   if (doctor) {
     const evaluation = evaluateBuild(snapshot, guide);
-    await send(message, formatArtifactDoctor(snapshot, guide, evaluation, lang), files);
+    await send(message, formatArtifactDoctor(snapshot, guide, evaluation, lang, text), files);
     return true;
   }
 
