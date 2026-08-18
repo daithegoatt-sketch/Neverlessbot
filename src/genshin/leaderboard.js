@@ -5,8 +5,10 @@ const { fetchAccount, findCharacter, getBuildSnapshot } = require('./enkaClient'
 const { getGuide } = require('./guideClient');
 const { fetchAkashaPercentile } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
+const { reviewArtifacts } = require('./artifactEvaluator');
+const { formatStat } = require('./statProfile');
 
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 90 * 1000;
 const cache = new Map();
 
 function key(value) {
@@ -41,9 +43,51 @@ async function linkedGuildUsers(guild) {
   return rows.filter(Boolean);
 }
 
-function topText(value) {
+function topPercent(value) {
   const number = Number(value?.topPercent ?? value);
-  return Number.isFinite(number) ? `Top ${number}%` : '—';
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value >= 10) return String(Math.round(value));
+  return Number(value.toFixed(2)).toString();
+}
+
+function akashaText(value) {
+  const percent = topPercent(value);
+  if (!Number.isFinite(percent)) return '—';
+  const parts = [`Top ${formatPercent(percent)}%`];
+  if (Number.isFinite(value?.ranking) && Number.isFinite(value?.outOf)) {
+    parts.push(`#${Number(value.ranking).toLocaleString('en-US')} / ${Number(value.outOf).toLocaleString('en-US')}`);
+  }
+  return parts.join(' • ');
+}
+
+function buildStrengths(evaluation, max = 3) {
+  if (!evaluation) return [];
+  const stats = (evaluation.relevantStats || [])
+    .filter((row) => row.status === 'ok' && Number.isFinite(row.value))
+    .sort((a, b) => (b.ratio || 0) - (a.ratio || 0) || (b.weight || 0) - (a.weight || 0))
+    .slice(0, max)
+    .map((row) => `${row.label} ${formatStat(row.key, row.value)}`);
+  if (stats.length < max && evaluation.mainStatScore === 100) stats.push('Main Stats 100%');
+  if (stats.length < max && evaluation.artifactSetScore === 100) stats.push('Set 100%');
+  return stats.slice(0, max);
+}
+
+async function rateCharacter(uid, character, snapshot, guide) {
+  const akasha = await fetchAkashaPercentile(uid, snapshot.name).catch(() => null);
+  const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
+  const artifacts = reviewArtifacts(snapshot, guide);
+  return {
+    name: snapshot.name,
+    score: evaluation.score,
+    akasha,
+    evaluation,
+    artifactQuality: artifacts.averageUsefulRv,
+    strengths: buildStrengths(evaluation),
+  };
 }
 
 async function buildCharacterLeaderboard(guild, characterName) {
@@ -55,71 +99,84 @@ async function buildCharacterLeaderboard(guild, characterName) {
   if (!guide) return { characterName, rows: [] };
   const users = await linkedGuildUsers(guild);
   const rows = await mapLimit(users.slice(0, 60), 3, async (link) => {
-    const account = await fetchAccount(link.uid);
+    const account = await fetchAccount(link.uid, { forceRefresh: true });
     const character = findCharacter(account, characterName);
     if (!character) return null;
     const snapshot = getBuildSnapshot(character);
-    const akasha = await fetchAkashaPercentile(link.uid, characterName).catch(() => null);
-    const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
+    const rated = await rateCharacter(link.uid, character, snapshot, guide);
     return {
       discordUserId: link.discordUserId,
       displayName: link.displayName,
       uid: link.uid,
-      score: evaluation.score,
-      akasha,
+      score: rated.score,
+      akasha: rated.akasha,
       snapshot,
+      evaluation: rated.evaluation,
+      artifactQuality: rated.artifactQuality,
+      strengths: rated.strengths,
     };
   });
 
   const clean = rows.filter(Boolean).sort((a, b) =>
     b.score - a.score
-    || (Number(a.akasha?.topPercent ?? a.akasha) || 999) - (Number(b.akasha?.topPercent ?? b.akasha) || 999),
+    || (topPercent(a.akasha) ?? 999) - (topPercent(b.akasha) ?? 999)
+    || b.artifactQuality - a.artifactQuality,
   );
   const value = { characterName, rows: clean };
   cache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL });
   return value;
 }
 
-function roughSnapshotScore(snapshot) {
-  const artifacts = snapshot?.artifacts || [];
-  const avgLevel = artifacts.length
-    ? artifacts.reduce((sum, item) => sum + (Number(item.level) || 0), 0) / artifacts.length
-    : 0;
-  const cv = (Number(snapshot?.stats?.critRate) || 0) * 2 + (Number(snapshot?.stats?.critDmg) || 0);
-  return artifacts.length * 30 + avgLevel * 2 + Math.min(320, cv) * 0.25 + (Number(snapshot?.weapon?.level) || 0) * 0.2;
+function accountScoreFromRated(rated) {
+  const top = [...rated].sort((a, b) =>
+    b.score - a.score
+    || (topPercent(a.akasha) ?? 999) - (topPercent(b.akasha) ?? 999)
+    || b.artifactQuality - a.artifactQuality,
+  ).slice(0, 3);
+  if (!top.length) return { accountScore: 0, topBuilds: [], topAverage: 0 };
+
+  const weights = [0.45, 0.33, 0.22];
+  let weighted = 0;
+  let usedWeight = 0;
+  top.forEach((row, index) => {
+    const weight = weights[index] || 0;
+    weighted += row.score * weight;
+    usedWeight += weight;
+  });
+  const normalized = usedWeight ? weighted / usedWeight : 0;
+  const coverage = Math.min(1, rated.length / 3);
+  const accountScore = Math.round(normalized * (0.9 + 0.1 * coverage) * 10) / 10;
+  const topAverage = Math.round((top.reduce((sum, row) => sum + row.score, 0) / top.length) * 10) / 10;
+  return { accountScore, topBuilds: top, topAverage };
 }
 
 async function buildAccountScore(link) {
-  const account = await fetchAccount(link.uid);
+  const account = await fetchAccount(link.uid, { forceRefresh: true });
   const candidates = (account?.characters || [])
     .map((character) => ({ character, snapshot: getBuildSnapshot(character) }))
-    .filter((row) => row.snapshot?.name)
-    .sort((a, b) => roughSnapshotScore(b.snapshot) - roughSnapshotScore(a.snapshot))
-    .slice(0, 8);
+    .filter((row) => row.snapshot?.name);
 
+  // Review every visible Showcase character that has a trusted guide, then select
+  // the strongest three. Showcase is small, so there is no need for a rough pre-filter.
   const rated = [];
   for (const row of candidates) {
-    const guide = await getGuide(row.snapshot.name);
+    const guide = await getGuide(row.snapshot.name).catch(() => null);
     if (!guide) continue;
-    const akasha = await fetchAkashaPercentile(link.uid, row.snapshot.name).catch(() => null);
-    const evaluation = evaluateBuild(row.snapshot, guide, { akashaPercentile: akasha });
-    rated.push({ name: row.snapshot.name, score: evaluation.score, akasha });
-    if (rated.length >= 6) break;
+    const result = await rateCharacter(link.uid, row.character, row.snapshot, guide);
+    rated.push(result);
   }
 
   if (!rated.length) return null;
-  rated.sort((a, b) => b.score - a.score);
-  const average = rated.reduce((sum, row) => sum + row.score, 0) / rated.length;
-  const breadth = Math.min(1, rated.length / 6);
-  const accountScore = Math.round(average * (0.65 + 0.35 * breadth) * 10) / 10;
+  const scored = accountScoreFromRated(rated);
   return {
     discordUserId: link.discordUserId,
     displayName: link.displayName,
     uid: link.uid,
-    accountScore,
-    averageBuild: Math.round(average * 10) / 10,
+    accountScore: scored.accountScore,
+    averageBuild: scored.topAverage,
     ratedCount: rated.length,
-    topBuilds: rated.slice(0, 3),
+    visibleCount: candidates.length,
+    topBuilds: scored.topBuilds,
   };
 }
 
@@ -141,10 +198,11 @@ function formatCharacterLeaderboard(board, lang = 'ar') {
     ? `ما فيه أعضاء رابطين حساباتهم وعندهم **${board.characterName}** ظاهرة في Showcase حاليًا.`
     : `No linked members currently have **${board.characterName}** visible in Showcase.`;
   const lines = [`**${ar ? 'ترتيب' : 'Leaderboard'} ${board.characterName} — Neverless**`];
-  board.rows.slice(0, 12).forEach((row, index) => {
-    lines.push(`${index + 1}. **@${row.displayName}** — **${row.score}% Neverless** • Akasha ${topText(row.akasha)}`);
+  board.rows.slice(0, 10).forEach((row, index) => {
+    lines.push(`${index + 1}. **@${row.displayName}** — **${row.score}% Neverless** • Akasha ${akashaText(row.akasha)}`);
+    if (row.strengths?.length) lines.push(`   ${ar ? 'نقاط القوة' : 'Strengths'}: ${row.strengths.join(' • ')}`);
   });
-  lines.push(ar ? '\nالترتيب يعتمد على آخر Showcase ظاهر للحسابات المربوطة.' : '\nRanking uses the latest visible Showcase builds from linked accounts.');
+  lines.push(ar ? '\nالترتيب يعتمد على تقييم Neverless أولًا، ثم Akasha وجودة الرولات عند التعادل.' : '\nRanking uses Neverless score first, then Akasha and roll quality as tie-breakers.');
   return lines.join('\n');
 }
 
@@ -153,13 +211,15 @@ function formatNeverlessLeaderboard(board, lang = 'ar') {
   if (!board.rows.length) return ar ? 'ما فيه حسابات مربوطة كفاية لبناء الترتيب.' : 'Not enough linked accounts to build the leaderboard.';
   const lines = [`**${ar ? 'ترتيب Neverless — قوة الحسابات الظاهرة' : 'Neverless Account Leaderboard'}**`];
   board.rows.slice(0, 10).forEach((row, index) => {
-    const best = row.topBuilds.map((item) => `${item.name} ${item.score}%`).join(' • ');
-    lines.push(`${index + 1}. **@${row.displayName}** — **${row.accountScore}** ${ar ? 'نقطة' : 'pts'} • ${row.ratedCount} ${ar ? 'بيلدات مقيمة' : 'rated builds'}`);
-    if (best) lines.push(`   ${best}`);
+    lines.push(`${index + 1}. **@${row.displayName}** — **${row.accountScore}** ${ar ? 'نقطة' : 'pts'} • ${row.ratedCount}/${row.visibleCount} ${ar ? 'شخصيات مقيمة' : 'visible builds rated'}`);
+    row.topBuilds.slice(0, 3).forEach((item, buildIndex) => {
+      const strengths = item.strengths?.length ? ` — ${item.strengths.join(' • ')}` : '';
+      lines.push(`   ${buildIndex + 1}) **${item.name} ${item.score}%** • Akasha ${akashaText(item.akasha)}${strengths}`);
+    });
   });
   lines.push(ar
-    ? '\nAccount Score يحسب أفضل البيلدات الظاهرة ويوازن بين قوة البيلد وعدد الشخصيات القوية؛ هو ترتيب Neverless وليس AR أو عدد الشخصيات الكامل بالحساب.'
-    : '\nAccount Score uses the strongest visible rated builds and rewards both quality and breadth; it is a Neverless score, not AR or full roster size.');
+    ? '\nNeverless يراجع كل الشخصيات الظاهرة اللي عندها Guide موثوق، ثم يعتمد أقوى 3 بيلدات للحساب. الحساب اللي يعرض أقل من 3 شخصيات مقيمة يأخذ تخفيض بسيط حتى تكون المقارنة عادلة.'
+    : '\nNeverless reviews every visible character with a trusted guide, then scores the account from its strongest three builds. Accounts with fewer than three rated visible builds receive a small coverage adjustment.');
   return lines.join('\n');
 }
 
@@ -173,4 +233,6 @@ module.exports = {
   formatCharacterLeaderboard,
   formatNeverlessLeaderboard,
   clearLeaderboardCache,
+  accountScoreFromRated,
+  buildStrengths,
 };

@@ -15,11 +15,13 @@ function getClient() {
   return client;
 }
 
-async function fetchAccount(uid) {
+async function fetchAccount(uid, options = {}) {
   const value = String(uid || '').trim();
   if (!/^\d{9,10}$/.test(value)) throw new Error('INVALID_UID');
+  const forceRefresh = Boolean(options?.forceRefresh);
+  if (forceRefresh) accountCache.delete(value);
   const cached = accountCache.get(value);
-  if (cached?.expiresAt > Date.now()) return cached.account;
+  if (!forceRefresh && cached?.expiresAt > Date.now()) return cached.account;
   const account = await getClient().fetchUser(value);
   const ttl = Number.isFinite(account?.ttl) && account.ttl > 0 ? account.ttl : 60;
   accountCache.set(value, { account, expiresAt: Date.now() + Math.min(ttl, 300) * 1000 });
@@ -103,6 +105,21 @@ function statDisplay(property) {
   return property?.isPercent ? `${rounded(value)}%` : String(rounded(value));
 }
 
+function artifactStatRow(property) {
+  if (!property) return null;
+  const numericValue = statValue(property);
+  const name = statName(property);
+  if (!name || !Number.isFinite(numericValue)) return null;
+  return {
+    name,
+    value: statDisplay(property),
+    numericValue: rounded(numericValue, 3),
+    rawValue: Number.isFinite(Number(property?.rawValue)) ? Number(property.rawValue) : null,
+    isPercent: Boolean(property?.isPercent),
+    fightProp: property?.fightProp || null,
+  };
+}
+
 function getBuildSnapshot(character) {
   if (!character) return null;
   const stats = character.stats || {};
@@ -117,6 +134,7 @@ function getBuildSnapshot(character) {
       : Array.isArray(artifact?.substats)
         ? artifact.substats
         : [];
+    const splitSubs = Array.isArray(artifact?.substats?.split) ? artifact.substats.split : [];
     return {
       slot: slotMap[artifact?.artifactData?.equipType] || artifact?.artifactData?.equipType || 'unknown',
       name: textAsset(artifact?.artifactData?.name) || null,
@@ -129,11 +147,11 @@ function getBuildSnapshot(character) {
         || textAsset(artifact?.mainstat?.getFightPropTextAssets?.())
         || artifact?.mainstat?.fightProp
         || 'Unknown',
+      mainStatKey: artifact?.mainstat?.fightProp || null,
       mainValue: statDisplay(artifact?.mainstat) || '',
-      substats: totalSubs.map((sub) => ({
-        name: statName(sub),
-        value: statDisplay(sub),
-      })).filter((sub) => sub.name && sub.value),
+      substats: totalSubs.map(artifactStatRow).filter(Boolean),
+      rolls: splitSubs.map(artifactStatRow).filter(Boolean),
+      totalRolls: splitSubs.length,
       level: Number.isInteger(artifact?.level) ? Math.max(0, artifact.level - 1) : null,
     };
   });

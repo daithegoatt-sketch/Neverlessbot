@@ -92,10 +92,11 @@ async function fetchFromHtml(uid, characterName) {
   return { topPercent: round(Math.min(...percentages)), ranking: null, outOf: null, category: null, calculationId: null, leaderboardUrl: null };
 }
 
-async function fetchAkashaPercentile(uid, characterName) {
+async function fetchAkashaPercentile(uid, characterName, options = {}) {
   const key = `${uid}:${String(characterName).toLowerCase()}`;
+  if (options?.forceRefresh) cache.delete(key);
   const cached = cache.get(key);
-  if (cached?.expiresAt > Date.now()) return cached.value;
+  if (!options?.forceRefresh && cached?.expiresAt > Date.now()) return cached.value;
 
   let value = null;
   try { value = await fetchFromApi(uid, characterName); } catch {}
@@ -107,4 +108,10 @@ async function fetchAkashaPercentile(uid, characterName) {
   return value;
 }
 
-module.exports = { fetchAkashaPercentile, rankingFromCalculation };
+function clearAkashaCache(uid, characterName = null) {
+  const prefix = `${uid}:`;
+  if (characterName) cache.delete(`${uid}:${String(characterName).toLowerCase()}`);
+  else for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
+}
+
+module.exports = { fetchAkashaPercentile, rankingFromCalculation, clearAkashaCache };
