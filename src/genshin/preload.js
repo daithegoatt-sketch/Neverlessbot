@@ -1,5 +1,4 @@
 'use strict';
-
 const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
@@ -13,6 +12,8 @@ const { installModeration } = require('../moderation');
 const { installActivity } = require('../activityV2');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
+const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
+const ALLOWED_CHANNELS = new Set([CHANNEL_ID, TEST_CHANNEL_ID]);
 const originalLogin = Client.prototype.login;
 
 function hasBotMention(message, client) {
@@ -54,6 +55,10 @@ function wrappedMessage(message, client) {
     get(target, prop) {
       if (prop === 'content') return content;
       if (prop === 'channel') return channel;
+      // Older Genshin handlers keep their own primary-channel guard. In the private
+      // test room only, expose the primary ID to those handlers while replies still
+      // go to the real test channel above. No production-room behavior changes.
+      if (prop === 'channelId' && target.channelId === TEST_CHANNEL_ID) return CHANNEL_ID;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -64,8 +69,6 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
   if (!this.__neverlessGenshinInstalled) {
     this.__neverlessGenshinInstalled = true;
 
-    // Register UID persistence first so moderation and activity persistence can
-    // reuse the same hidden neverless-data channel safely.
     this.once('ready', () => {
       initDiscordPersistence(this, CHANNEL_ID).catch((error) => {
         console.warn('[genshin-store] Persistent store initialization failed:', error.message);
@@ -76,7 +79,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installActivity(this);
 
     this.on('messageCreate', (message) => {
-      if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return;
+      if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
       if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
