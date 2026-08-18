@@ -55,6 +55,10 @@ function wrappedMessage(message, client) {
     get(target, prop) {
       if (prop === 'content') return content;
       if (prop === 'channel') return channel;
+      // Older Genshin handlers keep their own primary-channel guard. In the private
+      // test room only, expose the primary ID to those handlers while replies still
+      // go to the real test channel above. No production-room behavior changes.
+      if (prop === 'channelId' && target.channelId === TEST_CHANNEL_ID) return CHANNEL_ID;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
