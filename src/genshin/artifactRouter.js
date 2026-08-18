@@ -5,6 +5,9 @@ const { fetchAccount, findCharacter, getBuildSnapshot } = require('./enkaClient'
 const { getGuide } = require('./guideClient');
 const { resolveCharacter } = require('./characterResolver');
 const { formatArtifactReview } = require('./ratingCopyV2');
+const { formatArtifactDoctor } = require('./artifactDoctor');
+const { buildArtifactCard } = require('./artifactCard');
+const { evaluateBuild } = require('./buildEvaluator');
 
 function language(text) {
   const ar = (String(text).match(/[\u0600-\u06ff]/g) || []).length;
@@ -16,6 +19,13 @@ function accountPhrase(text) {
   return /بحسابي|في\s+حسابي|من\s+حسابي|my\s+account|in\s+my\s+account|on\s+my\s+account/i.test(String(text || ''));
 }
 
+function isArtifactDoctor(text) {
+  const value = String(text || '');
+  const hasArtifact = /[اآأإ]?رت[يى]فاكت(?:ات)?|artifact(?:s)?/iu.test(value);
+  const hasImprove = /تحسين|حس[ّ]?ن|طور|طوّر|improve|upgrade|doctor/iu.test(value);
+  return hasArtifact && hasImprove;
+}
+
 function isArtifactReview(text) {
   const value = String(text || '');
   const hasArtifact = /[اآأإ]?رت[يى]فاكت(?:ات)?|artifact(?:s)?/iu.test(value);
@@ -23,20 +33,17 @@ function isArtifactReview(text) {
   return hasArtifact && hasReview && accountPhrase(value);
 }
 
-async function send(message, text) {
-  await message.channel.send({ content: text, allowedMentions: { users: [], repliedUser: false } });
+async function send(message, text, files = []) {
+  await message.channel.send({ content: text, files, allowedMentions: { users: [], repliedUser: false } });
 }
 
-async function handleArtifactReviewMessage(message) {
-  const text = String(message?.content || '').trim();
-  if (!isArtifactReview(text)) return false;
-  const lang = language(text);
+async function loadLinkedBuild(message, text, lang) {
   const characterName = await resolveCharacter(text);
   if (!characterName) {
     await send(message, lang === 'ar'
-      ? 'حدد اسم الشخصية، مثال: `قيم ارتيفاكتات Skirk بحسابي`.'
-      : 'Include the character name, e.g. `rate Skirk artifacts on my account`.');
-    return true;
+      ? 'حدد اسم الشخصية، مثال: `قيم ارتيفاكتات Skirk بحسابي` أو `تحسين ارتيفاكتات Skirk`.'
+      : 'Include the character name, e.g. `rate Skirk artifacts on my account` or `improve Skirk artifacts`.');
+    return null;
   }
 
   const uid = getLinkedUid(message.author.id);
@@ -44,7 +51,7 @@ async function handleArtifactReviewMessage(message) {
     await send(message, lang === 'ar'
       ? 'اربط حسابك أولًا: `ربط UID 7XXXXXXXXX`.'
       : 'Link your account first: `link UID 7XXXXXXXXX`.');
-    return true;
+    return null;
   }
 
   let account;
@@ -55,7 +62,7 @@ async function handleArtifactReviewMessage(message) {
     await send(message, lang === 'ar'
       ? 'ما قدرت أقرأ الـShowcase الآن. تأكد أن **Show Character Details** مفعّل.'
       : 'I could not read the Showcase right now. Make sure **Show Character Details** is enabled.');
-    return true;
+    return null;
   }
 
   const character = findCharacter(account, characterName);
@@ -63,20 +70,50 @@ async function handleArtifactReviewMessage(message) {
     await send(message, lang === 'ar'
       ? `**${characterName}** مو ظاهرة بالتفاصيل في الـShowcase حاليًا.`
       : `**${characterName}** is not visible with details in your Showcase.`);
-    return true;
+    return null;
   }
 
   const guide = await getGuide(characterName).catch(() => null);
   if (!guide) {
     await send(message, lang === 'ar'
-      ? `أقدر أقرأ ارتيفاكتات **${characterName}**، لكن ما عندي Guide موثوق كفاية حتى أحدد الـUseful RV والـMain Stats.`
-      : `I can read **${characterName}** artifacts, but I do not have a reliable guide to judge Useful RV and main stats.`);
+      ? `أقدر أقرأ ارتيفاكتات **${characterName}**، لكن ما عندي Guide موثوق كفاية حتى أحدد الـRV والـMain Stats.`
+      : `I can read **${characterName}** artifacts, but I do not have a reliable guide to judge RV and main stats.`);
+    return null;
+  }
+
+  return { characterName, character, guide, snapshot: getBuildSnapshot(character) };
+}
+
+async function artifactCardFile(snapshot, guide, characterName) {
+  try {
+    const buffer = await buildArtifactCard(snapshot, guide);
+    return [{ attachment: buffer, name: `${characterName.replace(/[^a-z0-9]+/gi, '-')}-artifacts.png` }];
+  } catch (error) {
+    console.warn('[artifact-card] generation failed:', error.message);
+    return [];
+  }
+}
+
+async function handleArtifactReviewMessage(message) {
+  const text = String(message?.content || '').trim();
+  const doctor = isArtifactDoctor(text);
+  const review = isArtifactReview(text);
+  if (!doctor && !review) return false;
+
+  const lang = language(text);
+  const linked = await loadLinkedBuild(message, text, lang);
+  if (!linked) return true;
+  const { characterName, guide, snapshot } = linked;
+  const files = await artifactCardFile(snapshot, guide, characterName);
+
+  if (doctor) {
+    const evaluation = evaluateBuild(snapshot, guide);
+    await send(message, formatArtifactDoctor(snapshot, guide, evaluation, lang), files);
     return true;
   }
 
-  const snapshot = getBuildSnapshot(character);
-  await send(message, formatArtifactReview(snapshot, guide, lang));
+  await send(message, formatArtifactReview(snapshot, guide, lang), files);
   return true;
 }
 
-module.exports = { handleArtifactReviewMessage, isArtifactReview };
+module.exports = { handleArtifactReviewMessage, isArtifactReview, isArtifactDoctor };
