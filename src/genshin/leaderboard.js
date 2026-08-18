@@ -50,18 +50,17 @@ function topPercent(value) {
 
 function formatPercent(value) {
   if (!Number.isFinite(value)) return null;
+  if (value > 0 && value < 0.01) return '<0.01';
   if (value >= 10) return String(Math.round(value));
-  return Number(value.toFixed(2)).toString();
+  const rounded = Number(value.toFixed(2));
+  if (rounded === 0 && value > 0) return '<0.01';
+  return rounded.toString();
 }
 
 function akashaText(value) {
   const percent = topPercent(value);
   if (!Number.isFinite(percent)) return '—';
-  const parts = [`Top ${formatPercent(percent)}%`];
-  if (Number.isFinite(value?.ranking) && Number.isFinite(value?.outOf)) {
-    parts.push(`#${Number(value.ranking).toLocaleString('en-US')} / ${Number(value.outOf).toLocaleString('en-US')}`);
-  }
-  return parts.join(' • ');
+  return `Top ${formatPercent(percent)}%`;
 }
 
 function buildStrengths(evaluation, max = 3) {
@@ -156,8 +155,6 @@ async function buildAccountScore(link) {
     .map((character) => ({ character, snapshot: getBuildSnapshot(character) }))
     .filter((row) => row.snapshot?.name);
 
-  // Review every visible Showcase character that has a trusted guide, then select
-  // the strongest three. Showcase is small, so there is no need for a rough pre-filter.
   const rated = [];
   for (const row of candidates) {
     const guide = await getGuide(row.snapshot.name).catch(() => null);
@@ -199,27 +196,20 @@ function formatCharacterLeaderboard(board, lang = 'ar') {
     : `No linked members currently have **${board.characterName}** visible in Showcase.`;
   const lines = [`**${ar ? 'ترتيب' : 'Leaderboard'} ${board.characterName} — Neverless**`];
   board.rows.slice(0, 10).forEach((row, index) => {
-    lines.push(`${index + 1}. **@${row.displayName}** — **${row.score}% Neverless** • Akasha ${akashaText(row.akasha)}`);
-    if (row.strengths?.length) lines.push(`   ${ar ? 'نقاط القوة' : 'Strengths'}: ${row.strengths.join(' • ')}`);
+    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.score}% Neverless** • Akasha ${akashaText(row.akasha)}`);
   });
-  lines.push(ar ? '\nالترتيب يعتمد على تقييم Neverless أولًا، ثم Akasha وجودة الرولات عند التعادل.' : '\nRanking uses Neverless score first, then Akasha and roll quality as tie-breakers.');
   return lines.join('\n');
 }
 
 function formatNeverlessLeaderboard(board, lang = 'ar') {
   const ar = lang === 'ar';
   if (!board.rows.length) return ar ? 'ما فيه حسابات مربوطة كفاية لبناء الترتيب.' : 'Not enough linked accounts to build the leaderboard.';
-  const lines = [`**${ar ? 'ترتيب Neverless — قوة الحسابات الظاهرة' : 'Neverless Account Leaderboard'}**`];
+  const lines = [`**${ar ? 'ترتيب Neverless' : 'Neverless Account Leaderboard'}**`];
   board.rows.slice(0, 10).forEach((row, index) => {
-    lines.push(`${index + 1}. **@${row.displayName}** — **${row.accountScore}** ${ar ? 'نقطة' : 'pts'} • ${row.ratedCount}/${row.visibleCount} ${ar ? 'شخصيات مقيمة' : 'visible builds rated'}`);
-    row.topBuilds.slice(0, 3).forEach((item, buildIndex) => {
-      const strengths = item.strengths?.length ? ` — ${item.strengths.join(' • ')}` : '';
-      lines.push(`   ${buildIndex + 1}) **${item.name} ${item.score}%** • Akasha ${akashaText(item.akasha)}${strengths}`);
-    });
+    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.accountScore}% Neverless**`);
+    const builds = row.topBuilds.slice(0, 3).map((item) => `${item.name} ${item.score}%`).join(' • ');
+    if (builds) lines.push(`   ${builds}`);
   });
-  lines.push(ar
-    ? '\nNeverless يراجع كل الشخصيات الظاهرة اللي عندها Guide موثوق، ثم يعتمد أقوى 3 بيلدات للحساب. الحساب اللي يعرض أقل من 3 شخصيات مقيمة يأخذ تخفيض بسيط حتى تكون المقارنة عادلة.'
-    : '\nNeverless reviews every visible character with a trusted guide, then scores the account from its strongest three builds. Accounts with fewer than three rated visible builds receive a small coverage adjustment.');
   return lines.join('\n');
 }
 

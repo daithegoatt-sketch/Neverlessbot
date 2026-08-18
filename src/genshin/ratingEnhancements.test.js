@@ -66,9 +66,10 @@ const alreadyComputed = applyKnownComputedStats('Sandrone', { atk: 2613, em: 284
 assert.equal(alreadyComputed.em, 284);
 
 const artifactCopy = formatArtifactReview({ name: 'Test', artifacts: [atkGoblet] }, guide, 'ar');
-assert.match(artifactCopy, /RV الكلي/);
-assert.match(artifactCopy, /RV المفيد للشخصية/);
-assert.match(artifactCopy, /وش تطور أول/);
+assert.match(artifactCopy, /RV الحالي/);
+assert.match(artifactCopy, /RV المقترح/);
+assert.match(artifactCopy, /الخلاصة/);
+assert.doesNotMatch(artifactCopy, /الرولات المفيدة/);
 
 const akashaCopy = akashaImprovementAdvice(
   { name: 'Sandrone', artifacts: [cryoGoblet] },
@@ -81,8 +82,8 @@ const akashaCopy = akashaImprovementAdvice(
   'ar',
 );
 assert.match(akashaCopy, /ER/);
-assert.doesNotMatch(akashaCopy, /\*\*EM:\*\*/);
-assert.match(akashaCopy, /Burst كل روتيشن/);
+assert.doesNotMatch(akashaCopy, /EM.*284.*150/);
+assert.match(akashaCopy, /Burst كل Rotation/);
 
 const scored = accountScoreFromRated([
   { score: 96, akasha: { topPercent: 2 }, artifactQuality: 650 },
