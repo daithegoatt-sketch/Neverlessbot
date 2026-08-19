@@ -34,9 +34,12 @@ function helpText(lang) {
       '`Skirk leaderboard` — server ranking for that character',
       '`Neverless leaderboard` — linked-account strength ranking',
       '`my characters` — visible Showcase characters',
+      '`-banner` / `-upcoming banner` — current or officially announced upcoming character wishes',
+      '`-weapon banner` / `-upcoming weapon banner` — current or officially announced weapon wish',
+      '`-quest <quest name>` — find a direct Genshin quest walkthrough video',
       '`link UID 7XXXXXXXXX` / `unlink UID` — manage your linked account',
       '',
-      'Mention Neverless Bot in the Genshin channel before the command.',
+      'Most commands require mentioning Neverless Bot in the Genshin channel. Prefix commands starting with `-` do not.',
     ].join('\n');
   }
 
@@ -62,9 +65,12 @@ function helpText(lang) {
     '`ترتيب Skirk` — ترتيب الشخصية بالسيرفر',
     '`ترتيب Neverless` — ترتيب قوة الحسابات المربوطة',
     '`شخصياتي` — الشخصيات الظاهرة في Showcase',
+    '`-بنر` / `-البنر القادم` — البنر الحالي أو القادم المعلن رسميًا',
+    '`-بنر الاسلحه` / `-بنر الاسلحه القادم` — بنر الأسلحة الحالي أو القادم المعلن رسميًا',
+    '`-كويست اسم الكويست` — يجيب لك شرح فيديو مباشر للكويست',
     '`ربط UID 7XXXXXXXXX` / `فك ربط UID` — إدارة الحساب المربوط',
     '',
-    'لازم تمنشن Neverless Bot داخل روم Genshin قبل الأمر.',
+    'أغلب الأوامر تحتاج منشن Neverless Bot داخل روم Genshin. أوامر `-بنر` و`-كويست` ما تحتاج منشن.',
   ].join('\n');
 }
 
