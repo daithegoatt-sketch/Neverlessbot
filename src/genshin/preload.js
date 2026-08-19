@@ -9,8 +9,10 @@ const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
+const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publicCommands');
 const { installModeration } = require('../moderation');
 const { installActivity } = require('../activityV2');
+const { installServerTools } = require('../serverTools');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
@@ -80,11 +82,15 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
       });
     });
 
+    installServerTools(this);
     installModeration(this);
     installActivity(this);
+    installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
+      // Prefix commands such as -بنر and -كويست have their own public handler and do not need a mention.
+      if (isPublicGenshinCommand(message.content)) return;
       if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
