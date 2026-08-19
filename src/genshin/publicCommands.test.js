@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { parseBannerCommand, parseQuestCommand, buildBannerEmbeds } = require('./publicCommands');
+const { parseBannerCommand, parseQuestCommand, buildBannerEmbeds, shouldHandlePublicMessage } = require('./publicCommands');
 const { parseNotice, selectNotice, extractByRarity, phaseFromSubject } = require('./bannerClient');
 const { parseYoutubeResults } = require('./questClient');
 
@@ -20,6 +20,12 @@ assert.equal(parseBannerCommand('بنر'), null);
 assert.deepEqual(parseQuestCommand('-كويست "Chenyu Vale hidden quest"'), { quest: 'Chenyu Vale hidden quest' });
 assert.deepEqual(parseQuestCommand('-quest In the Mountains'), { quest: 'In the Mountains' });
 assert.equal(parseQuestCommand('كويست In the Mountains'), null);
+
+// Public prefix commands are intentionally server-wide; channelId must not gate them.
+assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-general', author: { bot: false }, content: '-بنر' }), true);
+assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: false }, content: '-كويست In the Mountains' }), true);
+assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: true }, content: '-بنر' }), false);
+assert.equal(shouldHandlePublicMessage({ guildId: null, channelId: 'dm', author: { bot: false }, content: '-بنر' }), false);
 
 const officialText = `
 Version "Luna VIII" Event Wishes Notice - Phase II
