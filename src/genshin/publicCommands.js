@@ -15,9 +15,10 @@ function parseBannerCommand(text) {
   const lower = body.toLowerCase();
   const weapon = /(?:اسلح|أسلح|weapon)/iu.test(body);
   const upcoming = /(?:القادم|الجاي|القادمة|الجايه|الجايّة|upcoming|coming|next)/iu.test(body);
-  const banner = /^(?:ال)?(?:بنر|بانر|banner)\b/iu.test(body)
-    || /^(?:upcoming|coming|next)\s+banner\b/i.test(lower);
-  if (!banner) return null;
+  const arabicBanner = /^(?:ال)?(?:بنر|بانر)(?:\s|$)/u.test(body);
+  const englishBanner = /^(?:banner|weapon\s+banner)(?:\s|$)/i.test(lower)
+    || /^(?:upcoming|coming|next)\s+(?:weapon\s+)?banner(?:\s|$)/i.test(lower);
+  if (!arabicBanner && !englishBanner) return null;
   return { type: weapon ? 'weapon' : 'character', mode: upcoming ? 'upcoming' : 'current' };
 }
 
@@ -68,9 +69,8 @@ function buildBannerEmbeds(notice, request) {
       const charImageCount = Math.max(1, Math.min(2, notice.fiveCharacters?.length || 1));
       const image = images[charImageCount] || images.at(-1) || images[0];
       if (image) main.setImage(image);
-    } else {
-      const first = images[0];
-      if (first) main.setImage(first);
+    } else if (images[0]) {
+      main.setImage(images[0]);
     }
   }
 
