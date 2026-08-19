@@ -2,6 +2,7 @@
 
 const {
   ActionRowBuilder,
+  AuditLogEvent,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
@@ -10,6 +11,7 @@ const {
 
 const DATA_CHANNEL_NAME = 'neverless-data';
 const PERSONAL_INVITE_PREFIX = 'NLPINV1|';
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || '1538557238627672164';
 const MAX_SCAN_MESSAGES = 5000;
 
 const inviteOwners = new Map(); // guildId:code -> ownerId
@@ -75,11 +77,51 @@ async function whenPersonalInvitesReady() {
 
 async function persistPersonalInvite(guild, code, ownerId) {
   const channel = guild.channels.cache.find((item) => item.name === DATA_CHANNEL_NAME && item.isTextBased?.()) || null;
-  if (!channel) return;
   const updatedAt = new Date().toISOString();
-  await channel.send(`${PERSONAL_INVITE_PREFIX}${guild.id}|${code}|${ownerId}|${updatedAt}`).catch(() => {});
+  if (channel) await channel.send(`${PERSONAL_INVITE_PREFIX}${guild.id}|${code}|${ownerId}|${updatedAt}`).catch(() => {});
   inviteOwners.set(inviteKey(guild.id, code), String(ownerId));
   ownerInvites.set(ownerKey(guild.id, ownerId), code);
+}
+
+function applyPersonalInviteOwner(guild, invite) {
+  if (!invite?.code) return invite;
+  const ownerId = personalInviteOwner(guild.id, invite.code);
+  if (!ownerId) return invite;
+  // Discord creates the invite as the bot, but #رابط is intentionally owned by the
+  // requesting member. Existing welcome/activity invite logic reads invite.inviter.id,
+  // so expose the persisted member owner on every later invite fetch.
+  const owner = guild.client.users.cache.get(ownerId) || { id: ownerId };
+  try {
+    Object.defineProperty(invite, 'inviter', {
+      value: owner,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  } catch {
+    try { invite.inviter = owner; } catch {}
+  }
+  return invite;
+}
+
+function patchInviteManager(guild) {
+  const manager = guild?.invites;
+  if (!manager || manager.__neverlessPersonalInvitePatched) return;
+  const originalFetch = manager.fetch.bind(manager);
+  manager.fetch = async (...args) => {
+    const result = await originalFetch(...args);
+    if (result?.values && typeof result.values === 'function') {
+      for (const invite of result.values()) applyPersonalInviteOwner(guild, invite);
+    } else if (result?.code) {
+      applyPersonalInviteOwner(guild, result);
+    }
+    return result;
+  };
+  try {
+    Object.defineProperty(manager, '__neverlessPersonalInvitePatched', { value: true, configurable: true });
+  } catch {
+    manager.__neverlessPersonalInvitePatched = true;
+  }
 }
 
 function validUrl(value) {
@@ -201,7 +243,7 @@ async function handleEmbed(interaction) {
 
 async function handlePersonalInvite(message) {
   const text = String(message.content || '').trim();
-  if (!/^(?:#\s*)?(?:رابط|invite)$/iu.test(text)) return false;
+  if (!/^#\s*(?:رابط|invite)$/iu.test(text)) return false;
   if (!message.channel?.createInvite) {
     await message.reply({ content: 'ما أقدر أنشئ رابط من هذا الروم.', allowedMentions: { repliedUser: false } });
     return true;
@@ -229,11 +271,46 @@ async function handlePersonalInvite(message) {
   }
 
   await persistPersonalInvite(message.guild, invite.code, message.author.id);
+  applyPersonalInviteOwner(message.guild, invite);
   await message.reply({
     content: `رابطك الشخصي للسيرفر:\nhttps://discord.gg/${invite.code}`,
     allowedMentions: { repliedUser: false },
   });
   return true;
+}
+
+async function recentRemovalAction(member) {
+  const now = Date.now();
+  for (const type of [AuditLogEvent.MemberBanAdd, AuditLogEvent.MemberKick]) {
+    const logs = await member.guild.fetchAuditLogs({ type, limit: 5 }).catch(() => null);
+    if (!logs) continue;
+    const match = logs.entries.find((entry) => entry.target?.id === member.id && now - entry.createdTimestamp <= 15_000);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function handleNaturalLeave(member) {
+  // Moderation has its own kick/ban log. Delay and check audit logs so a kick or ban
+  // is not duplicated as a voluntary leave.
+  await new Promise((resolve) => setTimeout(resolve, 2300));
+  const moderationAction = await recentRemovalAction(member);
+  if (moderationAction) return;
+  const channel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
+  if (!channel?.isSendable?.()) return;
+  const user = member.user;
+  const embed = new EmbedBuilder()
+    .setColor(0x6b7280)
+    .setTitle('🚪 Member Left')
+    .setDescription(`${user?.tag || 'Unknown'} (${member.id})`)
+    .addFields(
+      { name: 'Member', value: `<@${member.id}> (${member.id})`, inline: true },
+      { name: 'Members Now', value: String(member.guild.memberCount), inline: true },
+    )
+    .setTimestamp();
+  if (member.joinedTimestamp) embed.addFields({ name: 'Joined Server', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true });
+  if (user?.createdTimestamp) embed.addFields({ name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`, inline: true });
+  await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
 }
 
 async function handleInteraction(interaction) {
@@ -247,10 +324,12 @@ function installServerTools(client) {
   if (client.__neverlessServerToolsInstalled) return;
   client.__neverlessServerToolsInstalled = true;
   client.once('ready', () => {
+    for (const guild of client.guilds.cache.values()) patchInviteManager(guild);
     readyPromise = loadInviteMappings(client).catch((error) => {
       console.warn('[server-tools] invite mapping load failed:', error.message);
     });
   });
+  client.on('guildCreate', (guild) => patchInviteManager(guild));
   client.on('interactionCreate', (interaction) => {
     handleInteraction(interaction).catch((error) => {
       console.error('[server-tools] interaction failed:', error);
@@ -263,6 +342,9 @@ function installServerTools(client) {
     if (!message?.guildId || message.author?.bot) return;
     handlePersonalInvite(message).catch((error) => console.error('[server-tools] personal invite failed:', error));
   });
+  client.on('guildMemberRemove', (member) => {
+    handleNaturalLeave(member).catch((error) => console.error('[server-tools] leave log failed:', error));
+  });
 }
 
 module.exports = {
@@ -272,4 +354,6 @@ module.exports = {
   parsePersonalInvite,
   validUrl,
   messagePayload,
+  patchInviteManager,
+  applyPersonalInviteOwner,
 };
