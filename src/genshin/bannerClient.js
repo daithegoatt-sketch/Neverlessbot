@@ -42,21 +42,15 @@ function normalizeListEntry(entry) {
   const subject = String(post.subject || post.title || '').trim();
   const postId = String(post.post_id || post.postId || entry?.post_id || '').trim();
   if (!subject || !/^\d+$/.test(postId)) return null;
-  return {
-    postId,
-    subject,
-    createdAt: Number(post.created_at || post.createdAt || 0) || 0,
-  };
+  return { postId, subject, createdAt: Number(post.created_at || post.createdAt || 0) || 0 };
 }
 
 async function fetchNoticeListFromApi() {
   const collected = [];
   for (const type of [1, 2, 3]) {
     try {
-      const url = `${NEWS_API}?gids=2&page_size=50&type=${type}`;
-      const json = await fetchJson(url);
-      const list = json?.data?.list || [];
-      for (const item of list) {
+      const json = await fetchJson(`${NEWS_API}?gids=2&page_size=50&type=${type}`);
+      for (const item of json?.data?.list || []) {
         const row = normalizeListEntry(item);
         if (row && /Event Wishes Notice/i.test(row.subject)) collected.push(row);
       }
@@ -138,7 +132,7 @@ const WEAPON_TYPES = 'Sword|Claymore|Polearm|Catalyst|Bow';
 
 function extractCharacterNames(segment) {
   const out = [];
-  const regex = new RegExp('(?:"[^"]+"\\s+)?([A-Z][A-Za-zÀ-ÖØ-öø-ÿ0-9’\' .-]{1,48}?)\\s*\\((' + ELEMENTS + ')\\)', 'g');
+  const regex = new RegExp(`(?:"[^"]+"\\s+)?([A-Z][A-Za-zÀ-ÖØ-öø-ÿ0-9’' .-]{1,48}?)\\s*\\((${ELEMENTS})\\)`, 'g');
   let match;
   while ((match = regex.exec(String(segment || '')))) {
     const name = match[1].replace(/^[,;:\s]+|[,;:\s]+$/g, '').trim();
@@ -149,7 +143,7 @@ function extractCharacterNames(segment) {
 
 function extractWeaponNames(segment) {
   const out = [];
-  const regex = new RegExp('"?([A-Z][A-Za-zÀ-ÖØ-öø-ÿ0-9’\' -]{2,60}?)"?\\s*\\((' + WEAPON_TYPES + ')\\)', 'g');
+  const regex = new RegExp(`"?([A-Z][A-Za-zÀ-ÖØ-öø-ÿ0-9’' -]{2,60}?)"?\\s*\\((${WEAPON_TYPES})\\)`, 'g');
   let match;
   while ((match = regex.exec(String(segment || '')))) {
     const name = match[1].replace(/^[,;:\s]+|[,;:\s]+$/g, '').trim();
@@ -160,17 +154,27 @@ function extractWeaponNames(segment) {
 
 function segments(text, label) {
   const out = [];
-  const regex = new RegExp(label + '([\\s\\S]{0,700}?)(?:will receive|receive a huge|receive huge)', 'gi');
+  const regex = new RegExp(`${label}([\\s\\S]{0,900}?)(?:will receive|receive a huge|receive huge)`, 'gi');
   let match;
-  while ((match = regex.exec(text))) out.push(match[1]);
+  while ((match = regex.exec(String(text || '')))) out.push(match[1]);
   return out;
 }
 
+function objectUnique(rows) {
+  const seen = new Set();
+  return (rows || []).filter((row) => {
+    const value = String(row?.name || '').toLowerCase();
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 function extractByRarity(text) {
-  const fiveCharacters = unique(segments(text, '(?:event-exclusive\\s+)?5-star character(?:s)?\\s+').flatMap(extractCharacterNames).map((row) => JSON.stringify(row))).map(JSON.parse);
-  const fourCharacters = unique(segments(text, '4-star character(?:s)?\\s+').flatMap(extractCharacterNames).map((row) => JSON.stringify(row))).map(JSON.parse);
-  const fiveWeapons = unique(segments(text, '(?:event-exclusive\\s+)?5-star weapon(?:s)?\\s+').flatMap(extractWeaponNames).map((row) => JSON.stringify(row))).map(JSON.parse);
-  const fourWeapons = unique(segments(text, '4-star weapon(?:s)?\\s+').flatMap(extractWeaponNames).map((row) => JSON.stringify(row))).map(JSON.parse);
+  const fiveCharacters = objectUnique(segments(text, '(?:event-exclusive\\s+)?5-star character(?:s)?\\s+').flatMap(extractCharacterNames));
+  const fourCharacters = objectUnique(segments(text, '4-star character(?:s)?\\s+').flatMap(extractCharacterNames));
+  const fiveWeapons = objectUnique(segments(text, '(?:event-exclusive\\s+)?5-star weapon(?:s)?\\s+').flatMap(extractWeaponNames));
+  const fourWeapons = objectUnique(segments(text, '4-star weapon(?:s)?\\s+').flatMap(extractWeaponNames));
   return { fiveCharacters, fourCharacters, fiveWeapons, fourWeapons };
 }
 
@@ -200,45 +204,72 @@ function imageUrls(full) {
   return unique(rows.map((row) => row?.url || row?.image_url || row).filter((value) => typeof value === 'string' && /^https?:\/\//i.test(value)));
 }
 
+function phaseFromSubject(subject) {
+  const match = String(subject || '').match(/Phase\s*([IVX]+)/i);
+  return match?.[1]?.toUpperCase() || null;
+}
+
 function parseNotice(full, fallback = {}) {
   const inner = full?.post || full || {};
   const text = postText(full).replace(/\r/g, '');
   const rated = extractByRarity(text);
   const dates = extractTextDates(text);
-  const createdAtSeconds = Number(inner.created_at || fallback.createdAt || 0) || 0;
-  const createdAt = createdAtSeconds ? createdAtSeconds * (createdAtSeconds < 10_000_000_000 ? 1000 : 1) : 0;
+  const createdRaw = Number(inner.created_at || fallback.createdAt || 0) || 0;
+  const createdAt = createdRaw ? createdRaw * (createdRaw < 10_000_000_000 ? 1000 : 1) : 0;
   const explicitStart = eventTimestamp(inner.event_start_date || full?.event_start_date);
   const explicitEnd = eventTimestamp(inner.event_end_date || full?.event_end_date);
-  const startAt = explicitStart || (dates.length >= 2 ? dates[0] : createdAt || null);
+  const startKnown = Boolean(explicitStart || dates.length >= 2);
+  const startAt = explicitStart || (dates.length >= 2 ? dates[0] : null);
   const endAt = explicitEnd || (dates.length ? dates[dates.length - 1] : null);
+  const subject = String(inner.subject || fallback.subject || 'Event Wishes Notice');
   return {
     postId: String(inner.post_id || fallback.postId || ''),
-    subject: String(inner.subject || fallback.subject || 'Event Wishes Notice'),
+    subject,
+    phase: phaseFromSubject(subject),
     sourceUrl: `https://www.hoyolab.com/article/${inner.post_id || fallback.postId || ''}`,
     text,
     images: imageUrls(full),
     createdAt,
+    startKnown,
     startAt,
     endAt,
     ...rated,
   };
 }
 
+function activeNotice(rows, now) {
+  const exact = rows.filter((row) => row.startKnown && Number.isFinite(row.startAt) && row.startAt <= now && (!Number.isFinite(row.endAt) || row.endAt >= now));
+  if (exact.length) return exact.sort((a, b) => (b.startAt || 0) - (a.startAt || 0) || (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+  // Phase-I notices often say "After the Version update" instead of printing a start
+  // timestamp. Only use such a notice as current when there is no exact active phase.
+  const phaseOne = rows.filter((row) => !row.startKnown && (!Number.isFinite(row.endAt) || row.endAt >= now) && (row.createdAt || 0) <= now);
+  return phaseOne.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0] || null;
+}
+
 function selectNotice(notices, mode = 'current', now = Date.now()) {
   const rows = (notices || []).filter(Boolean).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   if (!rows.length) return null;
+  const current = activeNotice(rows, now);
+
   if (mode === 'upcoming') {
     const future = rows
-      .filter((row) => Number.isFinite(row.startAt) && row.startAt > now)
+      .filter((row) => row.startKnown && Number.isFinite(row.startAt) && row.startAt > now)
       .sort((a, b) => a.startAt - b.startAt || (b.createdAt || 0) - (a.createdAt || 0));
-    return future[0] || null;
+    if (future.length) return future[0];
+
+    // A newly announced Phase-I post may have only an end timestamp. Treat it as
+    // upcoming while an older, explicitly-timed banner is still active.
+    if (current) {
+      const announced = rows
+        .filter((row) => row.postId !== current.postId && !row.startKnown && (row.createdAt || 0) > (current.createdAt || 0) && (!Number.isFinite(row.endAt) || row.endAt > now))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      if (announced.length) return announced[0];
+    }
+    return null;
   }
-  const active = rows.filter((row) => {
-    const starts = !Number.isFinite(row.startAt) || row.startAt <= now;
-    const ends = !Number.isFinite(row.endAt) || row.endAt >= now;
-    return starts && ends;
-  });
-  if (active.length) return active[0];
+
+  if (current) return current;
   const notExpired = rows.filter((row) => !Number.isFinite(row.endAt) || row.endAt >= now);
   return notExpired[0] || rows[0];
 }
@@ -247,9 +278,8 @@ async function loadNotices() {
   const cached = cache.get('notices');
   if (cached?.expiresAt > Date.now()) return cached.value;
   const list = await fetchNoticeList();
-  const selected = list.slice(0, 12);
   const notices = [];
-  for (const row of selected) {
+  for (const row of list.slice(0, 12)) {
     try {
       const full = await fetchFullPost(row.postId);
       notices.push(parseNotice(full, row));
@@ -273,4 +303,5 @@ module.exports = {
   extractByRarity,
   extractTextDates,
   postText,
+  phaseFromSubject,
 };
