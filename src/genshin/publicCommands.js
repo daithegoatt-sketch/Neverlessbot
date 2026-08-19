@@ -34,6 +34,10 @@ function isPublicGenshinCommand(text) {
   return Boolean(parseBannerCommand(text) || parseQuestCommand(text));
 }
 
+function shouldHandlePublicMessage(message) {
+  return Boolean(message?.guildId && !message.author?.bot && isPublicGenshinCommand(message.content));
+}
+
 function formatNames(rows, rarity) {
   if (!rows?.length) return `${rarity}: غير معلن/غير متوفر في المصدر`;
   return `${rarity}: ${rows.map((row) => row.name).join(' • ')}`;
@@ -129,8 +133,7 @@ function installPublicGenshinCommands(client) {
   if (client.__neverlessPublicGenshinInstalled) return;
   client.__neverlessPublicGenshinInstalled = true;
   client.on('messageCreate', (message) => {
-    if (!message?.guildId || message.author?.bot) return;
-    if (!isPublicGenshinCommand(message.content)) return;
+    if (!shouldHandlePublicMessage(message)) return;
     handlePublicGenshinCommand(message).catch((error) => {
       console.error('[genshin-public] command failed:', error);
       message.reply({ content: 'صار خطأ أثناء جلب المعلومات. جرّب بعد شوي.', allowedMentions: { repliedUser: false } }).catch(() => {});
@@ -142,6 +145,7 @@ module.exports = {
   installPublicGenshinCommands,
   handlePublicGenshinCommand,
   isPublicGenshinCommand,
+  shouldHandlePublicMessage,
   parseBannerCommand,
   parseQuestCommand,
   buildBannerEmbeds,
