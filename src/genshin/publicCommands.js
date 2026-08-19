@@ -125,12 +125,11 @@ async function handlePublicGenshinCommand(message) {
   return false;
 }
 
-function installPublicGenshinCommands(client, allowedChannels) {
+function installPublicGenshinCommands(client) {
   if (client.__neverlessPublicGenshinInstalled) return;
   client.__neverlessPublicGenshinInstalled = true;
-  const channels = allowedChannels instanceof Set ? allowedChannels : new Set(allowedChannels || []);
   client.on('messageCreate', (message) => {
-    if (!message?.guildId || message.author?.bot || !channels.has(message.channelId)) return;
+    if (!message?.guildId || message.author?.bot) return;
     if (!isPublicGenshinCommand(message.content)) return;
     handlePublicGenshinCommand(message).catch((error) => {
       console.error('[genshin-public] command failed:', error);
