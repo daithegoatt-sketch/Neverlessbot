@@ -52,10 +52,9 @@ function validSavedRating(entry) {
 }
 
 function latestValidRating(entries) {
-  for (let index = (entries || []).length - 1; index >= 0; index -= 1) {
-    if (validSavedRating(entries[index])) return entries[index];
-  }
-  return null;
+  const rows = Array.isArray(entries) ? entries : [];
+  const latest = rows.length ? rows[rows.length - 1] : null;
+  return validSavedRating(latest) ? latest : null;
 }
 
 function savedProfileRows(discordUserId, uid, characters) {
@@ -124,8 +123,8 @@ async function handleProfile(message, lang) {
       : 'There are no valid saved Neverless ratings for visible characters yet. **0%** and unrated builds are excluded from the profile.');
   } else {
     lines.push(ar
-      ? 'البروفايل يعتمد آخر تقييمات Neverless المحفوظة للشخصيات الظاهرة، ويتجاهل أي تقييم **0%**.'
-      : 'The profile uses the latest saved Neverless ratings for visible characters and ignores any **0%** rating.');
+      ? 'البروفايل يعتمد آخر تقييم Neverless محفوظ لكل شخصية ظاهرة، وإذا كان آخر تقييم **0%** تنحذف الشخصية من البروفايل.'
+      : 'The profile uses each visible character’s latest saved Neverless rating; if that latest rating is **0%**, the character is excluded.');
   }
 
   await send(message, lines.join('\n'));
