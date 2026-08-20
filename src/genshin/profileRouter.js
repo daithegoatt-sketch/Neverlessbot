@@ -158,7 +158,7 @@ async function handleHistory(message, text, lang) {
 function firstSentence(text, max = 230) {
   const value = String(text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
   if (!value) return '—';
-  const sentence = value.match(/^.*?[.!?](?:\s|$)/)?.[0] || value;
+  const sentence = (value.match(/^.*?[.!?](?:\s|$)/)?.[0] || value).trim();
   return sentence.length <= max ? sentence : `${sentence.slice(0, max - 1)}…`;
 }
 
