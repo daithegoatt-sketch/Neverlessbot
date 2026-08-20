@@ -5,7 +5,6 @@ const {
   parseBannerCommand,
   parseQuestCommand,
   parseCodeCommand,
-  parseMaterialsCommand,
   parseBannerCountdownCommand,
   parseRedeemCommand,
   buildBannerEmbeds,
@@ -36,11 +35,6 @@ assert.deepEqual(parseCodeCommand('-أكواد'), { type: 'codes' });
 assert.deepEqual(parseCodeCommand('-codes'), { type: 'codes' });
 assert.equal(parseCodeCommand('كود'), null);
 
-assert.deepEqual(parseMaterialsCommand('-مواد Skirk'), { character: 'Skirk' });
-assert.deepEqual(parseMaterialsCommand('-مواد الشخصية Furina'), { character: 'Furina' });
-assert.deepEqual(parseMaterialsCommand('-materials Neuvillette'), { character: 'Neuvillette' });
-assert.equal(parseMaterialsCommand('مواد Skirk'), null);
-
 assert.deepEqual(parseBannerCountdownCommand('-كم باقي على البنر'), { type: 'countdown' });
 assert.deepEqual(parseBannerCountdownCommand('-banner countdown'), { type: 'countdown' });
 assert.match(remainingText((2 * 86400 + 3 * 3600 + 5 * 60) * 1000), /2 يوم.*3 ساعة.*5 دقيقة/);
@@ -50,10 +44,11 @@ assert.deepEqual(parseRedeemCommand('-ريديم ABC123'), { code: 'ABC123' });
 assert.deepEqual(parseRedeemCommand('-redeem CODE123'), { code: 'CODE123' });
 assert.equal(parseRedeemCommand('redeem CODE123'), null);
 
-// Public prefix commands are intentionally server-wide; channelId must not gate them.
-for (const content of ['-بنر', '-كويست In the Mountains', '-كود', '-مواد Skirk', '-كم باقي على البنر', '-ريديم ABC123']) {
+// Public prefix commands are intentionally server-wide; removed material commands must no longer route.
+for (const content of ['-بنر', '-كويست In the Mountains', '-كود', '-كم باقي على البنر', '-ريديم ABC123']) {
   assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-general', author: { bot: false }, content }), true, content);
 }
+assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-general', author: { bot: false }, content: '-مواد Skirk' }), false);
 assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: true }, content: '-كود' }), false);
 assert.equal(shouldHandlePublicMessage({ guildId: null, channelId: 'dm', author: { bot: false }, content: '-كود' }), false);
 
