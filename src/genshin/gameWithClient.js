@@ -72,6 +72,23 @@ function statLabel(value) {
   return null;
 }
 
+function targetValue(raw) {
+  const value = cleanText(raw).replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  const first = value.match(/\d[\d,]*(?:\.\d+)?/);
+  if (!first) return null;
+  const startIndex = first.index || 0;
+  const after = value.slice(startIndex);
+  const range = after.match(/^(\d[\d,]*(?:\.\d+)?)\s*(%?)\s*(?:-|–|—|~|to)\s*(\d[\d,]*(?:\.\d+)?)\s*(%?)/i);
+  if (range) {
+    const suffix = range[4] || range[2] || (/%/.test(value) ? '%' : '');
+    return `${range[1]}–${range[3]}${suffix}`;
+  }
+  const number = first[0];
+  const suffix = /%/.test(value.slice(startIndex, startIndex + first[0].length + 4)) || /%/.test(value) ? '%' : '';
+  const plus = /(?:\+|or more|or above|and above|minimum|min\.?)/i.test(value) ? '+' : '';
+  return `${number}${suffix}${plus}`;
+}
+
 function numericGoal(label, raw) {
   const value = cleanText(raw);
   if (!label || !value || /^(?:none|not needed|n\/a|-|—)$/i.test(value)) return null;
@@ -79,11 +96,8 @@ function numericGoal(label, raw) {
   // ER varies heavily by team, weapon and rotation. A generic secondary-site ER
   // target is not safe enough to score a build against, so leave ER to Game8/KQM.
   if (label === 'ER') return null;
-  const compact = value
-    .replace(/\([^)]*(?:set|artifact|weapon)[^)]*\)/ig, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return `${label}: ${compact || value}`;
+  const target = targetValue(value);
+  return target ? `${label}: ${target}` : null;
 }
 
 function rowsOf(table, $) {
@@ -155,4 +169,5 @@ module.exports = {
   discoverCharacterUrl,
   parseStatGoals,
   numericGoal,
+  targetValue,
 };
