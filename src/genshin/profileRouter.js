@@ -70,7 +70,7 @@ async function handleProfile(message, lang) {
   let account;
   try {
     // fetchAccount follows Enka's ttl, then refreshes automatically. No manual character
-    // rating is required; the current visible Showcase is evaluated here.
+    // rating is required; every visible Showcase build is evaluated here.
     account = await fetchAccount(uid);
   } catch {
     await send(message, lang === 'ar' ? 'ما قدرت أقرأ الـShowcase من Enka الآن.' : 'I could not read your Showcase from Enka right now.');
@@ -99,20 +99,13 @@ async function handleProfile(message, lang) {
   const ar = lang === 'ar';
   const lines = [`**Neverless — ${ar ? 'بروفايلك' : 'Your Profile'}**`];
   lines.push(`${summary.nickname || (ar ? 'الحساب' : 'Account')} • AR ${summary.adventureRank ?? '?'} • UID ${maskUid(uid)}`);
-  lines.push(`${ar ? 'الـShowcase' : 'Showcase'}: **${summary.characters.length}** ${ar ? 'شخصية ظاهرة' : 'visible characters'}`);
-
-  if (summary.characters.length) {
-    lines.push(`${ar ? 'الشخصيات الظاهرة' : 'Visible characters'}: ${summary.characters.map((row) => row.name).join(' • ')}`);
-  }
+  lines.push(`${ar ? 'الـShowcase' : 'Showcase'}: **${summary.characters.length}** ${ar ? 'شخصية ظاهرة' : 'visible characters'} • ${ar ? 'تقييم صالح' : 'valid ratings'} **${rated.length}**`);
   lines.push(...formatCurrentRatings(rated, lang));
 
   if (strongest) lines.push(`${ar ? 'أقوى بيلد' : 'Strongest build'}: **${strongest.name} — ${strongest.score}% Neverless**`);
   if (bestAkasha) lines.push(`${ar ? 'أفضل Akasha' : 'Best Akasha'}: **${bestAkasha.name} — ${percentText(bestAkasha.akasha)}**`);
   if (serverRank) lines.push(`${ar ? 'ترتيب الحساب بالسيرفر' : 'Server account rank'}: **#${serverRank}/${serverTotal}**`);
 
-  if (current.unratedNames.length) {
-    lines.push(`${ar ? 'غير متاح للتقييم حاليًا' : 'Currently unavailable to rate'}: ${current.unratedNames.join(' • ')}`);
-  }
   if (!rated.length) {
     lines.push(ar
       ? 'ما فيه تقييم Neverless صالح أقدر أحسبه من الـShowcase الحالي. أي نتيجة **0%** ما تظهر بالبروفايل.'
