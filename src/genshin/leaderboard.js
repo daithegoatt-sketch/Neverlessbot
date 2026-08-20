@@ -189,6 +189,12 @@ async function buildNeverlessLeaderboard(guild) {
   return value;
 }
 
+function getCachedNeverlessLeaderboard(guild) {
+  if (!guild?.id) return null;
+  const cached = cache.get(`${guild.id}:account`);
+  return cached?.expiresAt > Date.now() ? cached.value : null;
+}
+
 function formatCharacterLeaderboard(board, lang = 'ar') {
   const ar = lang === 'ar';
   if (!board.rows.length) return ar
@@ -220,6 +226,7 @@ function clearLeaderboardCache() {
 module.exports = {
   buildCharacterLeaderboard,
   buildNeverlessLeaderboard,
+  getCachedNeverlessLeaderboard,
   formatCharacterLeaderboard,
   formatNeverlessLeaderboard,
   clearLeaderboardCache,
