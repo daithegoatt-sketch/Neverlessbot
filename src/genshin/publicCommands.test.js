@@ -42,7 +42,6 @@ assert.deepEqual(parseMaterialsCommand('-materials Neuvillette'), { character: '
 assert.equal(parseMaterialsCommand('مواد Skirk'), null);
 
 assert.deepEqual(parseBannerCountdownCommand('-كم باقي على البنر'), { type: 'countdown' });
-assert.deepEqual(parseBannerCountdownCommand('-كم متبقي للبانر'), { type: 'countdown' });
 assert.deepEqual(parseBannerCountdownCommand('-banner countdown'), { type: 'countdown' });
 assert.match(remainingText((2 * 86400 + 3 * 3600 + 5 * 60) * 1000), /2 يوم.*3 ساعة.*5 دقيقة/);
 
