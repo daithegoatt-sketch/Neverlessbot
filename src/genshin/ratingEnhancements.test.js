@@ -5,6 +5,8 @@ const { reviewArtifact, mainStatMatches } = require('./artifactEvaluator');
 const { formatArtifactReview, akashaImprovementAdvice } = require('./ratingCopyV2');
 const { applyKnownComputedStats } = require('./computedStats');
 const { accountScoreFromRated } = require('./leaderboard');
+const { evaluateBuild, akashaPercent } = require('./buildEvaluator');
+const { effectiveStatsForRating } = require('./combatStats');
 
 const guide = {
   stats: {
@@ -94,5 +96,77 @@ const scored = accountScoreFromRated([
 assert.equal(scored.topBuilds.length, 3);
 assert.deepEqual(scored.topBuilds.map((row) => row.score), [96, 93, 90]);
 assert.ok(scored.accountScore > 92 && scored.accountScore < 95);
+
+// A guide without numeric Goal Stat Values must not automatically lose half of
+// the stat component. This mirrors a strong Neuvillette-style build where Game8
+// provides build priorities but no numeric target table.
+function neuvPiece(slot, mainStat, mainStatKey) {
+  return {
+    slot,
+    set: 'Marechaussee Hunter',
+    rarity: 5,
+    level: 20,
+    mainStat,
+    mainStatKey,
+    mainValue: '46.6%',
+    substats: [
+      { fightProp: 'FIGHT_PROP_CRITICAL', numericValue: 7.8, isPercent: true },
+      { fightProp: 'FIGHT_PROP_CRITICAL_HURT', numericValue: 15.5, isPercent: true },
+      { fightProp: 'FIGHT_PROP_HP_PERCENT', numericValue: 3, isPercent: true },
+    ],
+    rolls: [],
+    totalRolls: 0,
+  };
+}
+
+const neuvGuide = {
+  name: 'Neuvillette',
+  stats: {
+    main: ['Sands: HP%', 'Goblet: Hydro DMG Bonus or HP%', 'Circlet: CRIT Rate / CRIT DMG'],
+    priority: 'HP% > CRIT Rate > CRIT DMG > Energy Recharge > Elemental Mastery',
+    targets: [],
+  },
+  weapons: ['Tome of the Eternal Flow', 'Sacrificial Jade', 'Prototype Amber'],
+  artifacts: ['4pc Marechaussee Hunter'],
+};
+
+const neuvSnapshot = {
+  name: 'Neuvillette',
+  level: 90,
+  stats: { hp: 30131, atk: 1254, def: 593, critRate: 49.7, critDmg: 322.7, er: 121.4, em: 35 },
+  weapon: { name: 'Tome of the Eternal Flow', level: 90, refinement: 1 },
+  setCounts: { 'Marechaussee Hunter': 4, 'Other Set': 1 },
+  artifacts: [
+    neuvPiece('flower', 'HP', 'FIGHT_PROP_HP'),
+    neuvPiece('plume', 'ATK', 'FIGHT_PROP_ATTACK'),
+    neuvPiece('sands', 'HP', 'FIGHT_PROP_HP_PERCENT'),
+    neuvPiece('goblet', 'Hydro DMG Bonus', 'FIGHT_PROP_WATER_ADD_HURT'),
+    neuvPiece('circlet', 'CRIT DMG', 'FIGHT_PROP_CRITICAL_HURT'),
+  ],
+};
+
+const effectiveNeuv = effectiveStatsForRating(neuvSnapshot, neuvGuide);
+assert.equal(Math.round(effectiveNeuv.effective.critRate * 10) / 10, 85.7);
+assert.equal(effectiveNeuv.bonuses.critRate, 36);
+assert.equal(neuvSnapshot.stats.critRate, 49.7); // Raw Showcase stat stays untouched.
+
+const neuvEvaluation = evaluateBuild(neuvSnapshot, neuvGuide, { akashaPercentile: { topPercent: 19 } });
+assert.equal(neuvEvaluation.statTargetCount, 0);
+assert.ok(neuvEvaluation.fallbackStatScore >= 78);
+assert.ok(neuvEvaluation.score >= 88 && neuvEvaluation.score <= 95, `unexpected Neuv score ${neuvEvaluation.score}`);
+
+const noSetSnapshot = {
+  ...neuvSnapshot,
+  setCounts: { "Wanderer's Troupe": 4, 'Other Set': 1 },
+  artifacts: neuvSnapshot.artifacts.map((item) => ({ ...item, set: "Wanderer's Troupe" })),
+};
+const noSetEffective = effectiveStatsForRating(noSetSnapshot, neuvGuide);
+assert.equal(noSetEffective.bonuses.critRate || 0, 0);
+assert.equal(noSetEffective.effective.critRate, 49.7);
+
+// Akasha 0 is invalid/missing data, never an elite Top 0% placement.
+assert.equal(akashaPercent(0), null);
+assert.equal(akashaPercent({ topPercent: 0 }), null);
+assert.equal(akashaPercent({ topPercent: 19 }), 19);
 
 console.log('rating enhancement tests passed');
