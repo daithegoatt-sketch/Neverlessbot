@@ -1,0 +1,1 @@
+Combat-effective rating review: account for reliable self-triggered artifact bonuses and avoid defaulting missing numeric target tables to a 50% stat score.
