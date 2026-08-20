@@ -28,7 +28,8 @@ const zero = { evaluation: { score: 0, akashaPercentile: null }, savedAt: '2026-
 assert.equal(validSavedRating(valid), true);
 assert.equal(validSavedRating(zero), false);
 assert.equal(validSavedRating({ evaluation: { score: NaN } }), false);
-assert.equal(latestValidRating([valid, zero]), valid);
+assert.equal(latestValidRating([valid, zero]), null);
+assert.equal(latestValidRating([zero, valid]), valid);
 assert.equal(latestValidRating([zero]), null);
 
 console.log('public utility tests passed');
