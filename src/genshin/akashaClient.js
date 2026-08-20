@@ -1,8 +1,9 @@
 'use strict';
 
 const CACHE_TTL = 75 * 1000;
-const cache = new Map();
 const API_BASE = 'https://akasha.cv/api';
+const userCache = new Map();
+const htmlCache = new Map();
 
 function normalize(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -45,10 +46,22 @@ function rankingFromCalculation(calc) {
   };
 }
 
-async function fetchFromApi(uid, characterName) {
+function bestRanking(row) {
+  if (!row) return null;
+  const rankings = calculationsOf(row).map(rankingFromCalculation).filter(Boolean);
+  rankings.sort((a, b) => a.topPercent - b.topPercent || (a.ranking ?? Infinity) - (b.ranking ?? Infinity));
+  return rankings[0] || null;
+}
+
+async function fetchUserRows(uid, options = {}) {
+  const key = String(uid);
+  if (options.forceRefresh) userCache.delete(key);
+  const cached = userCache.get(key);
+  if (!options.forceRefresh && cached?.expiresAt > Date.now()) return cached.rows;
+
   const response = await fetch(`${API_BASE}/getCalculationsForUser/${encodeURIComponent(uid)}`, {
     headers: {
-      'user-agent': 'Mozilla/5.0 NeverlessBot/8.0',
+      'user-agent': 'Mozilla/5.0 NeverlessBot/11.0',
       accept: 'application/json,text/plain,*/*',
     },
     signal: AbortSignal.timeout(8000),
@@ -56,18 +69,19 @@ async function fetchFromApi(uid, characterName) {
   if (!response.ok) throw new Error(`Akasha API HTTP ${response.status}`);
   const payload = await response.json();
   const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
-  const key = normalize(characterName);
-  const row = rows.find((item) => normalize(item?.name) === key);
-  if (!row) return null;
-  const rankings = calculationsOf(row).map(rankingFromCalculation).filter(Boolean);
-  rankings.sort((a, b) => a.topPercent - b.topPercent || (a.ranking ?? Infinity) - (b.ranking ?? Infinity));
-  return rankings[0] || null;
+  userCache.set(key, { rows, expiresAt: Date.now() + CACHE_TTL });
+  return rows;
 }
 
-async function fetchFromHtml(uid, characterName) {
+async function fetchFromHtml(uid, characterName, options = {}) {
+  const key = `${uid}:${String(characterName).toLowerCase()}`;
+  if (options.forceRefresh) htmlCache.delete(key);
+  const cached = htmlCache.get(key);
+  if (!options.forceRefresh && cached?.expiresAt > Date.now()) return cached.value;
+
   const response = await fetch(`https://akasha.cv/profile/${encodeURIComponent(uid)}`, {
     headers: {
-      'user-agent': 'Mozilla/5.0 NeverlessBot/8.0',
+      'user-agent': 'Mozilla/5.0 NeverlessBot/11.0',
       accept: 'text/html,application/xhtml+xml',
     },
     signal: AbortSignal.timeout(7000),
@@ -88,30 +102,49 @@ async function fetchFromHtml(uid, characterName) {
       if (Number.isFinite(number) && number > 0 && number <= 100) percentages.push(number);
     }
   }
-  if (!percentages.length) return null;
-  return { topPercent: round(Math.min(...percentages)), ranking: null, outOf: null, category: null, calculationId: null, leaderboardUrl: null };
-}
-
-async function fetchAkashaPercentile(uid, characterName, options = {}) {
-  const key = `${uid}:${String(characterName).toLowerCase()}`;
-  if (options?.forceRefresh) cache.delete(key);
-  const cached = cache.get(key);
-  if (!options?.forceRefresh && cached?.expiresAt > Date.now()) return cached.value;
-
-  let value = null;
-  try { value = await fetchFromApi(uid, characterName); } catch {}
-  if (!value) {
-    try { value = await fetchFromHtml(uid, characterName); } catch {}
-  }
-
-  cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL });
+  const value = percentages.length
+    ? { topPercent: round(Math.min(...percentages)), ranking: null, outOf: null, category: null, calculationId: null, leaderboardUrl: null }
+    : null;
+  htmlCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL });
   return value;
 }
 
-function clearAkashaCache(uid, characterName = null) {
-  const prefix = `${uid}:`;
-  if (characterName) cache.delete(`${uid}:${String(characterName).toLowerCase()}`);
-  else for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
+async function fetchAkashaPercentiles(uid, characterNames, options = {}) {
+  const names = [...new Set((characterNames || []).filter(Boolean))];
+  const out = new Map();
+  let rows = null;
+  try { rows = await fetchUserRows(uid, { forceRefresh: Boolean(options.forceRefresh) }); } catch {}
+
+  if (rows) {
+    const byName = new Map(rows.map((row) => [normalize(row?.name), row]));
+    for (const name of names) out.set(name, bestRanking(byName.get(normalize(name))));
+    return out;
+  }
+
+  for (let index = 0; index < names.length; index += 1) {
+    const name = names[index];
+    let value = null;
+    try { value = await fetchFromHtml(uid, name, { forceRefresh: Boolean(options.forceRefresh) && index === 0 }); } catch {}
+    out.set(name, value);
+  }
+  return out;
 }
 
-module.exports = { fetchAkashaPercentile, rankingFromCalculation, clearAkashaCache };
+async function fetchAkashaPercentile(uid, characterName, options = {}) {
+  const values = await fetchAkashaPercentiles(uid, [characterName], options);
+  return values.get(characterName) || null;
+}
+
+function clearAkashaCache(uid, characterName = null) {
+  userCache.delete(String(uid));
+  const prefix = `${uid}:`;
+  if (characterName) htmlCache.delete(`${uid}:${String(characterName).toLowerCase()}`);
+  else for (const key of htmlCache.keys()) if (key.startsWith(prefix)) htmlCache.delete(key);
+}
+
+module.exports = {
+  fetchAkashaPercentile,
+  fetchAkashaPercentiles,
+  rankingFromCalculation,
+  clearAkashaCache,
+};
