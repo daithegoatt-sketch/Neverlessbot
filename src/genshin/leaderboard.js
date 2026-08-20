@@ -1,11 +1,8 @@
 'use strict';
 
 const { getAllLinkedUsers } = require('./accountStore');
-const { fetchAccount, findCharacter, getBuildSnapshot } = require('./enkaClient');
-const { getGuide } = require('./guideClient');
-const { fetchAkashaPercentile } = require('./akashaClient');
-const { evaluateBuild } = require('./buildEvaluator');
-const { reviewArtifacts } = require('./artifactEvaluator');
+const { fetchAccount } = require('./enkaClient');
+const { rateCurrentCharacter, rateVisibleAccount } = require('./liveAccountRating');
 const { formatStat } = require('./statProfile');
 
 const CACHE_TTL = 90 * 1000;
@@ -45,7 +42,7 @@ async function linkedGuildUsers(guild) {
 
 function topPercent(value) {
   const number = Number(value?.topPercent ?? value);
-  return Number.isFinite(number) ? number : null;
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function formatPercent(value) {
@@ -75,44 +72,26 @@ function buildStrengths(evaluation, max = 3) {
   return stats.slice(0, max);
 }
 
-async function rateCharacter(uid, character, snapshot, guide) {
-  const akasha = await fetchAkashaPercentile(uid, snapshot.name).catch(() => null);
-  const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
-  const artifacts = reviewArtifacts(snapshot, guide);
-  return {
-    name: snapshot.name,
-    score: evaluation.score,
-    akasha,
-    evaluation,
-    artifactQuality: artifacts.averageUsefulRv,
-    strengths: buildStrengths(evaluation),
-  };
-}
-
 async function buildCharacterLeaderboard(guild, characterName) {
   const cacheKey = `${guild.id}:char:${key(characterName)}`;
   const cached = cache.get(cacheKey);
   if (cached?.expiresAt > Date.now()) return cached.value;
 
-  const guide = await getGuide(characterName);
-  if (!guide) return { characterName, rows: [] };
   const users = await linkedGuildUsers(guild);
   const rows = await mapLimit(users.slice(0, 60), 3, async (link) => {
-    const account = await fetchAccount(link.uid, { forceRefresh: true });
-    const character = findCharacter(account, characterName);
-    if (!character) return null;
-    const snapshot = getBuildSnapshot(character);
-    const rated = await rateCharacter(link.uid, character, snapshot, guide);
+    const account = await fetchAccount(link.uid);
+    const rated = await rateCurrentCharacter(link.uid, account, characterName);
+    if (!rated || rated.score <= 0) return null;
     return {
       discordUserId: link.discordUserId,
       displayName: link.displayName,
       uid: link.uid,
       score: rated.score,
       akasha: rated.akasha,
-      snapshot,
+      snapshot: rated.snapshot,
       evaluation: rated.evaluation,
       artifactQuality: rated.artifactQuality,
-      strengths: rated.strengths,
+      strengths: buildStrengths(rated.evaluation),
     };
   });
 
@@ -127,7 +106,8 @@ async function buildCharacterLeaderboard(guild, characterName) {
 }
 
 function accountScoreFromRated(rated) {
-  const top = [...rated].sort((a, b) =>
+  const valid = (rated || []).filter((row) => Number.isFinite(Number(row?.score)) && Number(row.score) > 0);
+  const top = [...valid].sort((a, b) =>
     b.score - a.score
     || (topPercent(a.akasha) ?? 999) - (topPercent(b.akasha) ?? 999)
     || b.artifactQuality - a.artifactQuality,
@@ -143,25 +123,16 @@ function accountScoreFromRated(rated) {
     usedWeight += weight;
   });
   const normalized = usedWeight ? weighted / usedWeight : 0;
-  const coverage = Math.min(1, rated.length / 3);
+  const coverage = Math.min(1, valid.length / 3);
   const accountScore = Math.round(normalized * (0.9 + 0.1 * coverage) * 10) / 10;
   const topAverage = Math.round((top.reduce((sum, row) => sum + row.score, 0) / top.length) * 10) / 10;
   return { accountScore, topBuilds: top, topAverage };
 }
 
 async function buildAccountScore(link) {
-  const account = await fetchAccount(link.uid, { forceRefresh: true });
-  const candidates = (account?.characters || [])
-    .map((character) => ({ character, snapshot: getBuildSnapshot(character) }))
-    .filter((row) => row.snapshot?.name);
-
-  const rated = [];
-  for (const row of candidates) {
-    const guide = await getGuide(row.snapshot.name).catch(() => null);
-    if (!guide) continue;
-    const result = await rateCharacter(link.uid, row.character, row.snapshot, guide);
-    rated.push(result);
-  }
+  const account = await fetchAccount(link.uid);
+  const current = await rateVisibleAccount(link.uid, account);
+  const rated = current.rated;
 
   if (!rated.length) return null;
   const scored = accountScoreFromRated(rated);
@@ -172,7 +143,7 @@ async function buildAccountScore(link) {
     accountScore: scored.accountScore,
     averageBuild: scored.topAverage,
     ratedCount: rated.length,
-    visibleCount: candidates.length,
+    visibleCount: current.visibleCount,
     topBuilds: scored.topBuilds,
   };
 }
@@ -232,4 +203,5 @@ module.exports = {
   clearLeaderboardCache,
   accountScoreFromRated,
   buildStrengths,
+  buildAccountScore,
 };

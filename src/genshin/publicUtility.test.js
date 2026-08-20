@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { parseCodesPayload } = require('./codesClient');
-const { isProfile, isHistory, maskUid, validSavedRating, latestValidRating } = require('./profileRouter');
+const { isProfile, isHistory, maskUid, formatCurrentRatings } = require('./profileRouter');
 
 const now = Date.UTC(2026, 7, 20, 9, 0, 0);
 const codes = parseCodesPayload({
@@ -23,13 +23,14 @@ assert.equal(isHistory('Skirk history'), true);
 assert.equal(isProfile('C1 ولا سلاح Skirk'), false);
 assert.equal(maskUid('729663359'), '72••••359');
 
-const valid = { evaluation: { score: 84, akashaPercentile: 4.2 }, savedAt: '2026-08-20T10:00:00Z' };
-const zero = { evaluation: { score: 0, akashaPercentile: null }, savedAt: '2026-08-20T11:00:00Z' };
-assert.equal(validSavedRating(valid), true);
-assert.equal(validSavedRating(zero), false);
-assert.equal(validSavedRating({ evaluation: { score: NaN } }), false);
-assert.equal(latestValidRating([valid, zero]), null);
-assert.equal(latestValidRating([zero, valid]), valid);
-assert.equal(latestValidRating([zero]), null);
+const profileLines = formatCurrentRatings([
+  { name: 'Sandrone', score: 97 },
+  { name: 'Furina', score: 0 },
+  { name: 'Skirk', score: 88 },
+], 'ar');
+assert.match(profileLines.join('\n'), /Sandrone \*\*97%\*\*/);
+assert.match(profileLines.join('\n'), /Skirk \*\*88%\*\*/);
+assert.doesNotMatch(profileLines.join('\n'), /Furina/);
+assert.deepEqual(formatCurrentRatings([{ name: 'Furina', score: 0 }], 'ar'), []);
 
 console.log('public utility tests passed');

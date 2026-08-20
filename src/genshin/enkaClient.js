@@ -13,6 +13,9 @@ function getClient() {
     userAgent: 'NeverlessBot/3.0 (Discord Genshin helper)',
     requestTimeout: 10000,
     showFetchCacheLog: false,
+    // Neverless already mirrors Enka's ttl in accountCache below. Disabling the library's
+    // second cache means forceRefresh can actually reach Enka instead of reusing an older build.
+    userCache: { isEnabled: false },
   });
   return client;
 }
