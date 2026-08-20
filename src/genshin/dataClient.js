@@ -31,12 +31,6 @@ async function getNames(folder) {
   return names;
 }
 
-async function getObject(folder, name) {
-  const url = `${API}/${folder}?query=${encodeURIComponent(name)}&resultLanguage=english`;
-  const value = await fetchJson(url);
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-}
-
 async function getCharacterNames() {
   const live = await getNames('characters');
   return [...new Set([...live, ...KNOWN_CHARACTER_NAMES])];
@@ -51,19 +45,9 @@ async function getArtifactNames() {
 }
 
 async function getCharacter(name) {
-  return getObject('characters', name);
-}
-
-async function getTalent(name) {
-  return getObject('talents', name);
-}
-
-async function getConstellation(name) {
-  return getObject('constellations', name);
-}
-
-async function getWeapon(name) {
-  return getObject('weapons', name);
+  const url = `${API}/characters?query=${encodeURIComponent(name)}&resultLanguage=english`;
+  const value = await fetchJson(url);
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
 async function getCharacterStats(name, level = '90') {
@@ -77,8 +61,5 @@ module.exports = {
   getWeaponNames,
   getArtifactNames,
   getCharacter,
-  getTalent,
-  getConstellation,
-  getWeapon,
   getCharacterStats,
 };
