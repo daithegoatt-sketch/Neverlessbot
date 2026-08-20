@@ -65,10 +65,12 @@ function setUpgrade(snapshot, guide) {
 
 function addSetNameToArtifactLine(text, setText) {
   if (!setText || !text) return text;
-  return text.replace(
-    /(\*\*Artifacts:\*\*\s*\d+\/5)(\s*•)/,
-    `$1 • **Set:** ${setText}$2`,
-  );
+  return text
+    .replace(/\s*•\s*Set\s+\d+%/g, '')
+    .replace(
+      /(\*\*Artifacts:\*\*\s*\d+\/5)(\s*•)/,
+      `$1 • **Set:** ${setText}$2`,
+    );
 }
 
 function removeGenericSetWarnings(text) {
