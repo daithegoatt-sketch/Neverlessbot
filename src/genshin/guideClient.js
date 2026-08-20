@@ -10,6 +10,30 @@ const CACHE_TTL = 12 * 60 * 60 * 1000;
 const cache = new Map();
 const nonEmpty = (value) => Array.isArray(value) && value.length > 0;
 
+const VERIFIED_ARTIFACT_ALTERNATIVES = {
+  columbina: ["4pc Silken Moon's Serenade", '4pc Aubade of Morningstar and Moon'],
+  ineffa: ["4pc Silken Moon's Serenade", '4pc Aubade of Morningstar and Moon'],
+};
+
+function normalizeName(value) {
+  return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+}
+
+function addArtifactAlternatives(guide, name) {
+  if (!guide) return guide;
+  const extra = VERIFIED_ARTIFACT_ALTERNATIVES[normalizeName(name)] || [];
+  if (!extra.length) return guide;
+  const artifacts = [...(guide.artifacts || [])];
+  for (const candidate of extra) {
+    const key = normalizeName(String(candidate).replace(/^\s*[24]\s*(?:pc|piece)\s*/i, ''));
+    if (!artifacts.some((item) => {
+      const current = normalizeName(String(item).replace(/^\s*[24]\s*(?:pc|piece)\s*/i, ''));
+      return current === key;
+    })) artifacts.push(candidate);
+  }
+  return { ...guide, artifacts };
+}
+
 function normalizeTeams(value) {
   if (!value) return { premium: [], f2p: [] };
   if (Array.isArray(value)) return { premium: value, f2p: [] };
@@ -131,7 +155,7 @@ async function getGuide(name) {
     };
   }
 
-  let value = validateGuide(mergeGuide(live, curated));
+  let value = validateGuide(addArtifactAlternatives(mergeGuide(live, curated), name));
   const needTargets = !nonEmpty(value?.stats?.targets);
   const needPriority = !value?.stats?.priority;
 
@@ -148,7 +172,7 @@ async function getGuide(name) {
     ]);
 
     if (!value && (secondary?.targets?.length || secondary?.priority || theory?.priority)) {
-      value = validateGuide({ name, stats: { main: [], targets: [], priority: null } });
+      value = validateGuide(addArtifactAlternatives({ name, stats: { main: [], targets: [], priority: null } }, name));
     }
 
     if (value) {
@@ -158,7 +182,7 @@ async function getGuide(name) {
         stats.targetFallback = true;
       }
       if (needPriority) stats.priority = theory?.priority || secondary?.priority || stats.priority || null;
-      value = validateGuide({ ...value, stats });
+      value = validateGuide(addArtifactAlternatives({ ...value, stats }, name));
     }
   }
 
@@ -166,4 +190,11 @@ async function getGuide(name) {
   return value;
 }
 
-module.exports = { getGuide, mergeGuide, normalizeTeams, teamsFromGroups, validateGroups };
+module.exports = {
+  getGuide,
+  mergeGuide,
+  normalizeTeams,
+  teamsFromGroups,
+  validateGroups,
+  addArtifactAlternatives,
+};
