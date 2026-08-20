@@ -2,7 +2,6 @@
 
 const {
   ActionRowBuilder,
-  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
@@ -10,8 +9,6 @@ const {
 const { getBannerNotice } = require('./bannerClient');
 const { findQuestVideo } = require('./questClient');
 const { fetchActiveCodes } = require('./codesClient');
-const { getCharacterMaterials, buildMaterialsCard } = require('./materialClient');
-const { resolveCharacter } = require('./characterResolver');
 
 const REDEEM_URL = 'https://genshin.hoyoverse.com/en/gift';
 
@@ -52,15 +49,6 @@ function parseCodeCommand(text) {
   return /^(?:كود|أكواد|اكواد|codes?)$/iu.test(body) ? { type: 'codes' } : null;
 }
 
-function parseMaterialsCommand(text) {
-  const body = prefixBody(text);
-  if (!body) return null;
-  const match = body.match(/^(?:مواد(?:\s+الشخصي[ةه])?|materials?)\s+(.+)$/iu);
-  if (!match) return null;
-  const character = match[1].trim().replace(/^['"“”]+|['"“”]+$/g, '').trim();
-  return character ? { character: character.slice(0, 100) } : null;
-}
-
 function parseBannerCountdownCommand(text) {
   const body = prefixBody(text);
   if (!body) return null;
@@ -81,7 +69,6 @@ function isPublicGenshinCommand(text) {
   return Boolean(
     parseBannerCountdownCommand(text)
     || parseCodeCommand(text)
-    || parseMaterialsCommand(text)
     || parseRedeemCommand(text)
     || parseBannerCommand(text)
     || parseQuestCommand(text)
@@ -208,57 +195,6 @@ async function handleCodes(message) {
   return true;
 }
 
-function formatMaterialRows(rows) {
-  return (rows || []).map((item) => `${item.name} × **${Number(item.count).toLocaleString('en-US')}**`).join('\n') || '—';
-}
-
-async function handleMaterials(message, request) {
-  const characterName = await resolveCharacter(request.character).catch(() => null);
-  if (!characterName) {
-    await message.reply({ content: `ما عرفت الشخصية من **${request.character}**. جرّب الاسم الإنجليزي أو الاختصار المعروف.`, allowedMentions: { repliedUser: false } });
-    return true;
-  }
-  let result;
-  try {
-    result = await getCharacterMaterials(characterName);
-  } catch (error) {
-    console.warn(`[materials] ${characterName} failed:`, error.message);
-    await message.reply({ content: `ما قدرت أجيب مواد **${characterName}** حاليًا.`, allowedMentions: { repliedUser: false } });
-    return true;
-  }
-
-  const labels = [
-    ['level', 'المستوى والـMora'],
-    ['ascension', 'مواد الـAscension'],
-    ['gems', 'الأحجار'],
-    ['enemy', 'مواد الأعداء'],
-    ['books', 'كتب المواهب'],
-    ['weekly', 'Weekly Boss / Crowns'],
-  ];
-  const embed = new EmbedBuilder()
-    .setColor(0x15233a)
-    .setTitle(`مواد ${result.name}`)
-    .setDescription(`الإجمالي لـ **${result.scope}**.`)
-    .setFooter({ text: 'المواد من بيانات Genshin • الأيقونات مرجع بصري فقط' });
-  for (const [key, label] of labels) {
-    const rows = result.groups[key];
-    if (rows?.length) embed.addFields({ name: label, value: formatMaterialRows(rows).slice(0, 1024), inline: false });
-  }
-
-  const files = [];
-  try {
-    const card = await buildMaterialsCard(result);
-    if (card) {
-      files.push(new AttachmentBuilder(card, { name: 'materials.png' }));
-      embed.setImage('attachment://materials.png');
-    }
-  } catch (error) {
-    console.warn('[materials] icon card skipped:', error.message);
-  }
-  await message.reply({ embeds: [embed], files, allowedMentions: { repliedUser: false } });
-  return true;
-}
-
 function remainingText(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return 'انتهى';
   const totalMinutes = Math.floor(ms / 60000);
@@ -301,8 +237,6 @@ async function handlePublicGenshinCommand(message) {
   if (countdown) return handleBannerCountdown(message);
   const code = parseCodeCommand(message.content);
   if (code) return handleCodes(message);
-  const materials = parseMaterialsCommand(message.content);
-  if (materials) return handleMaterials(message, materials);
   const redeem = parseRedeemCommand(message.content);
   if (redeem) return handleRedeem(message, redeem);
   const banner = parseBannerCommand(message.content);
@@ -332,7 +266,6 @@ module.exports = {
   parseBannerCommand,
   parseQuestCommand,
   parseCodeCommand,
-  parseMaterialsCommand,
   parseBannerCountdownCommand,
   parseRedeemCommand,
   buildBannerEmbeds,
