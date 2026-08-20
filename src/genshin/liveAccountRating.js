@@ -2,7 +2,7 @@
 
 const { findCharacter, getBuildSnapshot } = require('./enkaClient');
 const { getGuide } = require('./guideClient');
-const { fetchAkashaPercentile } = require('./akashaClient');
+const { fetchAkashaPercentile, fetchAkashaPercentiles } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
 const { reviewArtifacts } = require('./artifactEvaluator');
 
@@ -49,9 +49,11 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
   if (!snapshot?.name) return null;
   const guide = await getGuide(snapshot.name).catch(() => null);
   if (!guide) return null;
-  const akasha = await fetchAkashaPercentile(uid, snapshot.name, {
-    forceRefresh: Boolean(options.forceAkashaRefresh),
-  }).catch(() => null);
+  const akasha = options.akashaProvided
+    ? options.akasha || null
+    : await fetchAkashaPercentile(uid, snapshot.name, {
+      forceRefresh: Boolean(options.forceAkashaRefresh),
+    }).catch(() => null);
   const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
   const artifacts = reviewArtifacts(snapshot, guide);
   return {
@@ -84,7 +86,17 @@ async function rateVisibleAccount(uid, account, options = {}) {
     return cached.value;
   }
 
-  const rows = await mapLimit(candidates, 4, (row) => rateSnapshot(uid, row.character, row.snapshot, options));
+  const names = candidates.map((row) => row.snapshot.name);
+  const akasha = await fetchAkashaPercentiles(uid, names, {
+    forceRefresh: Boolean(options.forceAkashaRefresh),
+  }).catch(() => new Map());
+
+  const rows = await mapLimit(candidates, 4, (row) => rateSnapshot(uid, row.character, row.snapshot, {
+    ...options,
+    akashaProvided: true,
+    akasha: akasha.get(row.snapshot.name) || null,
+    forceAkashaRefresh: false,
+  }));
   const rated = validRatedRows(rows.filter(Boolean));
   const ratedNames = new Set(rated.map((row) => row.name.toLowerCase()));
   const value = {
