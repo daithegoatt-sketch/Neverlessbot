@@ -17,6 +17,7 @@ const { installServerTools } = require('../serverTools');
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
 const ALLOWED_CHANNELS = new Set([CHANNEL_ID, TEST_CHANNEL_ID]);
+const SUPPRESS_NOTIFICATIONS_FLAG = 4096;
 const originalLogin = Client.prototype.login;
 
 function hasBotMention(message, client) {
@@ -39,6 +40,12 @@ function sanitizeLegacyExamples(content) {
     .replace(/link\s+UID\s+729663359/giu, 'link UID 7XXXXXXXXX');
 }
 
+function leaderboardMentionIds(content) {
+  const value = String(content || '');
+  if (!/^\*\*(?:ترتيب|Leaderboard|Neverless Account Leaderboard)/u.test(value)) return [];
+  return [...new Set([...value.matchAll(/<@!?(\d{15,22})>/g)].map((match) => match[1]))].slice(0, 100);
+}
+
 function replyPayload(message, payload) {
   if (typeof payload === 'string') return { content: sanitizeLegacyExamples(payload), allowedMentions: { repliedUser: false } };
   const next = { ...(payload || {}) };
@@ -47,7 +54,15 @@ function replyPayload(message, payload) {
     if (authorId) next.content = next.content.replace(new RegExp(`^<@!?${authorId}>\\s*`), '');
     next.content = sanitizeLegacyExamples(next.content);
   }
-  next.allowedMentions = { ...(next.allowedMentions || {}), repliedUser: false };
+  const rankingUsers = leaderboardMentionIds(next.content);
+  next.allowedMentions = {
+    ...(next.allowedMentions || {}),
+    ...(rankingUsers.length ? { users: rankingUsers } : {}),
+    repliedUser: false,
+  };
+  if (rankingUsers.length) {
+    next.flags = (Number(next.flags) || 0) | SUPPRESS_NOTIFICATIONS_FLAG;
+  }
   return next;
 }
 
