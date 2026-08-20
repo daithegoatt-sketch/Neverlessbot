@@ -2,6 +2,7 @@
 
 const { getLinkedUid } = require('./accountStore');
 const { fetchAccount, accountSummary } = require('./enkaClient');
+const { rateVisibleAccount } = require('./liveAccountRating');
 const { getCachedNeverlessLeaderboard } = require('./leaderboard');
 const { getEntries } = require('./buildHistory');
 const { resolveCharacter } = require('./characterResolver');
@@ -46,28 +47,17 @@ function percentText(value) {
   return `Top ${number >= 10 ? Math.round(number) : Number(number.toFixed(2))}%`;
 }
 
-function validSavedRating(entry) {
-  const score = Number(entry?.evaluation?.score);
-  return Number.isFinite(score) && score > 0;
-}
-
-function latestValidRating(entries) {
-  const rows = Array.isArray(entries) ? entries : [];
-  const latest = rows.length ? rows[rows.length - 1] : null;
-  return validSavedRating(latest) ? latest : null;
-}
-
-function savedProfileRows(discordUserId, uid, characters) {
-  return (characters || []).map((character) => {
-    const entry = latestValidRating(getEntries(discordUserId, uid, character.name));
-    if (!entry) return null;
-    return {
-      name: character.name,
-      score: Number(entry.evaluation.score),
-      akasha: entry.evaluation.akashaPercentile,
-      savedAt: entry.savedAt || null,
-    };
-  }).filter(Boolean);
+function formatCurrentRatings(rated, lang = 'ar') {
+  const rows = [...(rated || [])]
+    .filter((row) => Number.isFinite(Number(row?.score)) && Number(row.score) > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!rows.length) return [];
+  const label = lang === 'ar' ? '**تقييمات Neverless الحالية:**' : '**Current Neverless ratings:**';
+  const lines = [label];
+  for (let index = 0; index < rows.length; index += 4) {
+    lines.push(rows.slice(index, index + 4).map((row) => `${row.name} **${row.score}%**`).join(' • '));
+  }
+  return lines;
 }
 
 async function handleProfile(message, lang) {
@@ -79,8 +69,8 @@ async function handleProfile(message, lang) {
 
   let account;
   try {
-    // Enka already has a short account cache. Profile deliberately avoids fresh Game8/Akasha
-    // scans and uses saved Neverless ratings so it can answer much faster.
+    // fetchAccount follows Enka's ttl, then refreshes automatically. No manual character
+    // rating is required; the current visible Showcase is evaluated here.
     account = await fetchAccount(uid);
   } catch {
     await send(message, lang === 'ar' ? 'ما قدرت أقرأ الـShowcase من Enka الآن.' : 'I could not read your Showcase from Enka right now.');
@@ -88,14 +78,13 @@ async function handleProfile(message, lang) {
   }
 
   const summary = accountSummary(account);
-  const rated = savedProfileRows(message.author.id, uid, summary.characters);
+  const current = await rateVisibleAccount(uid, account);
+  const rated = current.rated;
   const strongest = [...rated].sort((a, b) => b.score - a.score)[0] || null;
   const bestAkasha = [...rated]
     .filter((row) => Number.isFinite(topPercent(row.akasha)))
     .sort((a, b) => topPercent(a.akasha) - topPercent(b.akasha))[0] || null;
 
-  // Never trigger a full server leaderboard rebuild from the profile command. If a
-  // recent leaderboard already exists, reuse it; otherwise omit rank for this reply.
   const board = getCachedNeverlessLeaderboard(message.guild);
   let serverRank = null;
   let serverTotal = null;
@@ -111,20 +100,23 @@ async function handleProfile(message, lang) {
   const lines = [`**Neverless — ${ar ? 'بروفايلك' : 'Your Profile'}**`];
   lines.push(`${summary.nickname || (ar ? 'الحساب' : 'Account')} • AR ${summary.adventureRank ?? '?'} • UID ${maskUid(uid)}`);
   lines.push(`${ar ? 'الـShowcase' : 'Showcase'}: **${summary.characters.length}** ${ar ? 'شخصية ظاهرة' : 'visible characters'}`);
-  lines.push(`${ar ? 'التقييمات المعتمدة' : 'Valid saved ratings'}: **${rated.length}**`);
+
+  if (summary.characters.length) {
+    lines.push(`${ar ? 'الشخصيات الظاهرة' : 'Visible characters'}: ${summary.characters.map((row) => row.name).join(' • ')}`);
+  }
+  lines.push(...formatCurrentRatings(rated, lang));
 
   if (strongest) lines.push(`${ar ? 'أقوى بيلد' : 'Strongest build'}: **${strongest.name} — ${strongest.score}% Neverless**`);
   if (bestAkasha) lines.push(`${ar ? 'أفضل Akasha' : 'Best Akasha'}: **${bestAkasha.name} — ${percentText(bestAkasha.akasha)}**`);
   if (serverRank) lines.push(`${ar ? 'ترتيب الحساب بالسيرفر' : 'Server account rank'}: **#${serverRank}/${serverTotal}**`);
 
+  if (current.unratedNames.length) {
+    lines.push(`${ar ? 'غير متاح للتقييم حاليًا' : 'Currently unavailable to rate'}: ${current.unratedNames.join(' • ')}`);
+  }
   if (!rated.length) {
     lines.push(ar
-      ? 'ما فيه تقييم Neverless صالح محفوظ للشخصيات الظاهرة حتى الآن. تقييم **0%** وغير المقيم ما يدخل في البروفايل.'
-      : 'There are no valid saved Neverless ratings for visible characters yet. **0%** and unrated builds are excluded from the profile.');
-  } else {
-    lines.push(ar
-      ? 'البروفايل يعتمد آخر تقييم Neverless محفوظ لكل شخصية ظاهرة، وإذا كان آخر تقييم **0%** تنحذف الشخصية من البروفايل.'
-      : 'The profile uses each visible character’s latest saved Neverless rating; if that latest rating is **0%**, the character is excluded.');
+      ? 'ما فيه تقييم Neverless صالح أقدر أحسبه من الـShowcase الحالي. أي نتيجة **0%** ما تظهر بالبروفايل.'
+      : 'There is no valid Neverless rating I can calculate from the current Showcase. Any **0%** result is hidden from the profile.');
   }
 
   await send(message, lines.join('\n'));
@@ -188,7 +180,5 @@ module.exports = {
   isHistory,
   maskUid,
   percentText,
-  validSavedRating,
-  latestValidRating,
-  savedProfileRows,
+  formatCurrentRatings,
 };
