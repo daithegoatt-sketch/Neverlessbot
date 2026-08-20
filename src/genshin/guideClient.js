@@ -4,10 +4,35 @@ const { getGuideByText } = require('./guides');
 const { fetchGame8Guide } = require('./game8Client');
 const { fetchGame8TeamGroups, dedupeTeams } = require('./teamGroupClient');
 const { getBuildStatFallback } = require('./kqmClient');
+const { fetchGameWithStats } = require('./gameWithClient');
 
 const CACHE_TTL = 12 * 60 * 60 * 1000;
 const cache = new Map();
 const nonEmpty = (value) => Array.isArray(value) && value.length > 0;
+
+const VERIFIED_ARTIFACT_ALTERNATIVES = {
+  columbina: ["4pc Silken Moon's Serenade", '4pc Aubade of Morningstar and Moon'],
+  ineffa: ["4pc Silken Moon's Serenade", '4pc Aubade of Morningstar and Moon'],
+};
+
+function normalizeName(value) {
+  return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+}
+
+function addArtifactAlternatives(guide, name) {
+  if (!guide) return guide;
+  const extra = VERIFIED_ARTIFACT_ALTERNATIVES[normalizeName(name)] || [];
+  if (!extra.length) return guide;
+  const artifacts = [...(guide.artifacts || [])];
+  for (const candidate of extra) {
+    const key = normalizeName(String(candidate).replace(/^\s*[24]\s*(?:pc|piece)\s*/i, ''));
+    if (!artifacts.some((item) => {
+      const current = normalizeName(String(item).replace(/^\s*[24]\s*(?:pc|piece)\s*/i, ''));
+      return current === key;
+    })) artifacts.push(candidate);
+  }
+  return { ...guide, artifacts };
+}
 
 function normalizeTeams(value) {
   if (!value) return { premium: [], f2p: [] };
@@ -79,6 +104,12 @@ function validateGuide(guide) {
   const teams = normalizeTeams(guide.teams);
   return {
     ...guide,
+    stats: {
+      ...(guide.stats || {}),
+      main: (guide.stats?.main || []).filter(Boolean).slice(0, 8),
+      targets: (guide.stats?.targets || []).filter(Boolean).slice(0, 8),
+      priority: guide.stats?.priority || null,
+    },
     weapons: (guide.weapons || []).filter(Boolean).slice(0, 10),
     f2pWeapons: (guide.f2pWeapons || []).filter(Boolean).slice(0, 6),
     artifacts: (guide.artifacts || []).filter(Boolean).slice(0, 6),
@@ -124,22 +155,34 @@ async function getGuide(name) {
     };
   }
 
-  let value = validateGuide(mergeGuide(live, curated));
+  let value = validateGuide(addArtifactAlternatives(mergeGuide(live, curated), name));
+  const needTargets = !nonEmpty(value?.stats?.targets);
+  const needPriority = !value?.stats?.priority;
 
-  // Game8 remains primary. Only if neither Game8 nor a verified local fallback
-  // provides stat priority, try the existing secondary guide source. Do not
-  // synthesize numeric targets from prose or team-dependent ER tables.
-  if (value && !value.stats?.priority) {
-    try {
-      const fallback = await getBuildStatFallback(name);
-      if (fallback?.priority) {
-        value = validateGuide({
-          ...value,
-          stats: { ...(value.stats || {}), priority: fallback.priority },
-        });
+  if (needTargets || needPriority) {
+    const [secondary, theory] = await Promise.all([
+      fetchGameWithStats(name).catch((error) => {
+        console.warn(`[genshin] Secondary stat goals unavailable for ${name}: ${error.message}`);
+        return null;
+      }),
+      needPriority ? getBuildStatFallback(name).catch((error) => {
+        console.warn(`[genshin] Secondary stat priority unavailable for ${name}: ${error.message}`);
+        return null;
+      }) : Promise.resolve(null),
+    ]);
+
+    if (!value && (secondary?.targets?.length || secondary?.priority || theory?.priority)) {
+      value = validateGuide(addArtifactAlternatives({ name, stats: { main: [], targets: [], priority: null } }, name));
+    }
+
+    if (value) {
+      const stats = { ...(value.stats || {}) };
+      if (needTargets && secondary?.targets?.length) {
+        stats.targets = secondary.targets;
+        stats.targetFallback = true;
       }
-    } catch (error) {
-      console.warn(`[genshin] Secondary stat priority unavailable for ${name}: ${error.message}`);
+      if (needPriority) stats.priority = theory?.priority || secondary?.priority || stats.priority || null;
+      value = validateGuide(addArtifactAlternatives({ ...value, stats }, name));
     }
   }
 
@@ -147,4 +190,11 @@ async function getGuide(name) {
   return value;
 }
 
-module.exports = { getGuide, mergeGuide, normalizeTeams, teamsFromGroups, validateGroups };
+module.exports = {
+  getGuide,
+  mergeGuide,
+  normalizeTeams,
+  teamsFromGroups,
+  validateGroups,
+  addArtifactAlternatives,
+};

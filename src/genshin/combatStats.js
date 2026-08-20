@@ -17,13 +17,24 @@ function guideRecommendsSet(guide, setName) {
   });
 }
 
-// Only count conditional combat stats when the condition is reliably part of the
-// character's normal build/play pattern. Do not assume team-dependent buffs here.
+// These characters reliably trigger Marechaussee Hunter through their own normal
+// field pattern, so the 4pc CRIT Rate should count even if a guide page failed to
+// expose its artifact table to the parser.
 const SELF_HP_MARECHAUSSEE_USERS = new Set([
   'neuvillette',
   'wriothesley',
   'lyney',
   'gaming',
+]);
+
+// Common on-field Nightsoul users whose normal builds can keep Obsidian Codex active.
+// Unknown/edge cases still require the guide to explicitly recommend the set.
+const SELF_OBSIDIAN_USERS = new Set([
+  'mavuika',
+  'mualani',
+  'kinich',
+  'chasca',
+  'varesa',
 ]);
 
 function artifactCombatBonuses(snapshot, guide) {
@@ -33,19 +44,14 @@ function artifactCombatBonuses(snapshot, guide) {
   if (
     SELF_HP_MARECHAUSSEE_USERS.has(character)
     && hasFourPiece(snapshot, 'Marechaussee Hunter')
-    && guideRecommendsSet(guide, 'Marechaussee Hunter')
   ) {
-    // 4pc: +12% CRIT Rate per HP change, max 3 stacks. These characters can
-    // maintain the stacks through their own normal combat mechanics.
     bonuses.critRate = (bonuses.critRate || 0) + 36;
   }
 
   if (
     hasFourPiece(snapshot, 'Obsidian Codex')
-    && guideRecommendsSet(guide, 'Obsidian Codex')
+    && (SELF_OBSIDIAN_USERS.has(character) || guideRecommendsSet(guide, 'Obsidian Codex'))
   ) {
-    // Game8 only recommends this 4pc on builds that can consume Nightsoul points
-    // on-field, where the +40% CRIT Rate condition is part of normal uptime.
     bonuses.critRate = (bonuses.critRate || 0) + 40;
   }
 

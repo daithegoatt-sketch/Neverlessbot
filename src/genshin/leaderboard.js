@@ -74,13 +74,13 @@ function buildStrengths(evaluation, max = 3) {
 
 async function buildCharacterLeaderboard(guild, characterName) {
   const cacheKey = `${guild.id}:char:${key(characterName)}`;
-  const cached = cache.get(cacheKey);
-  if (cached?.expiresAt > Date.now()) return cached.value;
 
+  // An explicit leaderboard request is a refresh action: read every linked UID's
+  // current Showcase and current Akasha placement. Manual character rating is not required.
   const users = await linkedGuildUsers(guild);
   const rows = await mapLimit(users.slice(0, 60), 3, async (link) => {
-    const account = await fetchAccount(link.uid);
-    const rated = await rateCurrentCharacter(link.uid, account, characterName);
+    const account = await fetchAccount(link.uid, { forceRefresh: true });
+    const rated = await rateCurrentCharacter(link.uid, account, characterName, { forceAkashaRefresh: true });
     if (!rated || rated.score <= 0) return null;
     return {
       discordUserId: link.discordUserId,
@@ -129,9 +129,12 @@ function accountScoreFromRated(rated) {
   return { accountScore, topBuilds: top, topAverage };
 }
 
-async function buildAccountScore(link) {
-  const account = await fetchAccount(link.uid);
-  const current = await rateVisibleAccount(link.uid, account);
+async function buildAccountScore(link, options = {}) {
+  const account = await fetchAccount(link.uid, { forceRefresh: Boolean(options.forceRefresh) });
+  const current = await rateVisibleAccount(link.uid, account, {
+    bypassCache: Boolean(options.forceRefresh),
+    forceAkashaRefresh: Boolean(options.forceRefresh),
+  });
   const rated = current.rated;
 
   if (!rated.length) return null;
@@ -150,10 +153,11 @@ async function buildAccountScore(link) {
 
 async function buildNeverlessLeaderboard(guild) {
   const cacheKey = `${guild.id}:account`;
-  const cached = cache.get(cacheKey);
-  if (cached?.expiresAt > Date.now()) return cached.value;
+
+  // Always refresh on the explicit ranking command. The completed result is still
+  // cached so profile can reuse the latest board without rebuilding it.
   const users = await linkedGuildUsers(guild);
-  const rows = await mapLimit(users.slice(0, 40), 2, buildAccountScore);
+  const rows = await mapLimit(users.slice(0, 40), 2, (link) => buildAccountScore(link, { forceRefresh: true }));
   const clean = rows.filter(Boolean).sort((a, b) => b.accountScore - a.accountScore || b.averageBuild - a.averageBuild);
   const value = { rows: clean };
   cache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL });
