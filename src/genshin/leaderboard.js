@@ -189,6 +189,14 @@ async function buildNeverlessLeaderboard(guild) {
   return value;
 }
 
+function safeDisplayName(row) {
+  const fallback = String(row?.discordUserId || 'Unknown');
+  return String(row?.displayName || fallback)
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/([\\`*_{}\[\]()#+\-.!|>~])/g, '\\$1')
+    .slice(0, 80);
+}
+
 function formatCharacterLeaderboard(board, lang = 'ar') {
   const ar = lang === 'ar';
   if (!board.rows.length) return ar
@@ -196,7 +204,7 @@ function formatCharacterLeaderboard(board, lang = 'ar') {
     : `No linked members currently have **${board.characterName}** visible in Showcase.`;
   const lines = [`**${ar ? 'ترتيب' : 'Leaderboard'} ${board.characterName} — Neverless**`];
   board.rows.slice(0, 10).forEach((row, index) => {
-    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.score}% Neverless** • Akasha ${akashaText(row.akasha)}`);
+    lines.push(`${index + 1}. **${safeDisplayName(row)}** — **${row.score}% Neverless** • Akasha ${akashaText(row.akasha)}`);
   });
   return lines.join('\n');
 }
@@ -206,7 +214,7 @@ function formatNeverlessLeaderboard(board, lang = 'ar') {
   if (!board.rows.length) return ar ? 'ما فيه حسابات مربوطة كفاية لبناء الترتيب.' : 'Not enough linked accounts to build the leaderboard.';
   const lines = [`**${ar ? 'ترتيب Neverless' : 'Neverless Account Leaderboard'}**`];
   board.rows.slice(0, 10).forEach((row, index) => {
-    lines.push(`${index + 1}. <@${row.discordUserId}> — **${row.accountScore}% Neverless**`);
+    lines.push(`${index + 1}. **${safeDisplayName(row)}** — **${row.accountScore}% Neverless**`);
     const builds = row.topBuilds.slice(0, 3).map((item) => `${item.name} ${item.score}%`).join(' • ');
     if (builds) lines.push(`   ${builds}`);
   });
