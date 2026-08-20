@@ -3,6 +3,7 @@
 const { getGuideByText } = require('./guides');
 const { fetchGame8Guide } = require('./game8Client');
 const { fetchGame8TeamGroups, dedupeTeams } = require('./teamGroupClient');
+const { getBuildStatFallback } = require('./kqmClient');
 
 const CACHE_TTL = 12 * 60 * 60 * 1000;
 const cache = new Map();
@@ -123,7 +124,25 @@ async function getGuide(name) {
     };
   }
 
-  const value = validateGuide(mergeGuide(live, curated));
+  let value = validateGuide(mergeGuide(live, curated));
+
+  // Game8 remains primary. Only if neither Game8 nor a verified local fallback
+  // provides stat priority, try the existing secondary guide source. Do not
+  // synthesize numeric targets from prose or team-dependent ER tables.
+  if (value && !value.stats?.priority) {
+    try {
+      const fallback = await getBuildStatFallback(name);
+      if (fallback?.priority) {
+        value = validateGuide({
+          ...value,
+          stats: { ...(value.stats || {}), priority: fallback.priority },
+        });
+      }
+    } catch (error) {
+      console.warn(`[genshin] Secondary stat priority unavailable for ${name}: ${error.message}`);
+    }
+  }
+
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL });
   return value;
 }
