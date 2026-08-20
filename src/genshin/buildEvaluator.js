@@ -1,15 +1,21 @@
 'use strict';
 
 const { LABELS, parseTarget, guideProfile, formatTarget } = require('./statProfile');
+const { reviewArtifacts } = require('./artifactEvaluator');
+const { effectiveStatsForRating } = require('./combatStats');
 
 function normalize(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function akashaPercent(value) {
-  if (Number.isFinite(value)) return value;
+  if (Number.isFinite(value)) return value > 0 && value <= 100 ? value : null;
   const nested = Number(value?.topPercent ?? value?.top_percent);
-  return Number.isFinite(nested) ? nested : null;
+  return Number.isFinite(nested) && nested > 0 && nested <= 100 ? nested : null;
 }
 
 function targetScore(value, target) {
@@ -108,12 +114,61 @@ function statWeight(key, profile) {
   return base + priorityBonus;
 }
 
+function usefulRvScore(averageUsefulRv) {
+  const rv = Number(averageUsefulRv);
+  if (!Number.isFinite(rv) || rv <= 0) return 0.3;
+  const points = [
+    [0, 0.3],
+    [250, 0.42],
+    [330, 0.56],
+    [450, 0.76],
+    [550, 0.9],
+    [650, 1],
+  ];
+  for (let index = 1; index < points.length; index += 1) {
+    const [x1, y1] = points[index - 1];
+    const [x2, y2] = points[index];
+    if (rv <= x2) {
+      const t = clamp((rv - x1) / Math.max(1, x2 - x1));
+      return y1 + (y2 - y1) * t;
+    }
+  }
+  return 1;
+}
+
+function critReadinessScore(stats, profile) {
+  const wantsCrit = profile.priority.includes('critRate')
+    || profile.priority.includes('critDmg')
+    || profile.ordered.includes('critRate')
+    || profile.ordered.includes('critDmg');
+  if (!wantsCrit) return null;
+  const cr = Number(stats?.critRate);
+  const cd = Number(stats?.critDmg);
+  if (!Number.isFinite(cr) || !Number.isFinite(cd)) return null;
+
+  // This is only a fallback when a published guide has no numeric goal table.
+  // It measures whether a crit-oriented build has reached a healthy endgame floor;
+  // it is not a replacement for explicit per-character targets.
+  const crScore = clamp((cr - 30) / 40);
+  const cdScore = clamp((cd - 100) / 100);
+  return crScore * 0.45 + cdScore * 0.55;
+}
+
+function fallbackStatScore(snapshot, guide, profile, effectiveStats) {
+  const report = reviewArtifacts(snapshot, guide);
+  const rv = usefulRvScore(report.averageUsefulRv);
+  const crit = critReadinessScore(effectiveStats, profile);
+  if (Number.isFinite(crit)) return clamp(rv * 0.7 + crit * 0.3);
+  return clamp(rv);
+}
+
 function evaluateBuild(snapshot, guide, options = {}) {
   const profile = guideProfile(guide);
   const completion = artifactCompletion(snapshot);
   const setScore = recommendedSetMatch(snapshot, guide);
   const mainsScore = mainStatMatch(snapshot, guide);
   const weaponScore = weaponMatch(snapshot, guide);
+  const combat = effectiveStatsForRating(snapshot, guide);
   const notes = [];
   const relevantStats = [];
 
@@ -121,20 +176,40 @@ function evaluateBuild(snapshot, guide, options = {}) {
   let statPoints = 0;
   for (const key of profile.ordered) {
     const target = profile.targetMap[key];
-    const value = snapshot?.stats?.[key];
-    if (!target || !Number.isFinite(value)) continue;
-    const ratio = targetScore(value, target);
+    const rawValue = snapshot?.stats?.[key];
+    const effectiveValue = combat.effective?.[key];
+    if (!target || !Number.isFinite(effectiveValue)) continue;
+    const ratio = targetScore(effectiveValue, target);
     const weight = statWeight(key, profile);
     statWeightTotal += weight;
     statPoints += weight * ratio;
-    const status = value < target.min ? 'down' : (key === 'er' && value > target.max * 1.12 ? 'warn' : 'ok');
+    const status = effectiveValue < target.min ? 'down' : (key === 'er' && effectiveValue > target.max * 1.12 ? 'warn' : 'ok');
     const suffix = ['critRate', 'critDmg', 'er'].includes(key) ? '%' : '';
-    if (status === 'down') notes.push({ type: 'down', key, text: `${LABELS[key]} ${value}${suffix} < ${target.min}${suffix}` });
-    else if (status === 'warn') notes.push({ type: 'warn', key, text: `${LABELS[key]} ${value}% أعلى من الهدف ${formatTarget(target)}` });
-    relevantStats.push({ key, label: LABELS[key], value, target, ratio, status, weight });
+    const shownValue = Math.round(effectiveValue * 10) / 10;
+    if (status === 'down') notes.push({ type: 'down', key, text: `${LABELS[key]} ${shownValue}${suffix} < ${target.min}${suffix}` });
+    else if (status === 'warn') notes.push({ type: 'warn', key, text: `${LABELS[key]} ${shownValue}% أعلى من الهدف ${formatTarget(target)}` });
+    relevantStats.push({
+      key,
+      label: LABELS[key],
+      value: rawValue,
+      effectiveValue,
+      combatBonus: Number(combat.bonuses?.[key]) || 0,
+      target,
+      ratio,
+      status,
+      weight,
+    });
   }
 
-  const statScore = statWeightTotal ? statPoints / statWeightTotal : 0.5;
+  const explicitStatScore = statWeightTotal ? statPoints / statWeightTotal : null;
+  const fallback = fallbackStatScore(snapshot, guide, profile, combat.effective);
+  let statScore;
+  const targetCount = relevantStats.length;
+  if (!targetCount) statScore = fallback;
+  else if (targetCount === 1) statScore = explicitStatScore * 0.45 + fallback * 0.55;
+  else if (targetCount === 2) statScore = explicitStatScore * 0.75 + fallback * 0.25;
+  else statScore = explicitStatScore;
+
   const percentile = akashaPercent(options.akashaPercentile);
   const akasha = akashaScore(options.akashaPercentile);
   const hasAkasha = Number.isFinite(percentile);
@@ -182,6 +257,8 @@ function evaluateBuild(snapshot, guide, options = {}) {
   return {
     score,
     statScore: Math.round(statScore * 100),
+    statTargetCount: targetCount,
+    fallbackStatScore: Math.round(fallback * 100),
     artifactCompletionScore: Math.round(completion.score * 100),
     mainStatScore: Math.round(mainsScore * 100),
     artifactSetScore: Math.round(setScore * 100),
@@ -190,6 +267,7 @@ function evaluateBuild(snapshot, guide, options = {}) {
     akashaPercentile: percentile,
     artifactCount: completion.count,
     artifactAvgLevel: Math.round(completion.avgLevel * 10) / 10,
+    combatBonuses: combat.bonuses,
     relevantStats,
     notes,
   };
@@ -212,4 +290,13 @@ function compareSnapshots(previous, current) {
   };
 }
 
-module.exports = { evaluateBuild, compareSnapshots, parseTarget, LABELS };
+module.exports = {
+  evaluateBuild,
+  compareSnapshots,
+  parseTarget,
+  LABELS,
+  akashaPercent,
+  targetScore,
+  usefulRvScore,
+  fallbackStatScore,
+};
