@@ -4,6 +4,7 @@ const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
 const { handleAdvancedMessage } = require('./advancedFeatures');
 const { handleAccountAdvisorMessage } = require('./accountAdvisor');
+const { handleProfileMessage } = require('./profileRouter');
 const { handleArtifactReviewMessage } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
@@ -60,9 +61,7 @@ function replyPayload(message, payload) {
     ...(rankingUsers.length ? { users: rankingUsers } : {}),
     repliedUser: false,
   };
-  if (rankingUsers.length) {
-    next.flags = (Number(next.flags) || 0) | SUPPRESS_NOTIFICATIONS_FLAG;
-  }
+  if (rankingUsers.length) next.flags = (Number(next.flags) || 0) | SUPPRESS_NOTIFICATIONS_FLAG;
   return next;
 }
 
@@ -75,7 +74,6 @@ function wrappedMessage(message, client) {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-
   return new Proxy(message, {
     get(target, prop) {
       if (prop === 'content') return content;
@@ -90,7 +88,6 @@ function wrappedMessage(message, client) {
 Client.prototype.login = function neverlessGenshinLogin(token) {
   if (!this.__neverlessGenshinInstalled) {
     this.__neverlessGenshinInstalled = true;
-
     this.once('ready', () => {
       initDiscordPersistence(this, CHANNEL_ID).catch((error) => {
         console.warn('[genshin-store] Persistent store initialization failed:', error.message);
@@ -104,7 +101,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      // Prefix commands such as -بنر and -كويست have their own public handler and do not need a mention.
+      // Public prefix tools have their own server-wide handler and do not need a mention.
       if (isPublicGenshinCommand(message.content)) return;
       if (!hasBotMention(message, this)) return;
 
@@ -122,13 +119,12 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
         .then(() => handleUidMessage(wrapped))
         .then((handled) => handled ? true : handleHelpMessage(wrapped))
         .then((handled) => handled ? true : handleArtifactReviewMessage(wrapped))
+        .then((handled) => handled ? true : handleProfileMessage(wrapped))
         .then((handled) => handled ? true : handleAccountAdvisorMessage(wrapped))
         .then((handled) => handled ? true : handleAdvancedMessage(wrapped))
         .then((handled) => handled ? true : handleRatingMessage(wrapped))
         .then((handled) => handled ? true : handleGenshinMessage(wrapped))
-        .catch((error) => {
-          console.error('[genshin] Unhandled message error:', error);
-        });
+        .catch((error) => console.error('[genshin] Unhandled message error:', error));
     });
     console.log('[genshin] Neverless Genshin advanced mention-only reply mode installed.');
   }

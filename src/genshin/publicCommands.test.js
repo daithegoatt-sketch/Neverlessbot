@@ -1,7 +1,17 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { parseBannerCommand, parseQuestCommand, buildBannerEmbeds, shouldHandlePublicMessage } = require('./publicCommands');
+const {
+  parseBannerCommand,
+  parseQuestCommand,
+  parseCodeCommand,
+  parseMaterialsCommand,
+  parseBannerCountdownCommand,
+  parseRedeemCommand,
+  buildBannerEmbeds,
+  shouldHandlePublicMessage,
+  remainingText,
+} = require('./publicCommands');
 const { parseNotice, selectNotice, extractByRarity, phaseFromSubject } = require('./bannerClient');
 const { parseYoutubeResults } = require('./questClient');
 
@@ -21,11 +31,31 @@ assert.deepEqual(parseQuestCommand('-كويست "Chenyu Vale hidden quest"'), { 
 assert.deepEqual(parseQuestCommand('-quest In the Mountains'), { quest: 'In the Mountains' });
 assert.equal(parseQuestCommand('كويست In the Mountains'), null);
 
+assert.deepEqual(parseCodeCommand('-كود'), { type: 'codes' });
+assert.deepEqual(parseCodeCommand('-أكواد'), { type: 'codes' });
+assert.deepEqual(parseCodeCommand('-codes'), { type: 'codes' });
+assert.equal(parseCodeCommand('كود'), null);
+
+assert.deepEqual(parseMaterialsCommand('-مواد Skirk'), { character: 'Skirk' });
+assert.deepEqual(parseMaterialsCommand('-مواد الشخصية Furina'), { character: 'Furina' });
+assert.deepEqual(parseMaterialsCommand('-materials Neuvillette'), { character: 'Neuvillette' });
+assert.equal(parseMaterialsCommand('مواد Skirk'), null);
+
+assert.deepEqual(parseBannerCountdownCommand('-كم باقي على البنر'), { type: 'countdown' });
+assert.deepEqual(parseBannerCountdownCommand('-banner countdown'), { type: 'countdown' });
+assert.match(remainingText((2 * 86400 + 3 * 3600 + 5 * 60) * 1000), /2 يوم.*3 ساعة.*5 دقيقة/);
+
+assert.deepEqual(parseRedeemCommand('-ريديم'), { code: null });
+assert.deepEqual(parseRedeemCommand('-ريديم ABC123'), { code: 'ABC123' });
+assert.deepEqual(parseRedeemCommand('-redeem CODE123'), { code: 'CODE123' });
+assert.equal(parseRedeemCommand('redeem CODE123'), null);
+
 // Public prefix commands are intentionally server-wide; channelId must not gate them.
-assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-general', author: { bot: false }, content: '-بنر' }), true);
-assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: false }, content: '-كويست In the Mountains' }), true);
-assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: true }, content: '-بنر' }), false);
-assert.equal(shouldHandlePublicMessage({ guildId: null, channelId: 'dm', author: { bot: false }, content: '-بنر' }), false);
+for (const content of ['-بنر', '-كويست In the Mountains', '-كود', '-مواد Skirk', '-كم باقي على البنر', '-ريديم ABC123']) {
+  assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-general', author: { bot: false }, content }), true, content);
+}
+assert.equal(shouldHandlePublicMessage({ guildId: '1', channelId: 'random-chat', author: { bot: true }, content: '-كود' }), false);
+assert.equal(shouldHandlePublicMessage({ guildId: null, channelId: 'dm', author: { bot: false }, content: '-كود' }), false);
 
 const officialText = `
 Version "Luna VIII" Event Wishes Notice - Phase II
