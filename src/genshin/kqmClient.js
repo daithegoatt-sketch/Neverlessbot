@@ -119,6 +119,36 @@ function sectionText($, headingPattern, max = 1200) {
   return cleanText(parts.join(' ')).slice(0, max) || null;
 }
 
+function extractStatPriority(text) {
+  const value = cleanText(text);
+  if (!value) return null;
+  const patterns = [
+    /(?:Substats?|Substat Priority|Stat Priority|Stats? Priority)\s*:?[\s-]*([^.;]{8,240})/i,
+    /(?:Prioritize|Priority)\s*:?[\s-]*([^.;]{8,240})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (!match) continue;
+    const candidate = cleanText(match[1]).replace(/\s{2,}/g, ' ').slice(0, 220);
+    const tokens = candidate.match(/CRIT|Energy Recharge|\bER\b|Elemental Mastery|\bEM\b|\bHP%?\b|\bATK%?\b|\bDEF%?\b/gi) || [];
+    if (tokens.length >= 2) return candidate;
+  }
+  return null;
+}
+
+async function getBuildStatFallback(name) {
+  const url = await discoverUrl(name);
+  if (!url) return null;
+  const html = await fetchHtml(url);
+  const $ = cheerio.load(html);
+  const sections = [
+    sectionText($, /artifact stats?|stat priority|artifacts?/i, 2200),
+    sectionText($, /energy recharge|er requirements?/i, 1200),
+  ].filter(Boolean);
+  const priority = sections.map(extractStatPriority).find(Boolean) || null;
+  return priority ? { priority, url } : null;
+}
+
 async function getCharacterTheoryNotes(name) {
   const url = await discoverUrl(name);
   if (!url) return null;
@@ -132,4 +162,10 @@ async function getCharacterTheoryNotes(name) {
   };
 }
 
-module.exports = { discoverUrl, findTeamRotation, getCharacterTheoryNotes };
+module.exports = {
+  discoverUrl,
+  findTeamRotation,
+  getCharacterTheoryNotes,
+  getBuildStatFallback,
+  extractStatPriority,
+};
