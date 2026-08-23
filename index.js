@@ -41,6 +41,8 @@ const WELCOME_WIDTH = 1672;
 const WELCOME_HEIGHT = 941;
 const WELCOME_TEMPLATE = path.join(process.cwd(), 'assets', 'welcome-template.jpg');
 const AUTO_ROLE_NAME = 'Neverless';
+const INVITE_FETCH_ATTEMPTS = 8;
+const INVITE_FETCH_RETRY_MS = 750;
 
 let welcomeTemplatePromise;
 const inviteCache = new Map();
@@ -139,6 +141,23 @@ function snapshotInviteCollection(invites) {
   return new Map([...invites.values()].map((invite) => [invite.code, snapshotInvite(invite)]));
 }
 
+function nextInviteCache(before, currentInvites, usedInvite) {
+  const next = new Map();
+  for (const invite of currentInvites.values()) {
+    const snapshot = snapshotInvite(invite);
+    const previous = before.get(invite.code);
+    const oldUses = previous?.uses ?? 0;
+    const delta = snapshot.uses - oldUses;
+
+    if (usedInvite && delta > 0) {
+      if (invite.code === usedInvite.code) snapshot.uses = oldUses + 1;
+      else snapshot.uses = oldUses;
+    }
+    next.set(invite.code, snapshot);
+  }
+  return next;
+}
+
 async function cacheGuildInvites(guild) {
   try {
     const invites = await guild.invites.fetch();
@@ -226,7 +245,7 @@ async function resolveInviterUnlocked(member) {
   let currentInvites = null;
   let usedInvite = null;
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < INVITE_FETCH_ATTEMPTS; attempt += 1) {
     try {
       currentInvites = await guild.invites.fetch();
       usedInvite = detectUsedInvite(before, currentInvites, deleted);
@@ -236,14 +255,14 @@ async function resolveInviterUnlocked(member) {
       break;
     }
 
-    if (attempt < 3) await sleep(700);
+    if (attempt < INVITE_FETCH_ATTEMPTS - 1) await sleep(INVITE_FETCH_RETRY_MS);
   }
 
   if (!currentInvites) {
     return { user: null, count: null, code: null };
   }
 
-  inviteCache.set(guild.id, snapshotInviteCollection(currentInvites));
+  inviteCache.set(guild.id, nextInviteCache(before, currentInvites, usedInvite));
   recentlyDeletedInvites.set(
     guild.id,
     deleted.filter((item) => Date.now() - item.deletedAt <= 15_000),
@@ -368,6 +387,8 @@ function canControlTemp(member, channel) {
 }
 
 async function initializeGuild(guild) {
+  await cacheGuildInvites(guild);
+
   try {
     await guild.commands.set(commands);
     console.log(`Registered ${commands.length} commands in ${guild.name}`);
@@ -375,7 +396,6 @@ async function initializeGuild(guild) {
     console.error(`Failed to register commands in ${guild.name}:`, error);
   }
 
-  await cacheGuildInvites(guild);
   await ensureTicketPanel(guild).catch((error) => console.error('[tickets] Failed to ensure panel:', error));
 }
 
