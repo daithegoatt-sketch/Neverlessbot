@@ -16,6 +16,8 @@ const XP_COOLDOWN_MS = 45_000;
 const DUPLICATE_COOLDOWN_MS = 5 * 60_000;
 const FLUSH_DELAY_MS = 10_000;
 const KUWAIT_OFFSET_MS = 3 * 60 * 60 * 1000;
+const INVITE_FETCH_ATTEMPTS = 8;
+const INVITE_FETCH_RETRY_MS = 750;
 
 let state = { guilds: {} };
 let dataChannel = null;
@@ -380,6 +382,23 @@ function snapshotInviteCollection(invites) {
   return new Map([...invites.values()].map((invite) => [invite.code, snapshotInvite(invite)]));
 }
 
+function nextInviteCache(before, currentInvites, usedInvite) {
+  const next = new Map();
+  for (const invite of currentInvites.values()) {
+    const snapshot = snapshotInvite(invite);
+    const previous = before.get(invite.code);
+    const oldUses = previous?.uses ?? 0;
+    const delta = snapshot.uses - oldUses;
+
+    if (usedInvite && delta > 0) {
+      if (invite.code === usedInvite.code) snapshot.uses = oldUses + 1;
+      else snapshot.uses = oldUses;
+    }
+    next.set(invite.code, snapshot);
+  }
+  return next;
+}
+
 function detectUsedInvite(before, currentInvites, deletedCandidates = []) {
   let best = null;
   for (const invite of currentInvites.values()) {
@@ -434,21 +453,21 @@ async function resolveInviteJoinUnlocked(member) {
   let currentInvites = null;
   let usedInvite = null;
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < INVITE_FETCH_ATTEMPTS; attempt += 1) {
     currentInvites = await member.guild.invites.fetch().catch(() => null);
     if (!currentInvites) break;
     usedInvite = detectUsedInvite(before, currentInvites, deleted);
     if (usedInvite) break;
-    if (attempt < 3) await sleep(700);
+    if (attempt < INVITE_FETCH_ATTEMPTS - 1) await sleep(INVITE_FETCH_RETRY_MS);
   }
   if (!currentInvites) return;
 
-  inviteCache.set(member.guild.id, snapshotInviteCollection(currentInvites));
+  inviteCache.set(member.guild.id, nextInviteCache(before, currentInvites, usedInvite));
   recentlyDeletedInvites.set(member.guild.id, deleted.filter((item) => Date.now() - item.deletedAt <= 15_000));
   if (!usedInvite?.inviterId) return;
 
   const record = getRecord(member.guild.id, usedInvite.inviterId);
-  record.invites = cleanInt(record.invites) + Math.max(1, cleanInt(usedInvite.delta));
+  record.invites = cleanInt(record.invites) + 1;
   record.updatedAt = new Date().toISOString();
   markDirty(member.guild.id, usedInvite.inviterId);
 }
@@ -630,4 +649,6 @@ module.exports = {
   isMemberInviteCommand,
   isActivityTopCommand,
   renderActivityTop,
+  detectUsedInvite,
+  nextInviteCache,
 };
