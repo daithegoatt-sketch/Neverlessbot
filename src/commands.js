@@ -50,14 +50,17 @@ const commands = [
     new SlashCommandBuilder()
       .setName('mute')
       .setDescription('ميوت/Timeout للعضو، والمدة اختيارية')
-      .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
       .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
   ),
   new SlashCommandBuilder()
     .setName('unmute')
     .setDescription('فك الميوت عن عضو')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('addadmin')
+    .setDescription('تحديد رتبة تستطيع استخدام /mute و /unmute عبر Neverless فقط')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المسموح لها بالميوت وفك الميوت').setRequired(true)),
   addDurationAndReason(
     new SlashCommandBuilder()
       .setName('timeout')
