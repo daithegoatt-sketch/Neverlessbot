@@ -61,6 +61,19 @@ const commands = [
     .setDescription('تحديد رتبة تستطيع استخدام /mute و /unmute عبر Neverless فقط')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addRoleOption((o) => o.setName('role').setDescription('الرتبة المسموح لها بالميوت وفك الميوت').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('automod')
+    .setDescription('إدارة الكلمات الممنوعة في Neverless AutoMod')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) => sub
+      .setName('addword')
+      .setDescription('إضافة كلمة أو عبارة ممنوعة')
+      .addStringOption((o) => o.setName('word').setDescription('الكلمة أو العبارة').setMinLength(1).setMaxLength(100).setRequired(true)))
+    .addSubcommand((sub) => sub
+      .setName('removeword')
+      .setDescription('حذف كلمة أو عبارة من AutoMod')
+      .addStringOption((o) => o.setName('word').setDescription('الكلمة أو العبارة').setMinLength(1).setMaxLength(100).setRequired(true)))
+    .addSubcommand((sub) => sub.setName('list').setDescription('عرض الكلمات والعبارات الممنوعة')),
   addDurationAndReason(
     new SlashCommandBuilder()
       .setName('timeout')
