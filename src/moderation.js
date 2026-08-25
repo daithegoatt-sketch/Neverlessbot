@@ -12,6 +12,7 @@ const { clearLeaderboardCache } = require('./genshin/leaderboard');
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || '1538557238627672164';
 const DATA_CHANNEL_NAME = 'neverless-data';
 const LINK_CONFIG_PREFIX = 'NLCFG1|links|';
+const MUTE_ADMIN_CONFIG_PREFIX = 'NLCFG1|muteadmin|';
 const TIMER_PREFIX = 'NLMOD1|';
 const INDEFINITE_TIMEOUT_ROLE = 'Neverless Indefinite Timeout';
 const VC_MUTE_ROLE = 'Neverless VC Muted';
@@ -20,6 +21,8 @@ const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 const allowedLinkChannels = new Map();
 const configMessageIds = new Map();
+const muteAdminRoles = new Map();
+const muteAdminMessageIds = new Map();
 const timerMessageIds = new Map();
 const timers = new Map();
 const filteredDeletes = new Set();
@@ -117,6 +120,15 @@ function parseConfig(content) {
   return /^\d{15,22}$/.test(guildId) ? { guildId, ids } : null;
 }
 
+function parseMuteAdminConfig(content) {
+  const value = String(content || '').trim();
+  if (!value.startsWith(MUTE_ADMIN_CONFIG_PREFIX)) return null;
+  const rest = value.slice(MUTE_ADMIN_CONFIG_PREFIX.length);
+  const [guildId, roleId] = rest.split('|');
+  if (!/^\d{15,22}$/.test(guildId || '') || !/^\d{15,22}$/.test(roleId || '')) return null;
+  return { guildId, roleId };
+}
+
 function parseTimer(content) {
   const value = String(content || '').trim();
   if (!value.startsWith(TIMER_PREFIX)) return null;
@@ -137,6 +149,21 @@ async function persistAllowedLinks(guild) {
   else {
     message = await channel.send(content).catch(() => null);
     if (message) configMessageIds.set(configKey(guild.id), message.id);
+  }
+}
+
+async function persistMuteAdminRole(guild) {
+  const channel = dataChannel(guild);
+  const roleId = muteAdminRoles.get(guild.id);
+  if (!channel || !roleId) return;
+  const content = `${MUTE_ADMIN_CONFIG_PREFIX}${guild.id}|${roleId}`;
+  const key = configKey(guild.id);
+  const existingId = muteAdminMessageIds.get(key);
+  let message = existingId ? await channel.messages.fetch(existingId).catch(() => null) : null;
+  if (message) await message.edit(content).catch(() => {});
+  else {
+    message = await channel.send(content).catch(() => null);
+    if (message) muteAdminMessageIds.set(key, message.id);
   }
 }
 
@@ -205,6 +232,7 @@ async function loadPersistentModeration(guild) {
   if (!channel) return;
   const messages = await fetchAllDataMessages(channel);
   let latestConfig = null;
+  let latestMuteAdmin = null;
   const latestTimers = new Map();
 
   for (const message of messages) {
@@ -212,6 +240,10 @@ async function loadPersistentModeration(guild) {
     const config = parseConfig(message.content);
     if (config?.guildId === guild.id && (!latestConfig || message.createdTimestamp > latestConfig.createdTimestamp)) {
       latestConfig = { ...config, messageId: message.id, createdTimestamp: message.createdTimestamp };
+    }
+    const muteAdmin = parseMuteAdminConfig(message.content);
+    if (muteAdmin?.guildId === guild.id && (!latestMuteAdmin || message.createdTimestamp > latestMuteAdmin.createdTimestamp)) {
+      latestMuteAdmin = { ...muteAdmin, messageId: message.id, createdTimestamp: message.createdTimestamp };
     }
     const timer = parseTimer(message.content);
     if (timer?.guildId === guild.id) {
@@ -223,6 +255,13 @@ async function loadPersistentModeration(guild) {
 
   allowedLinkChannels.set(guild.id, new Set(latestConfig?.ids || []));
   if (latestConfig) configMessageIds.set(configKey(guild.id), latestConfig.messageId);
+
+  if (latestMuteAdmin) {
+    muteAdminRoles.set(guild.id, latestMuteAdmin.roleId);
+    muteAdminMessageIds.set(configKey(guild.id), latestMuteAdmin.messageId);
+  } else {
+    muteAdminRoles.delete(guild.id);
+  }
 
   for (const timer of latestTimers.values()) {
     const key = timerKey(timer.guildId, timer.userId, timer.type);
@@ -253,6 +292,46 @@ function hasExternalLink(content) {
 function isLinkAllowed(message) {
   if (message.member?.permissions?.has(PermissionFlagsBits.Administrator) || message.member?.permissions?.has(PermissionFlagsBits.ManageMessages)) return true;
   return allowedLinkChannels.get(message.guildId)?.has(message.channelId) || false;
+}
+
+function memberHasRole(member, roleId) {
+  if (!member || !roleId) return false;
+  if (member.roles?.cache?.has?.(roleId)) return true;
+  return Array.isArray(member.roles) && member.roles.includes(roleId);
+}
+
+function hasMuteAccess(interaction) {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+    || interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) return true;
+  const roleId = muteAdminRoles.get(interaction.guildId);
+  return memberHasRole(interaction.member, roleId);
+}
+
+function delegatedMuteOnly(interaction) {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+    || interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) return false;
+  return hasMuteAccess(interaction);
+}
+
+async function requireMuteAccess(interaction) {
+  if (hasMuteAccess(interaction)) return true;
+  await interaction.reply({ content: 'ليس لديك صلاحية استخدام هذا الأمر.', ephemeral: true });
+  return false;
+}
+
+async function ensureDelegatedTargetAllowed(interaction, member) {
+  if (!delegatedMuteOnly(interaction)) return true;
+  if (member.id === interaction.guild.ownerId || member.permissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'الرتبة المخولة بالميوت لا تستطيع استخدام الأمر على مالك السيرفر أو Administrator.', ephemeral: true });
+    return false;
+  }
+  const actorHighest = interaction.member?.roles?.highest;
+  const targetHighest = member.roles?.highest;
+  if (actorHighest?.comparePositionTo && targetHighest && actorHighest.comparePositionTo(targetHighest) <= 0) {
+    await interaction.reply({ content: 'لا تستطيع استخدام الميوت على عضو رتبته مساوية أو أعلى من رتبتك.', ephemeral: true });
+    return false;
+  }
+  return true;
 }
 
 async function handleLinkFilter(message) {
@@ -348,6 +427,7 @@ async function getTargetMember(interaction) {
 async function handleTimeout(interaction) {
   const member = await getTargetMember(interaction);
   if (!member) return true;
+  if (!await ensureDelegatedTargetAllowed(interaction, member)) return true;
   if (!member.moderatable) {
     await interaction.reply({ content: 'ما أقدر أعمل Timeout لهذا العضو. تأكد أن رتبة البوت أعلى منه.', ephemeral: true });
     return true;
@@ -387,6 +467,7 @@ async function handleTimeout(interaction) {
 async function handleUntimeout(interaction) {
   const member = await getTargetMember(interaction);
   if (!member) return true;
+  if (!await ensureDelegatedTargetAllowed(interaction, member)) return true;
   const marker = interaction.guild.roles.cache.find((item) => item.name === INDEFINITE_TIMEOUT_ROLE);
   if (marker && member.roles.cache.has(marker.id)) await member.roles.remove(marker, 'Neverless untimeout').catch(() => {});
   await member.timeout(null, `Removed by ${interaction.user.tag}`).catch(() => {});
@@ -432,7 +513,7 @@ async function handleVcMute(interaction) {
 async function handleVcUnmute(interaction) {
   const member = await getTargetMember(interaction);
   if (!member) return true;
-  const role = interaction.guild.roles.cache.find((item) => item.name === VC_MUTE_ROLE);
+  const role = interaction.guild.roles.cache.find((item) => item.name === VC_MUTE_ROLE) || null;
   if (role && member.roles.cache.has(role.id)) await member.roles.remove(role, `VC unmuted by ${interaction.user.tag}`).catch(() => {});
   if (member.voice.channelId && member.voice.serverMute) await member.voice.setMute(false, `VC unmuted by ${interaction.user.tag}`).catch(() => {});
   await deleteTimerRecord(interaction.guild, member.id, 'vc');
@@ -464,6 +545,35 @@ async function handleLinksCommand(interaction) {
   }
   const list = [...set].map((id) => `<#${id}>`);
   await interaction.reply({ content: list.length ? `الرومات المسموح فيها روابط:\n${list.join('\n')}` : 'ما فيه رومات مستثناة حاليًا.', ephemeral: true });
+  return true;
+}
+
+async function handleAddAdmin(interaction) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'هذا الأمر للـAdministrator فقط.', ephemeral: true });
+    return true;
+  }
+  const role = interaction.options.getRole('role', true);
+  if (role.id === interaction.guild.id) {
+    await interaction.reply({ content: 'لا يمكن اختيار رتبة @everyone.', ephemeral: true });
+    return true;
+  }
+  if (role.managed) {
+    await interaction.reply({ content: 'اختر رتبة عادية وليست رتبة يديرها Bot أو Integration.', ephemeral: true });
+    return true;
+  }
+
+  muteAdminRoles.set(interaction.guildId, role.id);
+  await persistMuteAdminRole(interaction.guild);
+  await interaction.reply({
+    content: `تم تحديد ${role} كرتبة مخولة باستخدام **/mute** و **/unmute** فقط عبر Neverless.`,
+    allowedMentions: { roles: [] },
+    ephemeral: true,
+  });
+  await logEvent(interaction.guild, '🛡️ Mute Admin Role Updated', `${role.name} (${role.id})`, [
+    { name: 'By', value: `${interaction.user.tag} (${interaction.user.id})` },
+    { name: 'Access', value: '/mute + /unmute only' },
+  ]);
   return true;
 }
 
@@ -512,8 +622,17 @@ async function handleModerationInteraction(interaction) {
     return false;
   }
 
-  if (interaction.commandName === 'mute' || interaction.commandName === 'timeout') return handleTimeout(interaction);
-  if (interaction.commandName === 'unmute' || interaction.commandName === 'untimeout') return handleUntimeout(interaction);
+  if (interaction.commandName === 'addadmin') return handleAddAdmin(interaction);
+  if (interaction.commandName === 'mute') {
+    if (!await requireMuteAccess(interaction)) return true;
+    return handleTimeout(interaction);
+  }
+  if (interaction.commandName === 'unmute') {
+    if (!await requireMuteAccess(interaction)) return true;
+    return handleUntimeout(interaction);
+  }
+  if (interaction.commandName === 'timeout') return handleTimeout(interaction);
+  if (interaction.commandName === 'untimeout') return handleUntimeout(interaction);
   if (interaction.commandName === 'mutevc') return handleVcMute(interaction);
   if (interaction.commandName === 'unmutevc') return handleVcUnmute(interaction);
   if (interaction.commandName === 'links') return handleLinksCommand(interaction);
@@ -566,5 +685,8 @@ module.exports = {
   handleModerationInteraction,
   parseDuration,
   hasExternalLink,
+  parseMuteAdminConfig,
+  memberHasRole,
+  hasMuteAccess,
   LOG_CHANNEL_ID,
 };
