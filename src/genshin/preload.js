@@ -14,6 +14,7 @@ const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publ
 const { installModeration } = require('../moderation');
 const { installActivity } = require('../activityV2');
 const { installServerTools } = require('../serverTools');
+const { installTempVoicePersistence } = require('../tempVoicePersistence');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
@@ -97,6 +98,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installServerTools(this);
     installModeration(this);
     installActivity(this);
+    installTempVoicePersistence(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
     this.on('messageCreate', (message) => {
