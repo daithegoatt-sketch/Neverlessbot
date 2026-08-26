@@ -10,7 +10,7 @@ const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { handleGenshinExtrasMessage, installGenshinExtras } = require('./genshinExtras');
 const { handleExtrasCorrectionsMessage } = require('./extrasCorrections');
-const { installPublicFun, isPublicFunCommand } = require('./publicFun');
+const { installPublicFunV2, isPublicFunCommand } = require('./publicFunV2');
 const { installAchievementTriggers } = require('./achievementTriggers');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
@@ -107,7 +107,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installAutoMod(this);
     installAchievementTriggers(this);
     installGenshinExtras(this);
-    installPublicFun(this);
+    installPublicFunV2(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
     this.on('messageCreate', (message) => {
