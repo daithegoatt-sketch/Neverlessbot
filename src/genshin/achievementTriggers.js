@@ -1,6 +1,7 @@
 'use strict';
 
 const { scheduleAchievementRefresh } = require('./achievementRoles');
+const { whenAccountStoreReady } = require('./accountStore');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const PERIODIC_REFRESH_MS = 60 * 60 * 1000;
@@ -26,9 +27,10 @@ function installAchievementTriggers(client) {
   if (installed) return;
   installed = true;
 
-  client.once('ready', () => {
+  client.once('ready', async () => {
+    await whenAccountStoreReady().catch(() => {});
     for (const guild of client.guilds.cache.values()) {
-      scheduleAchievementRefresh(guild, { delay: 20_000, force: true });
+      scheduleAchievementRefresh(guild, { delay: 5_000, force: true });
     }
     const timer = setInterval(() => {
       for (const guild of client.guilds.cache.values()) {
