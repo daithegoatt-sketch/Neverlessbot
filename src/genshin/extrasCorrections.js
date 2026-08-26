@@ -6,6 +6,7 @@ const { rateCurrentCharacter } = require('./liveAccountRating');
 const { resolveCharacter } = require('./characterResolver');
 const { formatStat, formatTarget } = require('./statProfile');
 const { blockersForRated } = require('./genshinExtras');
+const { competitiveAdviceRows } = require('./ratingCeiling');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 
@@ -26,7 +27,7 @@ function ratingTargetFromText(text) {
   const arabic = value.match(/^(?:شنو|وش|ايش|إيش|ماذا)\s+يمنع\s+.+?\s+(?:من|عن)\s*(\d{1,3})\s*%?\s*$/u);
   const english = value.match(/^what.*(?:stops|keeps|prevents).*?(?:from|below)\s*(\d{1,3})\s*%?\s*$/i);
   const number = Number((arabic || english)?.[1]);
-  return Number.isInteger(number) && number >= 1 && number <= 100 ? number : null;
+  return Number.isInteger(number) && number >= 0 && number <= 100 ? number : null;
 }
 
 function isLegacyFlexAttempt(text) {
@@ -143,38 +144,69 @@ async function handleStatReview(message, text, lang) {
   return true;
 }
 
+function competitiveAdvice(evaluation, lang) {
+  const ar = lang === 'ar';
+  const rows = competitiveAdviceRows(evaluation, 3);
+  if (!evaluation?.competitiveCeilingEligible || !rows.length) return [];
+
+  const lines = [ar
+    ? '**بعد تحقيق الحدود المقترحة — لرفع التقييم التنافسي:**'
+    : '**After meeting the published floors — competitive rating headroom:**'];
+  for (const row of rows) {
+    const current = formatStat(row.key, row.effectiveValue);
+    const floor = formatStat(row.key, row.floor);
+    const ceiling = formatStat(row.key, row.softCap);
+    lines.push(ar
+      ? `• **${row.label}** ${current} • الحد المنشور ${floor} • مجال Neverless التنافسي حتى ~${ceiling}`
+      : `• **${row.label}** ${current} • published floor ${floor} • Neverless competitive headroom to ~${ceiling}`);
+  }
+  lines.push(ar
+    ? `Power Bonus الحالي: **+${evaluation.competitiveBonus || 0}/5** — هذا المجال داخلي للترتيب وليس Target رسمي من الـGuide.`
+    : `Current Power Bonus: **+${evaluation.competitiveBonus || 0}/5** — this is internal ranking headroom, not an official guide target.`);
+  return lines;
+}
+
 async function handleRatingTarget(message, text, lang, target) {
   const data = await linkedRatedCharacter(message, text, lang);
   if (!data) return true;
 
   const ar = lang === 'ar';
   const score = Number(data.rated.score) || 0;
-  if (score >= target) {
-    await send(message,
-      `**${data.rated.name}** ${ar ? 'بالفعل وصلت' : 'already reached'} **${score}% Neverless** — ${ar ? `ما فيه شيء يمنعها من ${target}.` : `nothing is keeping it below ${target}.`}`,
-    );
-    return true;
-  }
-
+  const evaluation = data.rated.evaluation || {};
   const blockers = blockersForRated(data.rated, lang);
+  const competitive = competitiveAdvice(evaluation, lang);
+  const reached = score >= target;
   const gap = Math.max(0, target - score);
   const lines = [
     `**${ar ? 'شنو يمنع' : 'What keeps'} ${data.rated.name} ${ar ? `من ${target}؟` : `from ${target}?`}**`,
-    `${ar ? 'الحالي' : 'Current'}: **${score}% Neverless** • ${ar ? 'الهدف' : 'Target'}: **${target}%** • ${ar ? 'الفارق' : 'Gap'}: **${gap}**`,
+    `${ar ? 'الحالي' : 'Current'}: **${score}% Neverless** • ${ar ? 'الهدف' : 'Target'}: **${target}%**${reached ? ` • ${ar ? 'تم الوصول' : 'reached'}` : ` • ${ar ? 'الفارق' : 'Gap'}: **${gap}**`}`,
   ];
 
-  if (blockers.length) {
+  if (!reached && blockers.length) {
     lines.push(`\n**${ar ? 'أكبر العوائق بالترتيب' : 'Biggest blockers'}:**`);
     blockers.slice(0, 3).forEach((row, index) => lines.push(`${index + 1}. ${row.text}`));
-  } else {
+  } else if (reached) {
     lines.push(ar
-      ? 'ما عندي نقص رقمي واضح من الـGuide؛ الفرق المتبقي غالبًا من جودة السابستات/Akasha ومكونات التقييم الأخرى.'
-      : 'There is no clear numeric guide deficit; the remaining gap is most likely substat/Akasha quality and other rating components.');
+      ? `\nأنت بالفعل فوق **${target}**. إذا هدفك رتبة **Top ${data.rated.name}** فالمهم الآن رفع قوة البيلد مقارنة بباقي السيرفر، مو مجرد تجاوز الحد الأدنى.`
+      : `\nYou are already above **${target}**. For **Top ${data.rated.name}**, the goal is now stronger build quality versus the server, not merely clearing the floor.`);
+  }
+
+  if (competitive.length) {
+    lines.push('', ...competitive);
+  } else if (!blockers.length && !reached) {
+    lines.push(ar
+      ? 'ما عندي نقص رقمي واضح من الـGuide؛ ركز على Useful RV/Akasha وجودة القطع لأن ترتيب الشخصية يكسر التعادل بهذه القوة الفعلية.'
+      : 'There is no clear numeric guide deficit; focus on Useful RV/Akasha and artifact quality because the character ranking uses that real build strength to break ties.');
+  }
+
+  if (blockers.length && competitive.length) {
+    const piece = blockers.find((row) => row.type === 'piece');
+    if (piece) lines.push(ar ? `\n**أولوية قطعة:** ${piece.text}` : `\n**Artifact priority:** ${piece.text}`);
   }
 
   lines.push(ar
-    ? '\nما أعطي خصم نقاط وهمي لكل سبب؛ هذه الأولويات مأخوذة من نفس مكونات تقييم Neverless.'
-    : '\nI do not invent per-issue point deductions; these priorities come from the same Neverless rating components.');
+    ? '\nNeverless لا يعتبر الأرقام المقترحة سقفًا للقوة: بعد تحقيقها، الزيادة المفيدة في CR/CD/ATK أو الستات الأساسية للشخصية ترفع الجزء التنافسي بتناقص، مع بقاء ER الزائد خارج هذا البونص.'
+    : '\nNeverless does not treat published targets as a power ceiling: after meeting them, useful CR/CD/ATK or character-scaling stats can raise the competitive component with diminishing returns; excess ER does not earn this bonus.');
   await send(message, lines.join('\n'));
   return true;
 }
