@@ -11,6 +11,7 @@ const {
   TextInputStyle,
 } = require('discord.js');
 const { getCharacterCatalog, getTalentCatalog } = require('./dataClient');
+const { getGuideByText } = require('./guides');
 
 const QUESTION_TIMEOUT_MS = 15 * 1000;
 const MAX_QUESTIONS = 50;
@@ -64,7 +65,7 @@ function talentBook(talent) {
   return null;
 }
 
-function quizRecord(character, talent = null) {
+function quizRecord(character, talent = null, guide = null) {
   const rarity = Number(character?.rarity);
   return {
     name: String(character?.name || '').trim(),
@@ -81,6 +82,8 @@ function quizRecord(character, talent = null) {
     bossMaterial: itemFromAscension(character, '113'),
     enemyMaterial: itemFromAscension(character, '112'),
     talentBook: talentBook(talent),
+    recommendedWeapon: Array.isArray(guide?.weapons) ? guide.weapons[0] || null : null,
+    recommendedArtifact: Array.isArray(guide?.artifacts) ? guide.artifacts[0] || null : null,
   };
 }
 
@@ -137,6 +140,14 @@ const FIELD_PROMPTS = {
     ar: (name) => `أي Talent Book تستخدمها **${name}**؟`,
     en: (name) => `Which talent book does **${name}** use?`,
   },
+  recommendedWeapon: {
+    ar: (name) => `شنو أول سلاح موصى به في Neverless لـ **${name}**؟`,
+    en: (name) => `What is the first Neverless-recommended weapon for **${name}**?`,
+  },
+  recommendedArtifact: {
+    ar: (name) => `شنو أول Artifact Set موصى به في Neverless لـ **${name}**؟`,
+    en: (name) => `What is the first Neverless-recommended Artifact Set for **${name}**?`,
+  },
 };
 
 function optionsFor(correct, pool, wanted = 4) {
@@ -181,7 +192,11 @@ async function buildQuizBank(count = 1, lang = 'ar') {
   ]);
   const talentMap = new Map((talents || []).map((row) => [normalize(row?.name), row]));
   const records = (characters || [])
-    .map((character) => quizRecord(character, talentMap.get(normalize(character?.name)) || null))
+    .map((character) => quizRecord(
+      character,
+      talentMap.get(normalize(character?.name)) || null,
+      getGuideByText(character?.name) || null,
+    ))
     .filter((row) => row.name);
   const bank = buildQuestionsFromRecords(records, lang);
   return bank.slice(0, Math.max(1, Math.min(MAX_QUESTIONS, Number(count) || 1)));
