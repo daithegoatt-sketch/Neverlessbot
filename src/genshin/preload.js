@@ -9,6 +9,8 @@ const { handleArtifactReviewMessage } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { handleGenshinExtrasMessage, installGenshinExtras } = require('./genshinExtras');
+const { handleExtrasCorrectionsMessage } = require('./extrasCorrections');
+const { installPublicFun, isPublicFunCommand } = require('./publicFun');
 const { installAchievementTriggers } = require('./achievementTriggers');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
@@ -105,12 +107,13 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installAutoMod(this);
     installAchievementTriggers(this);
     installGenshinExtras(this);
+    installPublicFun(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      // Public prefix tools have their own server-wide handler and do not need a mention.
-      if (isPublicGenshinCommand(message.content)) return;
+      // Public prefix tools have their own server-wide handlers and do not need a mention.
+      if (isPublicGenshinCommand(message.content) || isPublicFunCommand(message.content)) return;
       if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
@@ -128,6 +131,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
         .then((handled) => handled ? true : handleHelpMessage(wrapped))
         .then((handled) => handled ? true : handleArtifactReviewMessage(wrapped))
         .then((handled) => handled ? true : handleProfileMessage(wrapped))
+        .then((handled) => handled ? true : handleExtrasCorrectionsMessage(wrapped))
         .then((handled) => handled ? true : handleGenshinExtrasMessage(wrapped))
         .then((handled) => handled ? true : handleAccountAdvisorMessage(wrapped))
         .then((handled) => handled ? true : handleAdvancedMessage(wrapped))
