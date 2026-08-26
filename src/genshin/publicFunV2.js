@@ -5,7 +5,7 @@ const {
   handlePublicFunCommand,
   isPublicFunCommand,
 } = require('./publicFun');
-const { handleQuizCommand, installQuizEngine } = require('./quizEngine');
+const { handleQuizCommand, installQuizEngine } = require('./quizEngineV3');
 
 let installed = false;
 
