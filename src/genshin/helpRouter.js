@@ -122,12 +122,12 @@ function splitHelp(content, max = 1900) {
 async function handleHelpMessage(message) {
   const text = String(message?.content || '').trim();
   if (!isHelp(text)) return false;
-  for (const chunk of splitHelp(helpText(language(text)))) {
-    await message.channel.send({
-      content: chunk,
-      allowedMentions: { users: [], repliedUser: false },
-    });
-  }
+
+  const chunks = splitHelp(helpText(language(text)), 3900);
+  await message.channel.send({
+    embeds: chunks.map((chunk) => ({ description: chunk })),
+    allowedMentions: { users: [], repliedUser: false },
+  });
   return true;
 }
 
