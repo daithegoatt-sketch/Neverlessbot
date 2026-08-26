@@ -28,7 +28,12 @@ assert.equal(effective.sources.some((row) => /Test Sword passive/.test(row.sourc
 const conditional = weaponPassiveBonuses(snapshot, guide, {
   r1: { description: 'After using an Elemental Skill, CRIT Rate is increased by 20% for 10s.' },
 });
-assert.equal(conditional.bonuses.critRate, 15, 'recommended conditional passive should use conservative expected uptime');
+assert.equal(conditional.bonuses.critRate, 20, 'recommended conditional passive should use its standard active value');
+
+const offGuideConditional = weaponPassiveBonuses(snapshot, { weapons: ['Other Sword'] }, {
+  r1: { description: 'After using an Elemental Skill, CRIT Rate is increased by 20% for 10s.' },
+});
+assert.equal(offGuideConditional.bonuses.critRate, 12, 'non-recommended conditional passive should stay conservative');
 
 const blizzard = effectiveStatsForRating({
   ...snapshot,
