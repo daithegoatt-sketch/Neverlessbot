@@ -80,16 +80,26 @@ function mainStatMatch(snapshot, guide) {
   return total ? matched / total : 0.65;
 }
 
+function unlistedWeaponBaseline(snapshot) {
+  const rarity = Number(snapshot?.weapon?.rarity);
+  const level = Number(snapshot?.weapon?.level);
+  const rarityBase = rarity >= 5 ? 0.70 : rarity === 4 ? 0.62 : rarity === 3 ? 0.52 : 0.56;
+  const levelFactor = Number.isFinite(level) ? clamp(level / 90, 0.5, 1) : 0.9;
+  return rarityBase * (0.85 + levelFactor * 0.15);
+}
+
 function weaponMatch(snapshot, guide) {
   const name = normalize(snapshot?.weapon?.name);
   if (!name) return 0;
-  const weapons = guide?.weapons || [];
-  if (!weapons.length) return 0.7;
+  const weapons = [...new Set([...(guide?.weapons || []), ...(guide?.f2pWeapons || [])])];
+  if (!weapons.length) return unlistedWeaponBaseline(snapshot);
   const index = weapons.findIndex((item) => {
     const recommended = normalize(item);
     return recommended && (recommended.includes(name) || name.includes(recommended));
   });
-  if (index < 0) return 0.5;
+  // A weapon missing from a scraped recommendation list is unknown, not automatically bad.
+  // Keep a meaningful gap from a documented recommendation while avoiding a flat 50% penalty.
+  if (index < 0) return unlistedWeaponBaseline(snapshot);
   return [1, 0.93, 0.88, 0.84, 0.8, 0.76][Math.min(index, 5)];
 }
 
@@ -146,9 +156,6 @@ function critReadinessScore(stats, profile) {
   const cd = Number(stats?.critDmg);
   if (!Number.isFinite(cr) || !Number.isFinite(cd)) return null;
 
-  // This is only a fallback when a published guide has no numeric goal table.
-  // It measures whether a crit-oriented build has reached a healthy endgame floor;
-  // it is not a replacement for explicit per-character targets.
   const crScore = clamp((cr - 30) / 40);
   const cdScore = clamp((cd - 100) / 100);
   return crScore * 0.45 + cdScore * 0.55;
@@ -188,17 +195,7 @@ function evaluateBuild(snapshot, guide, options = {}) {
     const shownValue = Math.round(effectiveValue * 10) / 10;
     if (status === 'down') notes.push({ type: 'down', key, text: `${LABELS[key]} ${shownValue}${suffix} < ${target.min}${suffix}` });
     else if (status === 'warn') notes.push({ type: 'warn', key, text: `${LABELS[key]} ${shownValue}% أعلى من الهدف ${formatTarget(target)}` });
-    relevantStats.push({
-      key,
-      label: LABELS[key],
-      value: rawValue,
-      effectiveValue,
-      combatBonus: Number(combat.bonuses?.[key]) || 0,
-      target,
-      ratio,
-      status,
-      weight,
-    });
+    relevantStats.push({ key, label: LABELS[key], value: rawValue, effectiveValue, combatBonus: Number(combat.bonuses?.[key]) || 0, target, ratio, status, weight });
   }
 
   const explicitStatScore = statWeightTotal ? statPoints / statWeightTotal : null;
@@ -214,36 +211,22 @@ function evaluateBuild(snapshot, guide, options = {}) {
   const akasha = akashaScore(options.akashaPercentile);
   const hasAkasha = Number.isFinite(percentile);
 
-  // Akasha ranks artifact strength in a normalized leaderboard. When available it should materially
-  // affect a complete build, but it must never bypass the hard caps for missing/underleveled gear.
   let raw;
   if (hasAkasha) {
-    raw = statScore * 0.35
-      + completion.score * 0.15
-      + mainsScore * 0.10
-      + setScore * 0.10
-      + weaponScore * 0.10
-      + akasha * 0.20;
+    raw = statScore * 0.35 + completion.score * 0.15 + mainsScore * 0.10 + setScore * 0.10 + weaponScore * 0.10 + akasha * 0.20;
   } else {
-    raw = statScore * 0.42
-      + completion.score * 0.20
-      + mainsScore * 0.15
-      + setScore * 0.10
-      + weaponScore * 0.13;
+    raw = statScore * 0.42 + completion.score * 0.20 + mainsScore * 0.15 + setScore * 0.10 + weaponScore * 0.13;
   }
 
   let score = Math.round(Math.max(0, Math.min(1, raw)) * 100);
   const eliteAkasha = hasAkasha && percentile <= 10;
 
-  // Hard caps prevent incomplete characters from receiving flattering ratings.
   if (completion.count === 0) score = Math.min(score, 25);
   else if (completion.count < 3) score = Math.min(score, 42);
   else if (completion.count < 5) score = Math.min(score, 62);
   if (completion.count === 5 && completion.avgLevel < 12) score = Math.min(score, 68);
   else if (completion.count === 5 && completion.avgLevel < 18) score = Math.min(score, 82);
 
-  // A genuine high Akasha placement can validate an unconventional but effective main-stat/set choice,
-  // so those caps become softer for Top 10% builds. Missing artifacts still cannot be bypassed.
   if (mainsScore < 0.34) score = Math.min(score, eliteAkasha ? 78 : 62);
   else if (mainsScore < 0.67) score = Math.min(score, eliteAkasha ? 92 : 80);
   if (setScore < 0.5 && guide?.artifacts?.length) score = Math.min(score, eliteAkasha ? 92 : 86);
@@ -283,21 +266,7 @@ function compareSnapshots(previous, current) {
     const after = current.snapshot?.stats?.[key];
     if (Number.isFinite(before) && Number.isFinite(after)) deltas[key] = Math.round((after - before) * 10) / 10;
   }
-  return {
-    scoreDelta: current.evaluation.score - previous.evaluation.score,
-    deltas,
-    previousScore: previous.evaluation.score,
-    currentScore: current.evaluation.score,
-  };
+  return { scoreDelta: current.evaluation.score - previous.evaluation.score, deltas, previousScore: previous.evaluation.score, currentScore: current.evaluation.score };
 }
 
-module.exports = {
-  evaluateBuild,
-  compareSnapshots,
-  parseTarget,
-  LABELS,
-  akashaPercent,
-  targetScore,
-  usefulRvScore,
-  fallbackStatScore,
-};
+module.exports = { evaluateBuild, compareSnapshots, parseTarget, LABELS, akashaPercent, targetScore, usefulRvScore, fallbackStatScore, weaponMatch, unlistedWeaponBaseline };
