@@ -79,6 +79,13 @@ async function getWeapon(name) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+async function getConstellation(name) {
+  if (!name) return null;
+  const url = `${API}/constellations?query=${encodeURIComponent(name)}&resultLanguage=english`;
+  const value = await fetchJson(url);
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
 async function getCharacterStats(name, level = '90') {
   const url = `${API}/stats?folder=characters&query=${encodeURIComponent(name)}&level=${encodeURIComponent(level)}&resultLanguage=english`;
   const value = await fetchJson(url);
@@ -94,5 +101,6 @@ module.exports = {
   getCharacter,
   getTalent,
   getWeapon,
+  getConstellation,
   getCharacterStats,
 };
