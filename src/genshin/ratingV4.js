@@ -6,6 +6,7 @@ const { getCharacterNames, getCharacter } = require('./dataClient');
 const { getLinkedUid, linkUid } = require('./accountStore');
 const { fetchAccount, findCharacter, getBuildSnapshot, accountSummary } = require('./enkaClient');
 const { evaluateBuild, compareSnapshots } = require('./buildEvaluator');
+const { applyCompetitiveCeiling } = require('./ratingCeiling');
 const { getEntries, record } = require('./buildHistory');
 const { buildRatingCard, buildStatsCard } = require('./buildCard');
 const { fetchAkashaPercentile } = require('./akashaClient');
@@ -188,7 +189,7 @@ async function handleRating(message, characterName, lang, type) {
   }
 
   const akashaPercentile = await fetchAkashaPercentile(uid, characterName, { forceRefresh: true });
-  const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile });
+  const evaluation = applyCompetitiveCeiling(evaluateBuild(snapshot, guide, { akashaPercentile }));
   const current = { snapshot, evaluation };
   const entries = getEntries(message.author.id, uid, characterName);
   const latest = entries.at(-1) || null;
