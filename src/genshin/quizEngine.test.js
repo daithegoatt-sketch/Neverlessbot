@@ -13,28 +13,28 @@ const records = [
   {
     name: 'Alpha', element: 'Cryo', weapon: 'Sword', region: 'Mondstadt', rarity: '5★', birthday: 'January 1',
     constellation: 'Astra', title: 'First Star', skill: 'Frozen Step', burst: 'Winter End', localSpecialty: 'Flower A',
-    bossMaterial: 'Boss A', enemyMaterial: 'Drop A', talentBook: 'Philosophies of A',
+    bossMaterial: 'Boss A', enemyMaterial: 'Drop A', talentBook: 'Philosophies of A', recommendedWeapon: 'Weapon A', recommendedArtifact: '4pc Set A',
   },
   {
     name: 'Beta', element: 'Pyro', weapon: 'Bow', region: 'Liyue', rarity: '4★', birthday: 'February 2',
     constellation: 'Flamma', title: 'Red Arrow', skill: 'Fire Step', burst: 'Blazing End', localSpecialty: 'Flower B',
-    bossMaterial: 'Boss B', enemyMaterial: 'Drop B', talentBook: 'Philosophies of B',
+    bossMaterial: 'Boss B', enemyMaterial: 'Drop B', talentBook: 'Philosophies of B', recommendedWeapon: 'Weapon B', recommendedArtifact: '4pc Set B',
   },
   {
     name: 'Gamma', element: 'Hydro', weapon: 'Catalyst', region: 'Inazuma', rarity: '5★', birthday: 'March 3',
     constellation: 'Aqua', title: 'Blue Moon', skill: 'Water Step', burst: 'Ocean End', localSpecialty: 'Flower C',
-    bossMaterial: 'Boss C', enemyMaterial: 'Drop C', talentBook: 'Philosophies of C',
+    bossMaterial: 'Boss C', enemyMaterial: 'Drop C', talentBook: 'Philosophies of C', recommendedWeapon: 'Weapon C', recommendedArtifact: '4pc Set C',
   },
   {
     name: 'Delta', element: 'Electro', weapon: 'Polearm', region: 'Sumeru', rarity: '4★', birthday: 'April 4',
     constellation: 'Volt', title: 'Purple Spear', skill: 'Shock Step', burst: 'Thunder End', localSpecialty: 'Flower D',
-    bossMaterial: 'Boss D', enemyMaterial: 'Drop D', talentBook: 'Philosophies of D',
+    bossMaterial: 'Boss D', enemyMaterial: 'Drop D', talentBook: 'Philosophies of D', recommendedWeapon: 'Weapon D', recommendedArtifact: '4pc Set D',
   },
 ];
 
 const questions = buildQuestionsFromRecords(records, 'ar');
 const types = new Set(questions.map((row) => row.type));
-for (const type of ['element', 'weapon', 'region', 'rarity', 'birthday', 'constellation', 'title', 'skill', 'burst', 'localSpecialty', 'bossMaterial', 'enemyMaterial', 'talentBook']) {
+for (const type of ['element', 'weapon', 'region', 'rarity', 'birthday', 'constellation', 'title', 'skill', 'burst', 'localSpecialty', 'bossMaterial', 'enemyMaterial', 'talentBook', 'recommendedWeapon', 'recommendedArtifact']) {
   assert.equal(types.has(type), true, `missing quiz type: ${type}`);
 }
 assert.equal(questions.every((row) => row.options.length >= 2 && row.correctIndex >= 0), true);
@@ -54,13 +54,19 @@ const talent = {
   combat3: { name: 'Havoc: Ruin' },
   costs: { lvl7: [{ id: 104349, name: 'Philosophies of Contention' }] },
 };
-const extracted = quizRecord(character, talent);
+const guide = {
+  weapons: ['Azurelight', 'Haran Geppaku Futsu'],
+  artifacts: ['4pc Finale of the Deep Galleries'],
+};
+const extracted = quizRecord(character, talent, guide);
 assert.equal(extracted.localSpecialty, 'Skysplit Gembloom');
 assert.equal(extracted.bossMaterial, 'Ensnaring Gaze');
 assert.equal(extracted.enemyMaterial, 'Meshing Gear');
 assert.equal(extracted.skill, 'Havoc: Warp');
 assert.equal(extracted.burst, 'Havoc: Ruin');
 assert.equal(extracted.talentBook, 'Philosophies of Contention');
+assert.equal(extracted.recommendedWeapon, 'Azurelight');
+assert.equal(extracted.recommendedArtifact, '4pc Finale of the Deep Galleries');
 
 assert.equal(parseQuizCount('20'), 20);
 assert.equal(parseQuizCount('1'), 1);
