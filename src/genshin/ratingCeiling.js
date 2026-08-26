@@ -60,8 +60,9 @@ function competitiveCeilingScore(evaluation) {
     return { score: 0, rows: competitiveRows(evaluation), eligible: false };
   }
 
-  // This upper-band bonus is deliberately restricted to genuinely complete builds.
-  // It must not let raw stats bypass the existing artifact/main-stat/set completion rules.
+  // The upper 5 points are only available to genuinely complete builds that already
+  // satisfy the published floors. This prevents raw-stat stacking from bypassing
+  // missing artifacts, wrong main stats, or a non-matching set.
   const complete = Number(evaluation.artifactCount) === 5
     && Number(evaluation.artifactAvgLevel) >= 19.5
     && Number(evaluation.mainStatScore) >= 100
@@ -89,13 +90,22 @@ function applyCompetitiveCeiling(evaluation) {
   const bonus = ceiling.eligible
     ? Math.min(MAX_COMPETITIVE_BONUS, Math.max(0, Math.round(ceiling.score * MAX_COMPETITIVE_BONUS)))
     : 0;
-  const score = Math.min(100, baseScore + bonus);
+
+  // Once a complete build reaches all published floors, those floors are no longer
+  // treated as a perfect 100. We reserve the final five points for useful strength
+  // above the floor, so e.g. 80/240/2400 can outrank 70/200/2100 for the same Skirk.
+  const competitiveBaseScore = ceiling.eligible
+    ? Math.min(baseScore, 100 - MAX_COMPETITIVE_BONUS)
+    : baseScore;
+  const score = Math.min(100, competitiveBaseScore + bonus);
 
   return {
     ...evaluation,
     score,
     baseScore,
-    competitiveBonus: score - baseScore,
+    competitiveBaseScore,
+    competitiveBonus: bonus,
+    competitiveReservedPoints: Math.max(0, baseScore - competitiveBaseScore),
     competitiveCeilingScore: Math.round(ceiling.score * 100),
     competitiveCeilingEligible: ceiling.eligible,
     competitiveCeilingRows: ceiling.rows,
