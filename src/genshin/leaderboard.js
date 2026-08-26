@@ -12,6 +12,11 @@ function key(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+function strength(row) {
+  const precise = Number(row?.rankingScore ?? row?.evaluation?.rankingScore);
+  return Number.isFinite(precise) ? precise : Number(row?.score) || 0;
+}
+
 async function mapLimit(items, limit, mapper) {
   const results = new Array(items.length);
   let cursor = 0;
@@ -87,6 +92,7 @@ async function buildCharacterLeaderboard(guild, characterName) {
       displayName: link.displayName,
       uid: link.uid,
       score: rated.score,
+      rankingScore: rated.rankingScore ?? rated.evaluation?.rankingScore ?? rated.score,
       akasha: rated.akasha,
       snapshot: rated.snapshot,
       evaluation: rated.evaluation,
@@ -96,7 +102,8 @@ async function buildCharacterLeaderboard(guild, characterName) {
   });
 
   const clean = rows.filter(Boolean).sort((a, b) =>
-    b.score - a.score
+    strength(b) - strength(a)
+    || b.score - a.score
     || (topPercent(a.akasha) ?? 999) - (topPercent(b.akasha) ?? 999)
     || b.artifactQuality - a.artifactQuality,
   );
@@ -106,9 +113,10 @@ async function buildCharacterLeaderboard(guild, characterName) {
 }
 
 function accountScoreFromRated(rated) {
-  const valid = (rated || []).filter((row) => Number.isFinite(Number(row?.score)) && Number(row.score) > 0);
+  const valid = (rated || []).filter((row) => Number.isFinite(strength(row)) && strength(row) > 0);
   const top = [...valid].sort((a, b) =>
-    b.score - a.score
+    strength(b) - strength(a)
+    || Number(b.score || 0) - Number(a.score || 0)
     || (topPercent(a.akasha) ?? 999) - (topPercent(b.akasha) ?? 999)
     || b.artifactQuality - a.artifactQuality,
   ).slice(0, 3);
@@ -119,13 +127,13 @@ function accountScoreFromRated(rated) {
   let usedWeight = 0;
   top.forEach((row, index) => {
     const weight = weights[index] || 0;
-    weighted += row.score * weight;
+    weighted += strength(row) * weight;
     usedWeight += weight;
   });
   const normalized = usedWeight ? weighted / usedWeight : 0;
   const coverage = Math.min(1, valid.length / 3);
   const accountScore = Math.round(normalized * (0.9 + 0.1 * coverage) * 10) / 10;
-  const topAverage = Math.round((top.reduce((sum, row) => sum + row.score, 0) / top.length) * 10) / 10;
+  const topAverage = Math.round((top.reduce((sum, row) => sum + strength(row), 0) / top.length) * 10) / 10;
   return { accountScore, topBuilds: top, topAverage };
 }
 
@@ -208,4 +216,5 @@ module.exports = {
   accountScoreFromRated,
   buildStrengths,
   buildAccountScore,
+  strength,
 };
