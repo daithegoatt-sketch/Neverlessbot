@@ -15,6 +15,7 @@ assert.equal(isStatReviewRequest('rate stats Skirk'), true);
 assert.equal(isStatReviewRequest('إحصائيات Skirk بحسابي'), false);
 assert.equal(isStatReviewRequest('بيلد Skirk'), false);
 
+assert.equal(ratingTargetFromText('شنو يمنع Skirk من 0'), 0);
 assert.equal(ratingTargetFromText('شنو يمنع Skirk من 90'), 90);
 assert.equal(ratingTargetFromText('شنو يمنع Skirk من 95'), 95);
 assert.equal(ratingTargetFromText('شنو يمنع Skirk من 100'), 100);
