@@ -7,6 +7,8 @@ const DATA_CHANNEL_NAME = 'neverless-data';
 const CONFIG_PREFIX = 'NLAUTOMOD1|config|';
 const WARNING_PREFIX = 'NLAUTOMOD1|warn|';
 const MUTE_MS = 5 * 60 * 1000;
+const SPAM_WINDOW_MS = 60 * 1000;
+const SPAM_MESSAGE_COUNT = 5;
 const MAX_SCAN_MESSAGES = 5000;
 
 const forbiddenWords = new Map();
@@ -14,6 +16,7 @@ const warningCounts = new Map();
 const configMessageIds = new Map();
 const warningMessageIds = new Map();
 const offenseQueues = new Map();
+const spamSequences = new Map();
 let installed = false;
 
 function normalizeText(value) {
@@ -34,15 +37,43 @@ function tokenize(value) {
   return normalized ? normalized.split(' ').filter(Boolean) : [];
 }
 
-function detectRepeatedWord(value, threshold = 5) {
-  const counts = new Map();
-  for (const token of tokenize(value)) {
-    if (token.length < 2) continue;
-    const count = (counts.get(token) || 0) + 1;
-    counts.set(token, count);
-    if (count > threshold) return { word: token, count };
+function singleWord(value) {
+  const tokens = tokenize(value);
+  if (tokens.length !== 1 || tokens[0].length < 2) return null;
+  return tokens[0];
+}
+
+function nextSpamSequence(previous, value, now = Date.now(), options = {}) {
+  const word = singleWord(value);
+  if (!word) return { triggered: false, word: null, count: 0, sequence: null };
+
+  const requiredCount = Number.isInteger(options.requiredCount) && options.requiredCount > 1
+    ? options.requiredCount
+    : SPAM_MESSAGE_COUNT;
+  const windowMs = Number.isFinite(options.windowMs) && options.windowMs > 0
+    ? options.windowMs
+    : SPAM_WINDOW_MS;
+
+  let timestamps = [];
+  if (previous?.word === word && Array.isArray(previous.timestamps)) {
+    timestamps = previous.timestamps.filter((timestamp) =>
+      Number.isFinite(timestamp)
+      && timestamp <= now
+      && now - timestamp <= windowMs,
+    );
   }
-  return null;
+  timestamps.push(now);
+
+  if (timestamps.length >= requiredCount) {
+    return { triggered: true, word, count: timestamps.length, sequence: null };
+  }
+
+  return {
+    triggered: false,
+    word,
+    count: timestamps.length,
+    sequence: { word, timestamps },
+  };
 }
 
 function findForbiddenPhrase(value, entries) {
@@ -70,6 +101,10 @@ function configKey(guildId) {
 
 function warningKey(guildId, userId, type) {
   return `${guildId}:${userId}:${type}`;
+}
+
+function spamSequenceKey(message) {
+  return `${message.guildId}:${message.channelId}:${message.author.id}`;
 }
 
 function encodeWords(entries) {
@@ -288,14 +323,27 @@ async function handleMessage(message) {
   const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
   if (!member || isExempt(message, member)) return;
 
+  const sequenceKey = spamSequenceKey(message);
   const entries = entriesForGuild(message.guildId);
   const forbidden = findForbiddenPhrase(message.content, entries.values());
-  const repeated = forbidden ? null : detectRepeatedWord(message.content, 5);
-  const type = forbidden ? 'language' : repeated ? 'spam' : null;
-  if (!type) return;
+  if (forbidden) {
+    spamSequences.delete(sequenceKey);
+    await message.delete().catch(() => {});
+    await queueOffense(message, member, 'language');
+    return;
+  }
+
+  const spam = nextSpamSequence(
+    spamSequences.get(sequenceKey),
+    message.content,
+    Number.isFinite(message.createdTimestamp) ? message.createdTimestamp : Date.now(),
+  );
+  if (spam.sequence) spamSequences.set(sequenceKey, spam.sequence);
+  else spamSequences.delete(sequenceKey);
+  if (!spam.triggered) return;
 
   await message.delete().catch(() => {});
-  await queueOffense(message, member, type);
+  await queueOffense(message, member, 'spam');
 }
 
 async function handleInteraction(interaction) {
@@ -376,7 +424,8 @@ function installAutoMod(client) {
 module.exports = {
   installAutoMod,
   normalizeText,
-  detectRepeatedWord,
+  singleWord,
+  nextSpamSequence,
   findForbiddenPhrase,
   offenseAction,
   parseConfig,
