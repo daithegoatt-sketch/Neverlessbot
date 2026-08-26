@@ -23,6 +23,10 @@ function isLinkMutation(content) {
   return /(?:ربط\s+UID|فك\s+ربط|unlink\s+UID|link\s+UID)/iu.test(String(content || ''));
 }
 
+function isRankingRequest(content) {
+  return /(?:ترتيب|leaderboard|ranking)/iu.test(String(content || ''));
+}
+
 function installAchievementTriggers(client) {
   if (installed) return;
   installed = true;
@@ -48,9 +52,10 @@ function installAchievementTriggers(client) {
     if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return;
     if (!hasBotMention(message, client) || !shouldRefreshFromMessage(message.content)) return;
     const mutation = isLinkMutation(message.content);
+    const ranking = isRankingRequest(message.content);
     scheduleAchievementRefresh(message.guild, {
       delay: mutation ? 25_000 : 12_000,
-      force: mutation,
+      force: mutation || ranking,
     });
   });
 }
@@ -60,4 +65,5 @@ module.exports = {
   hasBotMention,
   shouldRefreshFromMessage,
   isLinkMutation,
+  isRankingRequest,
 };
