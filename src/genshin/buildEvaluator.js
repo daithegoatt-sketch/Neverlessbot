@@ -168,7 +168,7 @@ function evaluateBuild(snapshot, guide, options = {}) {
   const setScore = recommendedSetMatch(snapshot, guide);
   const mainsScore = mainStatMatch(snapshot, guide);
   const weaponScore = weaponMatch(snapshot, guide);
-  const combat = effectiveStatsForRating(snapshot, guide);
+  const combat = effectiveStatsForRating(snapshot, guide, { weaponData: options.weaponData || null });
   const notes = [];
   const relevantStats = [];
 
@@ -268,6 +268,7 @@ function evaluateBuild(snapshot, guide, options = {}) {
     artifactCount: completion.count,
     artifactAvgLevel: Math.round(completion.avgLevel * 10) / 10,
     combatBonuses: combat.bonuses,
+    combatBonusSources: combat.sources || [],
     relevantStats,
     notes,
   };
