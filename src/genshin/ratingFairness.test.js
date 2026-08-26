@@ -5,6 +5,7 @@ const {
   applyRatingFairness,
   akashaBenchmarkScore,
   constellationBonus,
+  constellationImpact,
 } = require('./ratingFairness');
 const { weaponMatch } = require('./buildEvaluator');
 
@@ -41,9 +42,18 @@ assert.equal(ordinaryAkasha.score, 84, 'ordinary Akasha placement must not infla
 const badC4 = applyRatingFairness(
   baseEvaluation({ score: 62, mainStatScore: 34, artifactSetScore: 20, weaponScore: 50 }),
   { constellation: 4, weapon: { name: 'Weak Weapon', refinement: 1 } },
-  { akashaPercentile: null, artifactQuality: 250 },
+  {
+    akashaPercentile: null,
+    artifactQuality: 250,
+    constellationData: {
+      c1: { description: 'CRIT Rate is increased by 20%.' },
+      c2: { description: 'DMG dealt is increased by 30%.' },
+      c3: { description: 'Increases the Level of Elemental Skill by 3.' },
+      c4: { description: 'Elemental Mastery is increased by 160.' },
+    },
+  },
 );
-assert.equal(badC4.score, 62, 'constellations must not rescue a poor build');
+assert.equal(badC4.score, 62, 'even documented combat constellations must not rescue a poor build');
 
 const excellentC0 = applyRatingFairness(
   baseEvaluation({ score: 95, mainStatScore: 100 }),
@@ -55,10 +65,20 @@ assert.ok(excellentC0.score > badC4.score);
 const strongC4 = applyRatingFairness(
   baseEvaluation({ score: 95, mainStatScore: 100 }),
   { constellation: 4, weapon: { name: 'Strong Weapon', refinement: 1 } },
-  { akashaPercentile: null, artifactQuality: 620 },
+  {
+    akashaPercentile: null,
+    artifactQuality: 620,
+    constellationData: {
+      c1: { description: 'Movement speed is increased.' },
+      c2: { description: 'Enemy DEF is decreased by 30%.' },
+      c3: { description: 'Increases the Level of Elemental Skill by 3.' },
+      c4: { description: 'Elemental Mastery is increased by 160.' },
+    },
+  },
 );
-assert.ok(strongC4.rankingScore > excellentC0.rankingScore, 'constellation should give a small edge between similarly strong builds');
+assert.ok(strongC4.rankingScore > excellentC0.rankingScore, 'documented combat constellations should give a small edge between similarly strong builds');
 assert.ok(strongC4.rankingScore - excellentC0.rankingScore < 1, 'constellation edge must remain bounded');
+assert.ok(constellationImpact('Enemy DEF is decreased by 30%.') > constellationImpact('Movement speed is increased.'));
 
 const perfect = applyRatingFairness(
   baseEvaluation({ score: 99, mainStatScore: 100 }),
