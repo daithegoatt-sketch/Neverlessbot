@@ -9,7 +9,7 @@ const {
 
 function evaluation(stats, overrides = {}) {
   return {
-    score: 90,
+    score: 100,
     artifactCount: 5,
     artifactAvgLevel: 20,
     mainStatScore: 100,
@@ -36,8 +36,9 @@ const floorBuild = applyCompetitiveCeiling(evaluation([
   row('critDmg', 'CRIT DMG', 200, 200, 200, 1.3),
   row('atk', 'ATK', 2100, 2100, 2100, 1.2),
 ]));
-assert.equal(floorBuild.score, 90);
+assert.equal(floorBuild.score, 95);
 assert.equal(floorBuild.competitiveBonus, 0);
+assert.equal(floorBuild.competitiveReservedPoints, 5);
 
 const strongerBuild = applyCompetitiveCeiling(evaluation([
   row('critRate', 'CRIT Rate', 80, 70, 80, 1.3),
@@ -54,12 +55,14 @@ const missingTarget = applyCompetitiveCeiling(evaluation([
   row('atk', 'ATK', 2600, 2100, 2100, 1.2),
 ]));
 assert.equal(missingTarget.competitiveBonus, 0);
+assert.equal(missingTarget.score, 100);
 
 const incomplete = applyCompetitiveCeiling(evaluation([
   row('critRate', 'CRIT Rate', 90, 70, 80),
   row('critDmg', 'CRIT DMG', 280, 200),
-], { artifactSetScore: 65 }));
+], { artifactSetScore: 65, score: 86 }));
 assert.equal(incomplete.competitiveBonus, 0);
+assert.equal(incomplete.score, 86);
 
 const withEr = applyCompetitiveCeiling(evaluation([
   row('critRate', 'CRIT Rate', 80, 70, 80),
