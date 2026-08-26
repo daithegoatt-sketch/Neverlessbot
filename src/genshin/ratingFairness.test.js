@@ -6,6 +6,7 @@ const {
   akashaBenchmarkScore,
   constellationBonus,
 } = require('./ratingFairness');
+const { weaponMatch } = require('./buildEvaluator');
 
 function baseEvaluation(overrides = {}) {
   return {
@@ -67,5 +68,17 @@ const perfect = applyRatingFairness(
 assert.equal(perfect.score, 100, '100% must remain attainable');
 assert.equal(akashaBenchmarkScore({ topPercent: 0.01 }), 100);
 assert.equal(constellationBonus({ constellation: 0 }, 100), 0);
+
+const unlistedFiveStar = weaponMatch(
+  { weapon: { name: 'Viable 5 Star', rarity: 5, level: 90 } },
+  { weapons: ['Signature Weapon'], f2pWeapons: [] },
+);
+assert.ok(unlistedFiveStar >= 0.69 && unlistedFiveStar < 0.8, 'unlisted 5-star should be treated as viable unknown, not a 50% failure');
+
+const f2pRecommended = weaponMatch(
+  { weapon: { name: 'Crafted Sword', rarity: 4, level: 90 } },
+  { weapons: ['Signature Weapon'], f2pWeapons: ['Crafted Sword'] },
+);
+assert.equal(f2pRecommended, 0.93, 'published F2P recommendations must count as documented weapons');
 
 console.log('ratingFairness tests passed');
