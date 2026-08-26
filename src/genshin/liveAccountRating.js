@@ -4,6 +4,7 @@ const { findCharacter, getBuildSnapshot } = require('./enkaClient');
 const { getGuide } = require('./guideClient');
 const { fetchAkashaPercentile, fetchAkashaPercentiles } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
+const { applyCompetitiveCeiling } = require('./ratingCeiling');
 const { reviewArtifacts } = require('./artifactEvaluator');
 
 const CACHE_TTL = 90 * 1000;
@@ -54,7 +55,8 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
     : await fetchAkashaPercentile(uid, snapshot.name, {
       forceRefresh: Boolean(options.forceAkashaRefresh),
     }).catch(() => null);
-  const evaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
+  const baseEvaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
+  const evaluation = applyCompetitiveCeiling(baseEvaluation);
   const artifacts = reviewArtifacts(snapshot, guide);
   return {
     name: snapshot.name,
