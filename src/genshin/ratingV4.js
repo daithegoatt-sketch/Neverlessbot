@@ -1,15 +1,13 @@
 'use strict';
 
 const { getGuideByText } = require('./guides');
-const { getGuide } = require('./guideClient');
 const { getCharacterNames, getCharacter } = require('./dataClient');
 const { getLinkedUid, linkUid } = require('./accountStore');
 const { fetchAccount, findCharacter, getBuildSnapshot, accountSummary } = require('./enkaClient');
-const { evaluateBuild, compareSnapshots } = require('./buildEvaluator');
-const { applyCompetitiveCeiling } = require('./ratingCeiling');
+const { compareSnapshots } = require('./buildEvaluator');
+const { rateCurrentCharacter } = require('./liveAccountRating');
 const { getEntries, record } = require('./buildHistory');
 const { buildRatingCard, buildStatsCard } = require('./buildCard');
-const { fetchAkashaPercentile } = require('./akashaClient');
 const { enhancedAccountEvaluationText } = require('./enhancedRatingText');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
@@ -181,15 +179,17 @@ async function handleStats(message, characterName, lang) {
 async function handleRating(message, characterName, lang, type) {
   const linked = await getLinkedCharacter(message, characterName, lang);
   if (!linked) return;
-  const { uid, character, snapshot } = linked;
-  const guide = await getGuide(characterName);
-  if (!guide) {
+  const { uid, account, character, snapshot } = linked;
+
+  const rated = await rateCurrentCharacter(uid, account, characterName, { forceAkashaRefresh: true }).catch(() => null);
+  if (!rated) {
     await send(message, lang === 'ar' ? `أقدر أقرأ **${characterName}** من Enka، لكن ما عندي Guide موثوق كفاية حتى أعطيها نسبة تقييم.` : `I can read **${characterName}** from Enka, but I do not have a reliable enough guide to assign a rating.`);
     return;
   }
 
-  const akashaPercentile = await fetchAkashaPercentile(uid, characterName, { forceRefresh: true });
-  const evaluation = applyCompetitiveCeiling(evaluateBuild(snapshot, guide, { akashaPercentile }));
+  const guide = rated.guide;
+  const akashaPercentile = rated.akasha;
+  const evaluation = rated.evaluation;
   const current = { snapshot, evaluation };
   const entries = getEntries(message.author.id, uid, characterName);
   const latest = entries.at(-1) || null;
