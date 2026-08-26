@@ -21,6 +21,14 @@ function helpText(lang) {
       '`improve Skirk artifacts` — text-only artifact improvement plan',
       '`Skirk stats on my account` — current account stats only',
       '`compare Skirk on my account` — compare with an older saved build',
+      '`flex build Skirk` — compact shareable build/rating card',
+      '`is my Skirk build finished` — tells you if meaningful farming is still needed',
+      '`weakest artifact Skirk` — finds the first piece worth replacing',
+      '`weakest character team Sandrone` — team bottleneck from published/explicit Showcase members',
+      '`rate stats Skirk` — checks numeric targets and useful overcap',
+      '`compare Skirk with server` — benchmark against linked server builds',
+      '`what prevents Skirk from 90` — biggest blockers below 90 Neverless',
+      '`quiz` — interactive Genshin question',
       '`who should I build` — build priority from your visible roster',
       '`account summary` — top builds, best team and current priority',
       '`what is my account missing` — useful characters not visible for your strongest team shells',
@@ -44,6 +52,7 @@ function helpText(lang) {
       '`-quest <quest name>` — find a direct Genshin quest walkthrough video',
       '`link UID 7XXXXXXXXX` / `unlink UID` — manage your linked account',
       '',
+      'Top Character and Top Neverless achievement roles are assigned automatically from the same linked Showcase leaderboard logic.',
       'Commands starting with `-` work in every server channel without a mention. Account/profile commands require mentioning Neverless Bot in the Genshin bot channel.',
     ].join('\n');
   }
@@ -57,6 +66,14 @@ function helpText(lang) {
     '`تحسين ارتيفاكتات Skirk` — خطة تحسين نصية حسب بيلد الشخصية',
     '`إحصائيات Skirk بحسابي` — إحصائيات الحساب فقط',
     '`قارن Skirk بحسابي` — مقارنة البيلد بنسخة سابقة',
+    '`فلكس بيلد Skirk` — بطاقة مختصرة للبيلد والتقييم للمشاركة',
+    '`هل خلص بيلد Skirk` — يحدد إذا البيلد عمليًا مكتمل أو يحتاج Farming',
+    '`أضعف قطعة عندي في Skirk` — يحدد أول قطعة تستحق التغيير',
+    '`أضعف شخصية بتيم Sandrone بحسابي` — يحدد Bottleneck من التيم المنشور أو الأربع شخصيات التي تكتبها',
+    '`قيم احصائيات Skirk` — يفحص الأهداف الرقمية والـOvercap المفيد',
+    '`قارن Skirk بالسيرفر` — يقارن بيلدك مع الحسابات المربوطة بالسيرفر',
+    '`شنو يمنع Skirk من 90` — يرتب أكبر العوائق تحت 90 Neverless',
+    '`كويز` — سؤال Genshin تفاعلي',
     '`مين ابني` — يرتب لك أولوية بناء الشخصيات الظاهرة',
     '`ملخص حسابي` — أقوى البيلدات، أفضل تيم وأولوية التطوير',
     '`شنو ناقص حسابي` — شخصيات مفيدة ناقصة من الـShowcase لتكميل أقوى التيمات',
@@ -80,18 +97,38 @@ function helpText(lang) {
     '`-كويست اسم الكويست` — يجيب لك شرح فيديو مباشر للكويست',
     '`ربط UID 7XXXXXXXXX` / `فك ربط UID` — إدارة الحساب المربوط',
     '',
+    'رتب Top Character وTop Neverless تنعطى تلقائيًا من نفس منطق ترتيب الحسابات والـShowcase المربوط.',
     'الأوامر اللي تبدأ بـ`-` تشتغل بكل رومات السيرفر بدون منشن. أوامر الحساب والبروفايل تحتاج منشن Neverless Bot داخل روم البوت.',
   ].join('\n');
+}
+
+function splitHelp(content, max = 1900) {
+  const lines = String(content || '').split('\n');
+  const chunks = [];
+  let current = '';
+  for (const line of lines) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > max && current) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = next;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 async function handleHelpMessage(message) {
   const text = String(message?.content || '').trim();
   if (!isHelp(text)) return false;
-  await message.channel.send({
-    content: helpText(language(text)),
-    allowedMentions: { users: [], repliedUser: false },
-  });
+  for (const chunk of splitHelp(helpText(language(text)))) {
+    await message.channel.send({
+      content: chunk,
+      allowedMentions: { users: [], repliedUser: false },
+    });
+  }
   return true;
 }
 
-module.exports = { handleHelpMessage, helpText, isHelp };
+module.exports = { handleHelpMessage, helpText, isHelp, splitHelp };
