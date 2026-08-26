@@ -2,7 +2,7 @@
 
 const { findCharacter, getBuildSnapshot } = require('./enkaClient');
 const { getGuide } = require('./guideClient');
-const { getWeapon } = require('./dataClient');
+const { getWeapon, getConstellation } = require('./dataClient');
 const { fetchAkashaPercentile, fetchAkashaPercentiles } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
 const { applyCompetitiveCeiling } = require('./ratingCeiling');
@@ -57,9 +57,14 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
       forceRefresh: Boolean(options.forceAkashaRefresh),
     }).catch(() => null);
 
-  const [guide, weaponData, akasha] = await Promise.all([
+  const constellationPromise = Number(snapshot.constellation) > 0
+    ? getConstellation(snapshot.name).catch(() => null)
+    : Promise.resolve(null);
+
+  const [guide, weaponData, constellationData, akasha] = await Promise.all([
     getGuide(snapshot.name).catch(() => null),
     snapshot.weapon?.name ? getWeapon(snapshot.weapon.name).catch(() => null) : Promise.resolve(null),
+    constellationPromise,
     akashaPromise,
   ]);
   if (!guide) return null;
@@ -73,6 +78,7 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
   const evaluation = applyRatingFairness(competitiveEvaluation, snapshot, {
     akashaPercentile: akasha,
     artifactQuality: artifacts.averageUsefulRv,
+    constellationData,
   });
 
   return {
