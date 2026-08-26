@@ -107,7 +107,11 @@ function maxStacksNear(sentence) {
 function conditionalConfidence(sentence, recommended) {
   const conditional = /\b(?:when|after|if|while|upon|whenever|stack|trigger|for\s+\d+(?:\.\d+)?s)\b/i.test(sentence);
   if (!conditional) return 1;
-  return recommended ? 0.75 : 0.5;
+  // A recommended weapon is evaluated in its normal intended rotation, so a direct
+  // personal stat passive can use its published active value. Non-recommended
+  // weapons remain conservative because Neverless cannot assume their condition is
+  // consistently maintained for that character.
+  return recommended ? 1 : 0.6;
 }
 
 function extractPassiveBonus(description, labelPattern, percent = true, recommended = false) {
