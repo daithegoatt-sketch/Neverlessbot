@@ -9,7 +9,7 @@ const { handleArtifactReviewMessage } = require('./artifactRouter');
 const { handleUidMessage } = require('./uidRouter');
 const { handleHelpMessage } = require('./helpRouter');
 const { handleGenshinExtrasMessage, installGenshinExtras } = require('./genshinExtras');
-const { installAchievementRoles } = require('./achievementRoles');
+const { installAchievementTriggers } = require('./achievementTriggers');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publicCommands');
@@ -103,7 +103,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installActivity(this);
     installTempVoicePersistence(this);
     installAutoMod(this);
-    installAchievementRoles(this);
+    installAchievementTriggers(this);
     installGenshinExtras(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
