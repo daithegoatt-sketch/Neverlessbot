@@ -23,8 +23,14 @@ function topPercent(value) {
   return Number.isFinite(number) && number > 0 ? number : null;
 }
 
+function rowStrength(row) {
+  const precise = Number(row?.rankingScore ?? row?.evaluation?.rankingScore);
+  return Number.isFinite(precise) ? precise : Number(row?.score || 0);
+}
+
 function characterCompare(a, b) {
-  return Number(b?.score || 0) - Number(a?.score || 0)
+  return rowStrength(b) - rowStrength(a)
+    || Number(b?.score || 0) - Number(a?.score || 0)
     || (topPercent(a?.akasha) ?? 999) - (topPercent(b?.akasha) ?? 999)
     || Number(b?.artifactQuality || 0) - Number(a?.artifactQuality || 0);
 }
@@ -36,7 +42,7 @@ function accountCompare(a, b) {
 
 function chooseCharacterWinner(rows) {
   return [...(rows || [])]
-    .filter((row) => Number.isFinite(Number(row?.score)) && Number(row.score) > 0)
+    .filter((row) => rowStrength(row) > 0)
     .sort(characterCompare)[0] || null;
 }
 
@@ -137,11 +143,12 @@ async function collectState(guild) {
   for (const row of accounts.filter(Boolean)) {
     if (row.accountScore > 0) accountRows.push(row);
     for (const build of row.rated) {
-      if (!Number.isFinite(Number(build?.score)) || Number(build.score) <= 0 || !build.name) continue;
+      if (rowStrength(build) <= 0 || !build.name) continue;
       const candidate = {
         discordUserId: row.discordUserId,
         name: build.name,
         score: build.score,
+        rankingScore: build.rankingScore ?? build.evaluation?.rankingScore ?? build.score,
         akasha: build.akasha,
         artifactQuality: build.artifactQuality,
       };
