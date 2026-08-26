@@ -2,6 +2,7 @@
 
 const { accountEvaluationText } = require('./responses');
 const { akashaImprovementAdvice } = require('./ratingCopyV2');
+const { formatStat } = require('./statProfile');
 
 function normalize(value) {
   return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
@@ -100,6 +101,42 @@ function stripSetAdviceFromAkasha(text) {
     .trim();
 }
 
+function effectiveCombatText(evaluation, lang) {
+  const ar = lang === 'ar';
+  const rows = (evaluation?.relevantStats || []).filter((row) => Number(row?.combatBonus) > 0 && Number.isFinite(Number(row?.effectiveValue)));
+  if (!rows.length) return null;
+  const lines = [ar ? '**الستات الفعلية المحتسبة بالباسف/الـSet:**' : '**Effective stats including passive/set effects:**'];
+  for (const row of rows.slice(0, 5)) {
+    lines.push(`• **${row.label}:** ${formatStat(row.key, Number(row.value))} → **${formatStat(row.key, Number(row.effectiveValue))}**`);
+  }
+  const sources = [...new Set((evaluation?.combatBonusSources || []).map((row) => row?.source).filter(Boolean))];
+  if (sources.length) lines.push(`${ar ? 'المصدر' : 'Source'}: ${sources.slice(0, 4).join(' + ')}`);
+  return lines.join('\n');
+}
+
+function fairnessText(evaluation, akashaRanking, lang) {
+  const ar = lang === 'ar';
+  const before = Number(evaluation?.preFairnessScore);
+  const validation = Number(evaluation?.akashaValidationScore);
+  const top = Number(akashaRanking?.topPercent ?? akashaRanking);
+  const lines = [];
+
+  if (Number.isFinite(validation) && Number.isFinite(before) && validation >= before + 2 && Number.isFinite(top)) {
+    lines.push(ar
+      ? `**تحقق Akasha:** ترتيب Top ${top}% أثبت أن البيلد الفعلي أقوى من الـTarget العام لهذا الـGuide، لذلك Neverless لم يعاقبه كأنه بيلد ضعيف.`
+      : `**Akasha validation:** Top ${top}% provides strong external evidence that this build outperforms the generic guide target, so Neverless does not misclassify it as weak.`);
+  }
+
+  const cBonus = Number(evaluation?.constellationBonus) || 0;
+  const rBonus = Number(evaluation?.refinementBonus) || 0;
+  if (cBonus + rBonus >= 0.15) {
+    lines.push(ar
+      ? `**عامل الاستثمار:** Constellation/Refinement أضافت **+${(cBonus + rBonus).toFixed(1)}** نقطة فقط؛ هذا البونص محدود ولا يعوض بيلد ضعيف.`
+      : `**Investment factor:** Constellation/refinement added only **+${(cBonus + rBonus).toFixed(1)}** rating points; this bonus is capped and cannot rescue a weak build.`);
+  }
+  return lines.length ? lines.join('\n') : null;
+}
+
 function enhancedAccountEvaluationText(snapshot, evaluation, comparison, guide, lang, akashaRanking = null) {
   const setText = currentSetText(snapshot);
   const issue = setUpgrade(snapshot, guide);
@@ -107,6 +144,11 @@ function enhancedAccountEvaluationText(snapshot, evaluation, comparison, guide, 
   base = addSetNameToArtifactLine(base, setText);
   base = removeGenericSetWarnings(base);
   base = injectSetUpgrade(base, issue, lang);
+
+  const combat = effectiveCombatText(evaluation, lang);
+  const fairness = fairnessText(evaluation, akashaRanking, lang);
+  if (combat) base = `${base}\n\n${combat}`;
+  if (fairness) base = `${base}\n\n${fairness}`;
 
   const advice = stripSetAdviceFromAkasha(
     akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lang),
@@ -119,4 +161,6 @@ module.exports = {
   currentSetText,
   setUpgrade,
   cleanSetName,
+  effectiveCombatText,
+  fairnessText,
 };
