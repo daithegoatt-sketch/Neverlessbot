@@ -31,6 +31,14 @@ async function getNames(folder) {
   return names;
 }
 
+async function getCatalog(folder) {
+  const url = `${API}/${folder}?query=names&matchCategories=true&verboseCategories=true&resultLanguage=english`;
+  const value = await fetchJson(url, CACHE_TTL);
+  return Array.isArray(value)
+    ? value.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    : [];
+}
+
 async function getCharacterNames() {
   const live = await getNames('characters');
   return [...new Set([...live, ...KNOWN_CHARACTER_NAMES])];
@@ -44,8 +52,22 @@ async function getArtifactNames() {
   return getNames('artifacts');
 }
 
+async function getCharacterCatalog() {
+  return getCatalog('characters');
+}
+
+async function getTalentCatalog() {
+  return getCatalog('talents');
+}
+
 async function getCharacter(name) {
   const url = `${API}/characters?query=${encodeURIComponent(name)}&resultLanguage=english`;
+  const value = await fetchJson(url);
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+async function getTalent(name) {
+  const url = `${API}/talents?query=${encodeURIComponent(name)}&resultLanguage=english`;
   const value = await fetchJson(url);
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
@@ -60,6 +82,9 @@ module.exports = {
   getCharacterNames,
   getWeaponNames,
   getArtifactNames,
+  getCharacterCatalog,
+  getTalentCatalog,
   getCharacter,
+  getTalent,
   getCharacterStats,
 };
