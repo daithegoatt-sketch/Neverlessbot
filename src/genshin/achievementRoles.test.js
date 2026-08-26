@@ -6,6 +6,11 @@ const {
   chooseAccountWinner,
   safeRoleName,
 } = require('./achievementRoles');
+const {
+  hasBotMention,
+  shouldRefreshFromMessage,
+  isRankingRequest,
+} = require('./achievementTriggers');
 
 const characterWinner = chooseCharacterWinner([
   { discordUserId: '1', score: 92, akasha: { topPercent: 5 }, artifactQuality: 600 },
@@ -29,5 +34,10 @@ assert.equal(accountWinner.discordUserId, '3');
 
 assert.equal(safeRoleName('Skirk'), 'Top Skirk');
 assert.equal(safeRoleName('Neverless'), 'Top Neverless');
+assert.equal(shouldRefreshFromMessage('ترتيب Skirk'), true);
+assert.equal(isRankingRequest('ترتيب Neverless'), true);
+assert.equal(shouldRefreshFromMessage('شلونكم اليوم؟'), false);
+assert.equal(hasBotMention({ content: 'تقييم Skirk', mentions: { users: { has: () => false } } }, { user: { id: '999' } }), false);
+assert.equal(hasBotMention({ content: '<@999> ترتيب Skirk', mentions: { users: { has: () => true } } }, { user: { id: '999' } }), true);
 
 console.log('achievementRoles tests passed');
