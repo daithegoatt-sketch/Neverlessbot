@@ -2,9 +2,11 @@
 
 const { findCharacter, getBuildSnapshot } = require('./enkaClient');
 const { getGuide } = require('./guideClient');
+const { getWeapon } = require('./dataClient');
 const { fetchAkashaPercentile, fetchAkashaPercentiles } = require('./akashaClient');
 const { evaluateBuild } = require('./buildEvaluator');
 const { applyCompetitiveCeiling } = require('./ratingCeiling');
+const { applyRatingFairness } = require('./ratingFairness');
 const { reviewArtifacts } = require('./artifactEvaluator');
 
 const CACHE_TTL = 90 * 1000;
@@ -48,19 +50,35 @@ function validRatedRows(rows) {
 
 async function rateSnapshot(uid, character, snapshot, options = {}) {
   if (!snapshot?.name) return null;
-  const guide = await getGuide(snapshot.name).catch(() => null);
-  if (!guide) return null;
-  const akasha = options.akashaProvided
-    ? options.akasha || null
-    : await fetchAkashaPercentile(uid, snapshot.name, {
+
+  const akashaPromise = options.akashaProvided
+    ? Promise.resolve(options.akasha || null)
+    : fetchAkashaPercentile(uid, snapshot.name, {
       forceRefresh: Boolean(options.forceAkashaRefresh),
     }).catch(() => null);
-  const baseEvaluation = evaluateBuild(snapshot, guide, { akashaPercentile: akasha });
-  const evaluation = applyCompetitiveCeiling(baseEvaluation);
+
+  const [guide, weaponData, akasha] = await Promise.all([
+    getGuide(snapshot.name).catch(() => null),
+    snapshot.weapon?.name ? getWeapon(snapshot.weapon.name).catch(() => null) : Promise.resolve(null),
+    akashaPromise,
+  ]);
+  if (!guide) return null;
+
   const artifacts = reviewArtifacts(snapshot, guide);
+  const baseEvaluation = evaluateBuild(snapshot, guide, {
+    akashaPercentile: akasha,
+    weaponData,
+  });
+  const competitiveEvaluation = applyCompetitiveCeiling(baseEvaluation);
+  const evaluation = applyRatingFairness(competitiveEvaluation, snapshot, {
+    akashaPercentile: akasha,
+    artifactQuality: artifacts.averageUsefulRv,
+  });
+
   return {
     name: snapshot.name,
     score: evaluation.score,
+    rankingScore: evaluation.rankingScore ?? evaluation.score,
     akasha,
     evaluation,
     artifactQuality: artifacts.averageUsefulRv,
