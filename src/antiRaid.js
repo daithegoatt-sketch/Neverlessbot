@@ -88,10 +88,11 @@ async function kickSuspicious(member, reason) {
   }
 }
 
-async function quarantineRecentWave(guild, state, now = Date.now()) {
+async function quarantineRecentWave(guild, state, now = Date.now(), skipMemberId = null) {
   const candidates = state.recentMembers.filter((row) => now - row.joinedAt <= LONG_JOIN_WINDOW_MS);
   let removed = 0;
   for (const row of candidates) {
+    if (skipMemberId && row.id === skipMemberId) continue;
     const member = guild.members.cache.get(row.id) || await guild.members.fetch(row.id).catch(() => null);
     if (!member || isExemptMember(member) || !isSuspiciousRaidJoin(member, now)) continue;
     if (await kickSuspicious(member, 'Neverless Anti-Raid: suspicious account in join flood')) removed += 1;
@@ -99,12 +100,12 @@ async function quarantineRecentWave(guild, state, now = Date.now()) {
   return removed;
 }
 
-async function activateRaidMode(guild, state, flood, now = Date.now()) {
+async function activateRaidMode(guild, state, flood, now = Date.now(), currentMemberId = null) {
   const wasActive = raidActive(state, now);
   state.raidUntil = Math.max(state.raidUntil || 0, now + RAID_MODE_MS);
   if (!wasActive) state.activatedAt = now;
 
-  const removed = await quarantineRecentWave(guild, state, now);
+  const removed = await quarantineRecentWave(guild, state, now, currentMemberId);
   if (!wasActive) {
     await sendAlert(
       guild,
@@ -123,7 +124,7 @@ async function handleJoin(member) {
     .filter((row) => now - row.joinedAt <= RECENT_JOIN_MS)
     .concat({ id: member.id, joinedAt: now });
 
-  if (flood.triggered) await activateRaidMode(member.guild, state, flood, now);
+  if (flood.triggered) await activateRaidMode(member.guild, state, flood, now, member.id);
 
   if (!raidActive(state, now) || isExemptMember(member) || !isSuspiciousRaidJoin(member, now)) return;
   const removed = await kickSuspicious(member, 'Neverless Anti-Raid: suspicious account joined during raid mode');
