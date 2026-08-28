@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const {
   ActionRowBuilder,
   ButtonBuilder,
@@ -68,7 +69,7 @@ function encodeLobby(lobby) {
     createdAt: Number(lobby.createdAt) || Date.now(),
     updatedAt: Number(lobby.updatedAt) || Date.now(),
   };
-  return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
+  return zlib.deflateRawSync(Buffer.from(JSON.stringify(data), 'utf8'), { level: 9 }).toString('base64url');
 }
 
 function stateContent(lobby) {
@@ -86,7 +87,7 @@ function parseState(content) {
   const lobbyId = rest.slice(first + 1, second);
   if (!/^\d{15,22}$/.test(guildId) || !/^[a-f0-9]{8,20}$/i.test(lobbyId)) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(rest.slice(second + 1), 'base64url').toString('utf8'));
+    const parsed = JSON.parse(zlib.inflateRawSync(Buffer.from(rest.slice(second + 1), 'base64url')).toString('utf8'));
     if (!parsed || parsed.guildId !== guildId || parsed.id !== lobbyId) return null;
     return parsed;
   } catch {
@@ -287,7 +288,7 @@ function profileModal(customId, title) {
           .setPlaceholder('EU / NA / ASIA / TW-HK-MO')
           .setStyle(TextInputStyle.Short)
           .setMinLength(2)
-          .setMaxLength(12)
+          .setMaxLength(20)
           .setRequired(true),
       ),
     );
@@ -728,6 +729,10 @@ async function handleJoinModal(interaction, client, lobbyId) {
   const existingRequest = (lobby.pending || []).find((row) => row.userId === interaction.user.id);
   if (existingRequest) {
     await interaction.reply({ content: 'عندك طلب انضمام معلّق لهذا اللوبي بالفعل.', ephemeral: true });
+    return;
+  }
+  if ((lobby.pending || []).length >= 25) {
+    await interaction.reply({ content: 'وصل اللوبي للحد المؤقت من طلبات الانضمام. حاول بعد قليل.', ephemeral: true });
     return;
   }
   const request = {
