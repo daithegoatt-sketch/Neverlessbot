@@ -1,4 +1,8 @@
 'use strict';
+
+// Production command room is intentionally pinned so stale Railway config cannot move Activity commands.
+process.env.ACTIVITY_CHANNEL_ID = '1538570405617598505';
+
 const { Client } = require('discord.js');
 const { handleGenshinMessage } = require('./assistantV3');
 const { handleRatingMessage } = require('./ratingV4');
@@ -22,6 +26,7 @@ const { installTempVoicePersistence } = require('../tempVoicePersistence');
 const { installAutoMod } = require('../autoMod');
 const { installAntiRaid } = require('../antiRaid');
 const { installGameLobby } = require('../gameLobby');
+const { installNicknameCommand } = require('../nicknameCommand');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
@@ -105,6 +110,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installServerTools(this);
     installModeration(this);
     installActivity(this);
+    installNicknameCommand(this);
     installTempVoicePersistence(this);
     installAutoMod(this);
     installAntiRaid(this);
