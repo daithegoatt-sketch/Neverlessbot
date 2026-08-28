@@ -103,6 +103,12 @@ function warningKey(guildId, userId, type) {
   return `${guildId}:${userId}:${type}`;
 }
 
+function warningRemovalTypes(type) {
+  if (type === 'all') return ['spam', 'language'];
+  if (type === 'spam' || type === 'language') return [type];
+  return [];
+}
+
 function spamSequenceKey(message) {
   return `${message.guildId}:${message.channelId}:${message.author.id}`;
 }
@@ -211,6 +217,32 @@ async function persistWarning(guild, userId, type, count) {
     warningMessageIds.set(key, message.id);
   }
   return true;
+}
+
+async function clearWarnings(guild, userId, type) {
+  const types = warningRemovalTypes(type);
+  const removed = [];
+
+  for (const warningType of types) {
+    const key = warningKey(guild.id, userId, warningType);
+    const pending = offenseQueues.get(key);
+    if (pending) await pending.catch(() => {});
+
+    const previousCount = warningCounts.get(key) || 0;
+    warningCounts.delete(key);
+    await persistWarning(guild, userId, warningType, 0).catch(() => false);
+    removed.push({ type: warningType, count: previousCount });
+  }
+
+  if (types.includes('spam')) {
+    const prefix = `${guild.id}:`;
+    const suffix = `:${userId}`;
+    for (const key of [...spamSequences.keys()]) {
+      if (key.startsWith(prefix) && key.endsWith(suffix)) spamSequences.delete(key);
+    }
+  }
+
+  return removed;
 }
 
 async function loadGuildState(guild) {
@@ -389,6 +421,30 @@ async function handleInteraction(interaction) {
     return true;
   }
 
+  if (subcommand === 'removewarn') {
+    const target = interaction.options.getUser('member', true);
+    const type = interaction.options.getString('type', true);
+    const removed = await clearWarnings(interaction.guild, target.id, type);
+    const active = removed.filter((row) => row.count > 0);
+
+    if (!active.length) {
+      await interaction.reply({
+        content: `ما فيه إنذار نشط من النوع المحدد على <@${target.id}>.`,
+        ephemeral: true,
+        allowedMentions: { users: [] },
+      });
+      return true;
+    }
+
+    const labels = active.map((row) => `${row.type === 'spam' ? 'Spam' : 'Language'}: ${row.count}`).join(' • ');
+    await interaction.reply({
+      content: `تمت إزالة إنذارات <@${target.id}> — ${labels}.`,
+      ephemeral: true,
+      allowedMentions: { users: [] },
+    });
+    return true;
+  }
+
   const list = [...entries.values()].map((entry) => entry.original);
   const text = list.length ? list.map((word, index) => `${index + 1}. ${word}`).join('\n') : 'لا توجد كلمات ممنوعة مضافة حاليًا.';
   await interaction.reply({ content: text.slice(0, 1900), ephemeral: true });
@@ -428,6 +484,7 @@ module.exports = {
   nextSpamSequence,
   findForbiddenPhrase,
   offenseAction,
+  warningRemovalTypes,
   parseConfig,
   parseWarning,
 };
