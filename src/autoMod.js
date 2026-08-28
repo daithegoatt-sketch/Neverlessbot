@@ -439,7 +439,7 @@ async function handleInteraction(interaction) {
     const labels = active.map((row) => `${row.type === 'spam' ? 'Spam' : 'Language'}: ${row.count}`).join(' • ');
     await interaction.reply({
       content: `تمت إزالة إنذارات <@${target.id}> — ${labels}.`,
-      ephemeral: true,
+      ephemeral: false,
       allowedMentions: { users: [] },
     });
     return true;
