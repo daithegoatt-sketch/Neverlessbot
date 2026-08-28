@@ -20,6 +20,7 @@ const { installActivity } = require('../activityV2');
 const { installServerTools } = require('../serverTools');
 const { installTempVoicePersistence } = require('../tempVoicePersistence');
 const { installAutoMod } = require('../autoMod');
+const { installAntiRaid } = require('../antiRaid');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
@@ -105,6 +106,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installActivity(this);
     installTempVoicePersistence(this);
     installAutoMod(this);
+    installAntiRaid(this);
     installAchievementTriggers(this);
     installGenshinExtras(this);
     installPublicFunV2(this);
