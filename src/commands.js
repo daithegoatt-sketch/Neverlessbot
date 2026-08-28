@@ -63,7 +63,7 @@ const commands = [
     .addRoleOption((o) => o.setName('role').setDescription('الرتبة المسموح لها بالميوت وفك الميوت').setRequired(true)),
   new SlashCommandBuilder()
     .setName('automod')
-    .setDescription('إدارة الكلمات الممنوعة في Neverless AutoMod')
+    .setDescription('إدارة الكلمات والإنذارات في Neverless AutoMod')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand((sub) => sub
       .setName('addword')
@@ -73,6 +73,19 @@ const commands = [
       .setName('removeword')
       .setDescription('حذف كلمة أو عبارة من AutoMod')
       .addStringOption((o) => o.setName('word').setDescription('الكلمة أو العبارة').setMinLength(1).setMaxLength(100).setRequired(true)))
+    .addSubcommand((sub) => sub
+      .setName('removewarn')
+      .setDescription('إزالة إنذارات AutoMod من عضو')
+      .addUserOption((o) => o.setName('member').setDescription('العضو').setRequired(true))
+      .addStringOption((o) => o
+        .setName('type')
+        .setDescription('نوع الإنذار المطلوب حذفه')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Spam', value: 'spam' },
+          { name: 'Language', value: 'language' },
+          { name: 'All', value: 'all' },
+        )))
     .addSubcommand((sub) => sub.setName('list').setDescription('عرض الكلمات والعبارات الممنوعة')),
   addDurationAndReason(
     new SlashCommandBuilder()
