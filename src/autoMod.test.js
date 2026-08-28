@@ -7,6 +7,7 @@ const {
   nextSpamSequence,
   findForbiddenPhrase,
   offenseAction,
+  warningRemovalTypes,
   parseConfig,
   parseWarning,
 } = require('./autoMod');
@@ -77,6 +78,10 @@ assert.equal(findForbiddenPhrase('this badwordish here', entries), null);
 assert.deepEqual(offenseAction(0), { action: 'warning1', nextCount: 1 });
 assert.deepEqual(offenseAction(1), { action: 'warning2', nextCount: 2 });
 assert.deepEqual(offenseAction(2), { action: 'mute', nextCount: 0 });
+assert.deepEqual(warningRemovalTypes('spam'), ['spam']);
+assert.deepEqual(warningRemovalTypes('language'), ['language']);
+assert.deepEqual(warningRemovalTypes('all'), ['spam', 'language']);
+assert.deepEqual(warningRemovalTypes('other'), []);
 
 const encoded = Buffer.from(JSON.stringify(['كلمة', 'badword']), 'utf8').toString('base64url');
 assert.deepEqual(parseConfig(`NLAUTOMOD1|config|123456789012345678|${encoded}`), {
