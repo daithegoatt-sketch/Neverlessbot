@@ -14,7 +14,7 @@ const MAX_SCAN_MESSAGES = 5000;
 const XP_PER_MESSAGE = 10;
 const XP_COOLDOWN_MS = 45_000;
 const DUPLICATE_COOLDOWN_MS = 5 * 60_000;
-const FLUSH_DELAY_MS = 10_000;
+const FLUSH_DELAY_MS = 2_000;
 const KUWAIT_OFFSET_MS = 3 * 60 * 60 * 1000;
 const INVITE_FETCH_ATTEMPTS = 8;
 const INVITE_FETCH_RETRY_MS = 750;
@@ -108,6 +108,44 @@ function currentizeRecord(record, now = Date.now()) {
   if (record.weekKey !== keys.week) { record.weekKey = keys.week; record.weekXp = 0; }
   if (record.monthKey !== keys.month) { record.monthKey = keys.month; record.monthXp = 0; }
   return record;
+}
+
+function recordTimestamp(record) {
+  return Date.parse(record?.updatedAt || '') || 0;
+}
+
+function mergeActivityRecords(records, now = Date.now()) {
+  const candidates = (records || []).filter((record) => record && typeof record === 'object');
+  const keys = periodKeys(now);
+  const maxFor = (field) => candidates.reduce((best, record) => Math.max(best, cleanInt(record[field])), 0);
+  const maxForPeriod = (keyField, xpField, currentKey) => candidates.reduce((best, record) => (
+    record[keyField] === currentKey ? Math.max(best, cleanInt(record[xpField])) : best
+  ), 0);
+  const newest = candidates.reduce((best, record) => Math.max(best, recordTimestamp(record)), 0);
+
+  return {
+    allXp: maxFor('allXp'),
+    dayKey: keys.day,
+    dayXp: maxForPeriod('dayKey', 'dayXp', keys.day),
+    weekKey: keys.week,
+    weekXp: maxForPeriod('weekKey', 'weekXp', keys.week),
+    monthKey: keys.month,
+    monthXp: maxForPeriod('monthKey', 'monthXp', keys.month),
+    invites: maxFor('invites'),
+    updatedAt: newest ? new Date(newest).toISOString() : new Date(now).toISOString(),
+  };
+}
+
+function sameActivityRecord(a, b) {
+  if (!a || !b) return false;
+  return cleanInt(a.allXp) === cleanInt(b.allXp)
+    && String(a.dayKey || '') === String(b.dayKey || '')
+    && cleanInt(a.dayXp) === cleanInt(b.dayXp)
+    && String(a.weekKey || '') === String(b.weekKey || '')
+    && cleanInt(a.weekXp) === cleanInt(b.weekXp)
+    && String(a.monthKey || '') === String(b.monthKey || '')
+    && cleanInt(a.monthXp) === cleanInt(b.monthXp)
+    && cleanInt(a.invites) === cleanInt(b.invites);
 }
 
 function levelFromXp(xp) {
@@ -559,23 +597,55 @@ async function initialize(client) {
 
     targetGuildId = guild.id;
     dataChannel = guild.channels.cache.find((channel) => channel.name === DATA_CHANNEL_NAME && channel.isTextBased?.()) || null;
+    if (!dataChannel) {
+      await guild.channels.fetch().catch(() => null);
+      dataChannel = guild.channels.cache.find((channel) => channel.name === DATA_CHANNEL_NAME && channel.isTextBased?.()) || null;
+    }
+
     if (dataChannel) {
+      const now = Date.now();
       const messages = await fetchAllMessages(dataChannel);
+      const remoteByUser = new Map();
+
       for (const message of messages) {
         if (message.author?.id !== client.user.id) continue;
         const parsed = parseRecord(message.content);
         if (!parsed || parsed.guildId !== guild.id) continue;
-        const local = getRecord(parsed.guildId, parsed.userId);
-        const remoteTime = Date.parse(parsed.record.updatedAt || '') || Number(message.createdTimestamp) || 0;
-        const localTime = Date.parse(local.updatedAt || '') || 0;
-        if (remoteTime >= localTime) guildState(parsed.guildId).users[parsed.userId] = parsed.record;
-        recordMessageIds.set(recordId(parsed.guildId, parsed.userId), message.id);
+        const rows = remoteByUser.get(parsed.userId) || [];
+        rows.push({
+          record: parsed.record,
+          messageId: message.id,
+          createdTimestamp: Number(message.createdTimestamp) || 0,
+        });
+        remoteByUser.set(parsed.userId, rows);
       }
-      await writeLocal();
+
+      for (const [userId, rows] of remoteByUser) {
+        const local = getRecord(guild.id, userId);
+        const merged = mergeActivityRecords([local, ...rows.map((row) => row.record)], now);
+        const canonical = rows.slice().sort((a, b) => {
+          const aTime = recordTimestamp(a.record) || a.createdTimestamp;
+          const bTime = recordTimestamp(b.record) || b.createdTimestamp;
+          return bTime - aTime || b.createdTimestamp - a.createdTimestamp;
+        })[0];
+
+        guildState(guild.id).users[userId] = merged;
+        if (canonical) recordMessageIds.set(recordId(guild.id, userId), canonical.messageId);
+
+        if (!canonical || !sameActivityRecord(merged, canonical.record) || rows.length > 1) {
+          merged.updatedAt = new Date(now).toISOString();
+          dirty.add(recordId(guild.id, userId));
+        }
+      }
+
+      if (dirty.size) await flushDirty().catch(() => {});
+      else await writeLocal();
+    } else {
+      console.warn('[activity-v2] neverless-data channel unavailable; using local fallback only.');
     }
 
     await refreshInviteTotals(guild, true).catch(() => null);
-    console.log(`[activity-v2] Simple activity top and invite commands ready in ${guild.name}.`);
+    console.log(`[activity-v2] Activity state recovered and commands ready in ${guild.name}.`);
   })();
   return readyPromise;
 }
@@ -590,29 +660,32 @@ function installActivity(client) {
 
   client.on('messageCreate', (message) => {
     if (!message?.guildId || message.author?.bot) return;
-    if (!targetGuildId || message.guildId !== targetGuildId) return;
 
-    awardMessageXp(message);
-    if (message.channelId !== COMMAND_CHANNEL_ID) return;
+    Promise.resolve(readyPromise).then(() => {
+      if (!targetGuildId || message.guildId !== targetGuildId) return;
 
-    if (isInviteTopCommand(message.content)) {
-      handleInviteTop(message).catch((error) => console.error('[activity-v2] Top invites failed:', error));
-      return;
-    }
+      awardMessageXp(message);
+      if (message.channelId !== COMMAND_CHANNEL_ID) return;
 
-    if (isSelfInviteCommand(message.content)) {
-      handleSelfOrMemberInvites(message).catch((error) => console.error('[activity-v2] My invites failed:', error));
-      return;
-    }
+      if (isInviteTopCommand(message.content)) {
+        handleInviteTop(message).catch((error) => console.error('[activity-v2] Top invites failed:', error));
+        return;
+      }
 
-    if (isMemberInviteCommand(message.content) && message.mentions?.users?.size) {
-      handleSelfOrMemberInvites(message).catch((error) => console.error('[activity-v2] Member invites failed:', error));
-      return;
-    }
+      if (isSelfInviteCommand(message.content)) {
+        handleSelfOrMemberInvites(message).catch((error) => console.error('[activity-v2] My invites failed:', error));
+        return;
+      }
 
-    if (isActivityTopCommand(message.content)) {
-      handleActivityTop(message).catch((error) => console.error('[activity-v2] Activity top failed:', error));
-    }
+      if (isMemberInviteCommand(message.content) && message.mentions?.users?.size) {
+        handleSelfOrMemberInvites(message).catch((error) => console.error('[activity-v2] Member invites failed:', error));
+        return;
+      }
+
+      if (isActivityTopCommand(message.content)) {
+        handleActivityTop(message).catch((error) => console.error('[activity-v2] Activity top failed:', error));
+      }
+    }).catch((error) => console.error('[activity-v2] Message processing failed:', error));
   });
 
   client.on('inviteCreate', (invite) => {
@@ -643,6 +716,7 @@ module.exports = {
   xpRemainingForNextLevel,
   periodKeys,
   periodScore,
+  mergeActivityRecords,
   parsePeriod,
   isInviteTopCommand,
   isSelfInviteCommand,
