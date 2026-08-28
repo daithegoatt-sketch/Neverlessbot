@@ -6,6 +6,7 @@ const {
   xpForNextLevel,
   xpRemainingForNextLevel,
   periodKeys,
+  mergeActivityRecords,
   parsePeriod,
   isInviteTopCommand,
   isSelfInviteCommand,
@@ -49,6 +50,52 @@ assert.equal(isMemberInviteCommand('my invites'), false);
 const keys = periodKeys(Date.UTC(2026, 7, 16, 21, 0, 0));
 assert.equal(keys.day, '2026-08-17');
 assert.equal(keys.month, '2026-08');
+
+const recoveryNow = Date.UTC(2026, 7, 28, 12, 0, 0);
+const recoveryKeys = periodKeys(recoveryNow);
+const recovered = mergeActivityRecords([
+  {
+    allXp: 4200,
+    dayKey: recoveryKeys.day,
+    dayXp: 120,
+    weekKey: recoveryKeys.week,
+    weekXp: 700,
+    monthKey: recoveryKeys.month,
+    monthXp: 1800,
+    invites: 4,
+    updatedAt: '2026-08-28T10:00:00.000Z',
+  },
+  {
+    allXp: 5100,
+    dayKey: recoveryKeys.day,
+    dayXp: 90,
+    weekKey: recoveryKeys.week,
+    weekXp: 950,
+    monthKey: recoveryKeys.month,
+    monthXp: 1750,
+    invites: 7,
+    updatedAt: '2026-08-27T10:00:00.000Z',
+  },
+  {
+    allXp: 4800,
+    dayKey: '2026-08-27',
+    dayXp: 9999,
+    weekKey: '2026-W33',
+    weekXp: 9999,
+    monthKey: '2026-07',
+    monthXp: 9999,
+    invites: 5,
+    updatedAt: '2026-08-28T11:00:00.000Z',
+  },
+], recoveryNow);
+assert.equal(recovered.allXp, 5100, 'all-time XP must recover the highest persisted value');
+assert.equal(recovered.dayXp, 120, 'daily XP should recover the highest value only for the current Kuwait day');
+assert.equal(recovered.weekXp, 950, 'weekly XP should recover the highest value only for the current week');
+assert.equal(recovered.monthXp, 1800, 'monthly XP should recover the highest value only for the current month');
+assert.equal(recovered.invites, 7, 'invite totals must remain monotonic during recovery');
+assert.equal(recovered.dayKey, recoveryKeys.day);
+assert.equal(recovered.weekKey, recoveryKeys.week);
+assert.equal(recovered.monthKey, recoveryKeys.month);
 
 function invite(code, uses, inviterId) {
   return { code, uses, inviter: { id: inviterId }, maxUses: 0 };
