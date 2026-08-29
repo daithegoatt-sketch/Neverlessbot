@@ -159,13 +159,57 @@ function messagePayload({ title, message, imageUrl, linkUrl, buttonText }) {
   return payload;
 }
 
+function splitPlainMessage(content, max = 1900) {
+  const value = String(content || '').trim();
+  if (!value) return [];
+  const chunks = [];
+  let remaining = value;
+
+  while (remaining.length > max) {
+    let splitAt = remaining.lastIndexOf('\n', max);
+    if (splitAt < Math.floor(max * 0.55)) splitAt = remaining.lastIndexOf(' ', max);
+    if (splitAt < Math.floor(max * 0.55)) splitAt = max;
+    const chunk = remaining.slice(0, splitAt).trim();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function broadcastPayloads({ title, message, imageUrl, linkUrl }) {
+  const textParts = [];
+  if (title) textParts.push(`**${String(title).slice(0, 256)}**`);
+  if (message) textParts.push(String(message).trim());
+
+  const payloads = splitPlainMessage(textParts.join('\n'))
+    .map((content) => ({ content, allowedMentions: { parse: [] } }));
+
+  const previewLines = [linkUrl, imageUrl].filter(Boolean);
+  if (previewLines.length) {
+    const previewText = previewLines.join('\n');
+    const last = payloads[payloads.length - 1];
+    if (last && `${last.content}\n${previewText}`.length <= 2000) {
+      last.content = `${last.content}\n${previewText}`;
+    } else {
+      payloads.push({ content: previewText, allowedMentions: { parse: [] } });
+    }
+  }
+
+  return payloads.length ? payloads : [{ content: 'Neverless', allowedMentions: { parse: [] } }];
+}
+
+async function sendBroadcast(member, payloads) {
+  for (const payload of payloads) await member.send(payload);
+}
+
 async function handleBroadcast(interaction) {
   if (!adminOnly(interaction)) {
     await interaction.reply({ content: 'هذا الأمر للإدارة فقط.', ephemeral: true });
     return true;
   }
   const message = interaction.options.getString('message', true);
-  const title = interaction.options.getString('title') || 'Neverless';
+  const title = interaction.options.getString('title') || null;
   const rawImage = interaction.options.getString('image_url');
   const rawLink = interaction.options.getString('link_url');
   const imageUrl = rawImage ? validUrl(rawImage) : null;
@@ -182,26 +226,20 @@ async function handleBroadcast(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const fetched = await interaction.guild.members.fetch().catch(() => null);
   const members = fetched ? [...fetched.values()].filter((member) => !member.user.bot) : [];
-  const payload = messagePayload({
-    title,
-    message,
-    imageUrl,
-    linkUrl,
-    buttonText: interaction.options.getString('button_text') || null,
-  });
+  const payloads = broadcastPayloads({ title, message, imageUrl, linkUrl });
 
   let sent = 0;
   let failed = 0;
   const batchSize = 5;
   for (let index = 0; index < members.length; index += batchSize) {
     const batch = members.slice(index, index + batchSize);
-    const results = await Promise.all(batch.map((member) => member.send(payload).then(() => true).catch(() => false)));
+    const results = await Promise.all(batch.map((member) => sendBroadcast(member, payloads).then(() => true).catch(() => false)));
     sent += results.filter(Boolean).length;
     failed += results.filter((value) => !value).length;
     if (index + batchSize < members.length) await new Promise((resolve) => setTimeout(resolve, 350));
   }
 
-  await interaction.editReply({ content: `تم إرسال الـBroadcast.\nنجح: **${sent}**\nتعذر الإرسال: **${failed}**` });
+  await interaction.editReply({ content: `تم إرسال الـBroadcast كرسالة عادية.\nنجح: **${sent}**\nتعذر الإرسال: **${failed}**` });
   return true;
 }
 
@@ -354,6 +392,8 @@ module.exports = {
   parsePersonalInvite,
   validUrl,
   messagePayload,
+  splitPlainMessage,
+  broadcastPayloads,
   patchInviteManager,
   applyPersonalInviteOwner,
 };
