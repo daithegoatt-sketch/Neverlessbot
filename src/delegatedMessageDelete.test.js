@@ -4,11 +4,8 @@ const assert = require('node:assert/strict');
 const {
   parseMuteAdmin,
   parseDeleteAccess,
-  parseLinks,
-  hasExternalLink,
-  hasIndependentManageMessages,
+  canDelegatedDelete,
 } = require('./delegatedMessageDelete');
-const { PermissionFlagsBits } = require('discord.js');
 
 assert.deepEqual(
   parseMuteAdmin('NLCFG1|muteadmin|1537000000000000000|1537111111111111111'),
@@ -21,26 +18,25 @@ assert.equal(access.guildId, '1537000000000000000');
 assert.equal(access.roleId, '1537111111111111111');
 assert.equal(access.owned, true);
 
-assert.deepEqual(
-  parseLinks('NLCFG1|links|1537000000000000000|1537222222222222222,1537333333333333333').ids,
-  ['1537222222222222222', '1537333333333333333'],
-);
-assert.equal(hasExternalLink('hello https://example.com'), true);
-assert.equal(hasExternalLink('hello world'), false);
+function member(id, position, roleId = null, admin = false) {
+  return {
+    id,
+    permissions: { has: () => admin },
+    roles: {
+      cache: { has: (value) => value === roleId },
+      highest: { position, comparePositionTo: (other) => position - other.position },
+    },
+  };
+}
 
-const delegatedId = '1537111111111111111';
-const delegatedRole = {
-  id: delegatedId,
-  permissions: { has: (permission) => permission === PermissionFlagsBits.ManageMessages },
-};
-const normalRole = {
-  id: '1537444444444444444',
-  permissions: { has: () => false },
-};
-const member = {
-  permissions: { has: () => false },
-  roles: { cache: new Map([[delegatedRole.id, delegatedRole], [normalRole.id, normalRole]]) },
-};
-assert.equal(hasIndependentManageMessages(member, delegatedId), false);
+const delegatedRoleId = '1537111111111111111';
+const actor = member('actor', 10, delegatedRoleId);
+assert.equal(canDelegatedDelete(actor, member('lower', 5), delegatedRoleId, 'owner'), true);
+assert.equal(canDelegatedDelete(actor, member('equal', 10), delegatedRoleId, 'owner'), false);
+assert.equal(canDelegatedDelete(actor, member('higher', 11), delegatedRoleId, 'owner'), false);
+assert.equal(canDelegatedDelete(actor, member('owner', 1), delegatedRoleId, 'owner'), false);
+assert.equal(canDelegatedDelete(actor, null, delegatedRoleId, 'owner'), true);
+assert.equal(canDelegatedDelete(member('outsider', 20), member('lower', 5), delegatedRoleId, 'owner'), false);
+assert.equal(canDelegatedDelete(member('realadmin', 1, null, true), member('higher', 99), delegatedRoleId, 'owner'), true);
 
 console.log('delegated message delete tests passed');
