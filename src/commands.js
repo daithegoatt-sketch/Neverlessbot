@@ -1,4 +1,10 @@
-const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const {
+  ApplicationCommandType,
+  ChannelType,
+  ContextMenuCommandBuilder,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+} = require('discord.js');
 
 function addDurationAndReason(command) {
   return command
@@ -58,9 +64,9 @@ const commands = [
     .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
   new SlashCommandBuilder()
     .setName('addadmin')
-    .setDescription('تحديد رتبة للميوت وفك الميوت وحذف الرسائل يدويًا')
+    .setDescription('تحديد رتبة للميوت وفك الميوت وحذف رسائل الأقل رتبة')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المخولة بالميوت وفك الميوت وحذف الرسائل يدويًا').setRequired(true)),
+    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المخولة بالميوت وفك الميوت وحذف رسائل الأقل رتبة').setRequired(true)),
   new SlashCommandBuilder()
     .setName('automod')
     .setDescription('إدارة الكلمات والإنذارات في Neverless AutoMod')
@@ -161,7 +167,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('clear')
     .setDescription('مسح عدد محدد من الرسائل')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .addIntegerOption((o) => o.setName('amount').setDescription('من 1 إلى 100').setMinValue(1).setMaxValue(100).setRequired(true)),
   new SlashCommandBuilder()
     .setName('move')
@@ -169,6 +175,9 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.MoveMembers)
     .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true))
     .addChannelOption((o) => o.setName('channel').setDescription('الروم الصوتي الهدف').addChannelTypes(ChannelType.GuildVoice).setRequired(true)),
+  new ContextMenuCommandBuilder()
+    .setName('حذف الرسالة')
+    .setType(ApplicationCommandType.Message),
 ].map((command) => command.toJSON());
 
 module.exports = { commands };
