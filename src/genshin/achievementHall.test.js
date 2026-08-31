@@ -74,8 +74,11 @@ assert.equal(isNeverlessFlexCommand('flex neverless'), false);
 const fakeClient = { user: { id: '1537222222222222222' } };
 assert.equal(stripBotMention('<@1537222222222222222> Hall of fame', fakeClient), 'Hall of fame');
 
-const oldMember = { roles: { cache: new Map([['1', { name: 'Member' }]]) } };
-const newMember = { roles: { cache: new Map([['1', { name: 'Member' }], ['2', { name: 'Top Neverless' }]]) } };
+function roleCache(names) {
+  return { some: (predicate) => names.map((name) => ({ name })).some(predicate) };
+}
+const oldMember = { roles: { cache: roleCache(['Member']) } };
+const newMember = { roles: { cache: roleCache(['Member', 'Top Neverless']) } };
 assert.equal(roleMembershipChanged(oldMember, newMember), true);
 assert.equal(roleMembershipChanged(newMember, newMember), false);
 
