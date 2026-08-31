@@ -16,6 +16,7 @@ const { handleGenshinExtrasMessage, installGenshinExtras } = require('./genshinE
 const { handleExtrasCorrectionsMessage } = require('./extrasCorrections');
 const { installPublicFunV2, isPublicFunCommand } = require('./publicFunV2');
 const { installAchievementTriggers } = require('./achievementTriggers');
+const { installAchievementHall, isAchievementHallCommand } = require('./achievementHallRuntime');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publicCommands');
@@ -116,14 +117,15 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installAntiRaid(this);
     installGameLobby(this);
     installAchievementTriggers(this);
+    installAchievementHall(this);
     installGenshinExtras(this);
     installPublicFunV2(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      // Public prefix tools have their own server-wide handlers and do not need a mention.
-      if (isPublicGenshinCommand(message.content) || isPublicFunCommand(message.content)) return;
+      // Public prefix tools and Hall commands have their own handlers and do not need this router.
+      if (isPublicGenshinCommand(message.content) || isPublicFunCommand(message.content) || isAchievementHallCommand(message, this)) return;
       if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
