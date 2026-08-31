@@ -58,9 +58,9 @@ const commands = [
     .addUserOption((o) => o.setName('user').setDescription('العضو').setRequired(true)),
   new SlashCommandBuilder()
     .setName('addadmin')
-    .setDescription('تحديد رتبة تستطيع استخدام /mute و /unmute عبر Neverless فقط')
+    .setDescription('تحديد رتبة للميوت وفك الميوت وحذف الرسائل يدويًا')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المسموح لها بالميوت وفك الميوت').setRequired(true)),
+    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المخولة بالميوت وفك الميوت وحذف الرسائل يدويًا').setRequired(true)),
   new SlashCommandBuilder()
     .setName('automod')
     .setDescription('إدارة الكلمات والإنذارات في Neverless AutoMod')
@@ -161,7 +161,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('clear')
     .setDescription('مسح عدد محدد من الرسائل')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addIntegerOption((o) => o.setName('amount').setDescription('من 1 إلى 100').setMinValue(1).setMaxValue(100).setRequired(true)),
   new SlashCommandBuilder()
     .setName('move')
