@@ -21,6 +21,7 @@ const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
 const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publicCommands');
 const { installModeration } = require('../moderation');
+const { installDelegatedMessageDelete } = require('../delegatedMessageDelete');
 const { installActivity } = require('../activityV2');
 const { installServerTools } = require('../serverTools');
 const { installTempVoicePersistence } = require('../tempVoicePersistence');
@@ -110,6 +111,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
 
     installServerTools(this);
     installModeration(this);
+    installDelegatedMessageDelete(this);
     installActivity(this);
     installNicknameCommand(this);
     installTempVoicePersistence(this);
