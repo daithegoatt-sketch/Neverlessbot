@@ -11,7 +11,6 @@ const sessions = new Map();
 let installed = false;
 
 const PROFILES = Object.freeze({
-  // Hydro
   Columbina: { element: 'Hydro', strength: 9.6, tags: ['offfield', 'hydroApp', 'lunar', 'aoe', 'buff'] },
   Xingqiu: { element: 'Hydro', strength: 9.1, tags: ['offfield', 'hydroApp', 'defense'] },
   Neuvillette: { element: 'Hydro', strength: 10, tags: ['onfield', 'hydroApp', 'aoe'] },
@@ -27,7 +26,6 @@ const PROFILES = Object.freeze({
   Mualani: { element: 'Hydro', strength: 8.8, tags: ['onfield', 'hydroApp'] },
   Nilou: { element: 'Hydro', strength: 8.4, tags: ['bloom', 'hydroApp', 'buff'] },
   Aino: { element: 'Hydro', strength: 8.4, tags: ['offfield', 'hydroApp', 'lunar'] },
-  // Electro
   Cyno: { element: 'Electro', strength: 8.1, tags: ['onfield', 'electroApp', 'quicken'] },
   'Kuki Shinobu': { element: 'Electro', strength: 9, tags: ['sustain', 'electroApp', 'hyperbloom', 'offfield'] },
   'Raiden Shogun': { element: 'Electro', strength: 9.5, tags: ['onfield', 'offfield', 'electroApp', 'energy'] },
@@ -42,7 +40,6 @@ const PROFILES = Object.freeze({
   Beidou: { element: 'Electro', strength: 8, tags: ['offfield', 'electroApp', 'aoe', 'defense'] },
   Keqing: { element: 'Electro', strength: 7.8, tags: ['onfield', 'electroApp', 'quicken'] },
   Dori: { element: 'Electro', strength: 5.8, tags: ['sustain', 'electroApp', 'energy'] },
-  // Dendro
   Lauma: { element: 'Dendro', strength: 9.4, tags: ['offfield', 'dendroApp', 'buff', 'bloom', 'aoe'] },
   Kaveh: { element: 'Dendro', strength: 6, tags: ['onfield', 'dendroApp', 'bloom'] },
   Nahida: { element: 'Dendro', strength: 10, tags: ['offfield', 'dendroApp', 'buff', 'aoe', 'quicken'] },
@@ -56,7 +53,6 @@ const PROFILES = Object.freeze({
   Kirara: { element: 'Dendro', strength: 7.1, tags: ['defense', 'dendroApp'] },
   Collei: { element: 'Dendro', strength: 7.2, tags: ['offfield', 'dendroApp'] },
   'Dendro Traveler': { element: 'Dendro', strength: 7.3, tags: ['offfield', 'dendroApp'] },
-  // September 2026 special guests
   Odette: { element: 'Cryo', strength: 9.4, tags: ['offfield', 'buff', 'stellar', 'aoe'] },
   Sandrone: { element: 'Cryo', strength: 9.5, tags: ['onfield', 'stellar', 'aoe'] },
   Sucrose: { element: 'Anemo', strength: 8.5, tags: ['control', 'buff', 'aoe'] },
@@ -137,7 +133,6 @@ function hasTag(row, tag) {
 function scoreRow(row, act, session, season) {
   let score = row.strength + row.remaining * 0.2;
   if (season.opening.includes(row.name) && act <= 3) score += 1.25;
-  // Preserve the last Vigor of important counters for the boss that needs them.
   if (row.remaining === 1) {
     if (act < 6 && RESERVE.hydroBoss.has(row.name)) score -= 3.5;
     if (act < 8 && RESERVE.chargeBoss.has(row.name)) score -= 3.5;
@@ -188,20 +183,16 @@ async function buildTeam(names, act, session, season) {
   const chosen = new Set();
   const team = [];
   const needs = requirementsForAct(actInfo);
-
   for (const need of needs) {
     let row = null;
     if (need === 'sustain') row = choose(rows, chosen, (item) => hasTag(item, 'sustain'));
     else row = choose(rows, chosen, (item) => String(item.element).toLowerCase() === need);
     if (row) team.push(row);
   }
-
-  // Boss 10 / Arcana I strongly prefer sustain even when reaction text was shortened.
   if ((act === 10 || act === 11) && !team.some((item) => hasTag(item, 'sustain'))) {
     const healer = choose(rows, chosen, (item) => hasTag(item, 'sustain'));
     if (healer) team.push(healer);
   }
-
   if (!team.some((item) => hasTag(item, 'onfield'))) {
     const carry = choose(rows, chosen, (item) => hasTag(item, 'onfield'));
     if (carry) team.push(carry);
@@ -282,7 +273,6 @@ async function planEmbeds(season, difficulty, session) {
       'الخطة تحت هي **أفضل Route نظري** من الشخصيات المسموحة؛ لا يعني أن اللعبة راح تعطيك كل كرت بنفس اللحظة.',
       'الرمز `¹` يعني أن الخطة استهلكت استعمالًا سابقًا للشخصية وباقي لها استعمال واحد وقت هذه المرحلة.',
     ].join('\n'));
-
   const stageEmbeds = [intro];
   let current = new EmbedBuilder().setColor(THEATER_COLOR).setTitle('مسار المراحل');
   let fields = 0;
@@ -327,8 +317,8 @@ async function planEmbeds(season, difficulty, session) {
 function followupKind(text) {
   const value = clean(text);
   if (/^(?:المتاح\s+عندي|المتاح|طلع\s+لي)\s*[:：]/u.test(value)) return 'pool';
-  if (/^(?:ماعندي|ما\s+عندي)\b/u.test(value)) return 'missing';
-  if (/^(?:ماطلع\s+لي|ما\s+طلع\s+لي)\b/u.test(value)) return 'notdrawn';
+  if (/^(?:ماعندي|ما\s+عندي)(?:\s|$)/u.test(value)) return 'missing';
+  if (/^(?:ماطلع\s+لي|ما\s+طلع\s+لي)(?:\s|$)/u.test(value)) return 'notdrawn';
   if (/^(?:بدأت|بديت)\s+(?:المرحلة|مرحلة)\s*\d+/u.test(value)) return 'stage';
   if (/^(?:استعملت|استخدمت)\s*[:：]/u.test(value)) return 'used';
   if (/^(?:حالة\s+المسرح|المسرح\s+حالة)$/u.test(value)) return 'status';
@@ -361,7 +351,6 @@ async function handleFollowup(message, session, kind) {
   const season = await getCurrentTheaterSeason();
   session.expiresAt = Date.now() + SESSION_TTL;
   const text = clean(message.content);
-
   if (kind === 'pool') {
     const names = await resolveNames(text);
     if (names.length < 4) {
@@ -373,7 +362,6 @@ async function handleFollowup(message, session, kind) {
     await replyCurrentTeam(message, session, season, `تم تحديث الموجود عندك: ${[...session.pool].join(' • ')}`);
     return true;
   }
-
   if (kind === 'missing' || kind === 'notdrawn') {
     const names = await resolveNames(text);
     if (!names.length) return false;
@@ -388,7 +376,6 @@ async function handleFollowup(message, session, kind) {
     await replyCurrentTeam(message, session, season, head);
     return true;
   }
-
   if (kind === 'stage') {
     const stage = Number(text.match(/\d+/)?.[0]);
     if (!Number.isInteger(stage) || stage < 1 || stage > session.difficulty.acts) return false;
@@ -397,7 +384,6 @@ async function handleFollowup(message, session, kind) {
     await replyCurrentTeam(message, session, season);
     return true;
   }
-
   if (kind === 'used') {
     const names = await resolveNames(text);
     if (!names.length) return false;
@@ -410,15 +396,9 @@ async function handleFollowup(message, session, kind) {
     const nextAct = Math.min(session.difficulty.acts, session.currentAct + 1);
     session.currentAct = nextAct;
     session.notDrawn.clear();
-    await replyCurrentTeam(
-      message,
-      session,
-      season,
-      `تم تسجيل الاستعمال: ${names.join(' • ')}${exhausted.length ? `\nانتهى Vigor: ${exhausted.join(' • ')}` : ''}`,
-    );
+    await replyCurrentTeam(message, session, season, `تم تسجيل الاستعمال: ${names.join(' • ')}${exhausted.length ? `\nانتهى Vigor: ${exhausted.join(' • ')}` : ''}`);
     return true;
   }
-
   if (kind === 'status') {
     const used = [...session.used.entries()].filter(([, count]) => count > 0);
     const lines = [
@@ -461,7 +441,6 @@ async function handleTheaterMessage(message) {
     await message.reply({ embeds: embeds.slice(0, 10), allowedMentions: { repliedUser: false } });
     return true;
   }
-
   const key = sessionKey(message);
   const session = sessions.get(key);
   if (!session) return false;
