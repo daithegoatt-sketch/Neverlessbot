@@ -2,6 +2,7 @@
 
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { whenAccountStoreReady } = require('./genshin/accountStore');
+const { hasMuteAccess } = require('./moderation');
 
 const DATA_CHANNEL_NAME = 'neverless-data';
 const CONFIG_PREFIX = 'NLAUTOMOD1|config|';
@@ -104,9 +105,16 @@ function warningKey(guildId, userId, type) {
 }
 
 function warningRemovalTypes(type) {
-  if (type === 'all') return ['spam', 'language'];
-  if (type === 'spam' || type === 'language') return [type];
+  if (type === 'all') return ['spam', 'language', 'manual'];
+  if (type === 'spam' || type === 'language' || type === 'manual') return [type];
   return [];
+}
+
+function warningTypeLabel(type) {
+  if (type === 'spam') return 'Spam';
+  if (type === 'language') return 'Language';
+  if (type === 'manual') return 'Manual';
+  return type;
 }
 
 function spamSequenceKey(message) {
@@ -153,7 +161,7 @@ function parseWarning(content) {
   const [guildId, userId, type, rawCount] = value.slice(WARNING_PREFIX.length).split('|');
   const count = Number(rawCount);
   if (!/^\d{15,22}$/.test(guildId || '') || !/^\d{15,22}$/.test(userId || '')) return null;
-  if (!['spam', 'language'].includes(type)) return null;
+  if (!['spam', 'language', 'manual'].includes(type)) return null;
   if (!Number.isInteger(count) || count < 0 || count > 2) return null;
   return { guildId, userId, type, count };
 }
@@ -378,8 +386,122 @@ async function handleMessage(message) {
   await queueOffense(message, member, 'spam');
 }
 
+function manualWarnTargetAllowed(interaction, member) {
+  if (!member || member.user?.bot) return { ok: false, reason: 'لا يمكن إعطاء هذا الحساب إنذارًا.' };
+  if (member.id === interaction.user.id) return { ok: false, reason: 'لا تستطيع إعطاء نفسك إنذارًا.' };
+  if (member.id === interaction.guild.ownerId) return { ok: false, reason: 'لا يمكن إعطاء مالك السيرفر إنذارًا.' };
+
+  const actorIsAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) || false;
+  if (actorIsAdmin) return { ok: true };
+
+  if (member.permissions?.has(PermissionFlagsBits.Administrator)) {
+    return { ok: false, reason: 'لا تستطيع إعطاء Administrator إنذارًا.' };
+  }
+  const actorHighest = interaction.member?.roles?.highest;
+  const targetHighest = member.roles?.highest;
+  if (!actorHighest || !targetHighest || actorHighest.comparePositionTo(targetHighest) <= 0) {
+    return { ok: false, reason: 'لا تستطيع إنذار عضو رتبته مساوية أو أعلى من رتبتك.' };
+  }
+  return { ok: true };
+}
+
+async function applyManualWarning(interaction, member, reason) {
+  const key = warningKey(interaction.guildId, member.id, 'manual');
+  const previousCount = warningCounts.get(key) || 0;
+  const next = offenseAction(previousCount);
+  const actorMention = `<@${interaction.user.id}>`;
+  const memberMention = `<@${member.id}>`;
+  const allowedMentions = { users: [member.id, interaction.user.id], roles: [] };
+
+  if (next.action === 'warning1' || next.action === 'warning2') {
+    warningCounts.set(key, next.nextCount);
+    await persistWarning(interaction.guild, member.id, 'manual', next.nextCount).catch(() => false);
+    await interaction.reply({
+      content: [
+        `${memberMention} ${next.action === 'warning1' ? 'إنذار أول' : 'إنذار ثاني'}`,
+        `**السبب:** ${reason}`,
+        `**بواسطة:** ${actorMention}`,
+      ].join('\n'),
+      allowedMentions,
+    });
+    return true;
+  }
+
+  if (!member.moderatable) {
+    warningCounts.set(key, 2);
+    await persistWarning(interaction.guild, member.id, 'manual', 2).catch(() => false);
+    await interaction.reply({
+      content: 'العضو وصل لمرحلة الميوت، لكن البوت لا يستطيع عمل Timeout له بسبب ترتيب الرتب. بقي لديه إنذاران مسجلان.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  try {
+    await member.timeout(MUTE_MS, `Neverless manual warning by ${interaction.user.tag}: ${reason}`);
+    warningCounts.delete(key);
+    await persistWarning(interaction.guild, member.id, 'manual', 0).catch(() => false);
+    await interaction.reply({
+      content: [
+        `${memberMention} mute 5min`,
+        `**السبب:** ${reason}`,
+        `**بواسطة:** ${actorMention}`,
+      ].join('\n'),
+      allowedMentions,
+    });
+  } catch (error) {
+    warningCounts.set(key, 2);
+    await persistWarning(interaction.guild, member.id, 'manual', 2).catch(() => false);
+    console.warn(`[automod] Manual warning timeout failed for ${member.user?.tag || member.id}: ${error.message}`);
+    if (!interaction.replied) {
+      await interaction.reply({ content: 'تعذر تطبيق الميوت، وبقي للعضو إنذاران مسجلان.', ephemeral: true });
+    }
+  }
+  return true;
+}
+
+function queueManualWarning(interaction, member, reason) {
+  const key = warningKey(interaction.guildId, member.id, 'manual');
+  const previous = offenseQueues.get(key) || Promise.resolve();
+  const task = previous.catch(() => {}).then(() => applyManualWarning(interaction, member, reason));
+  const queued = task.finally(() => {
+    if (offenseQueues.get(key) === queued) offenseQueues.delete(key);
+  });
+  offenseQueues.set(key, queued);
+  return task;
+}
+
+async function handleManualWarn(interaction) {
+  if (!hasMuteAccess(interaction)) {
+    await interaction.reply({ content: 'ليس لديك صلاحية استخدام هذا الأمر.', ephemeral: true });
+    return true;
+  }
+
+  const user = interaction.options.getUser('member', true);
+  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+  if (!member) {
+    await interaction.reply({ content: 'العضو غير موجود في السيرفر.', ephemeral: true });
+    return true;
+  }
+
+  const allowed = manualWarnTargetAllowed(interaction, member);
+  if (!allowed.ok) {
+    await interaction.reply({ content: allowed.reason, ephemeral: true });
+    return true;
+  }
+
+  const reason = interaction.options.getString('reason', true).trim();
+  return queueManualWarning(interaction, member, reason);
+}
+
 async function handleInteraction(interaction) {
-  if (!interaction.isChatInputCommand?.() || interaction.commandName !== 'automod' || !interaction.guild) return false;
+  if (!interaction.isChatInputCommand?.() || !interaction.guild) return false;
+
+  if (interaction.commandName === 'warn') {
+    return handleManualWarn(interaction);
+  }
+
+  if (interaction.commandName !== 'automod') return false;
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({ content: 'هذا الأمر للـAdministrator فقط.', ephemeral: true });
     return true;
@@ -436,7 +558,7 @@ async function handleInteraction(interaction) {
       return true;
     }
 
-    const labels = active.map((row) => `${row.type === 'spam' ? 'Spam' : 'Language'}: ${row.count}`).join(' • ');
+    const labels = active.map((row) => `${warningTypeLabel(row.type)}: ${row.count}`).join(' • ');
     await interaction.reply({
       content: `تمت إزالة إنذارات <@${target.id}> — ${labels}.`,
       ephemeral: false,
