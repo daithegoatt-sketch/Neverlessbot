@@ -68,6 +68,11 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addRoleOption((o) => o.setName('role').setDescription('الرتبة المخولة بالميوت وفك الميوت وحذف رسائل الأقل رتبة').setRequired(true)),
   new SlashCommandBuilder()
+    .setName('warn')
+    .setDescription('إعطاء عضو إنذار يدوي بنفس تصعيد Neverless')
+    .addUserOption((o) => o.setName('member').setDescription('العضو المطلوب إنذاره').setRequired(true))
+    .addStringOption((o) => o.setName('reason').setDescription('سبب الإنذار').setMinLength(1).setMaxLength(300).setRequired(true)),
+  new SlashCommandBuilder()
     .setName('automod')
     .setDescription('إدارة الكلمات والإنذارات في Neverless AutoMod')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -90,6 +95,7 @@ const commands = [
         .addChoices(
           { name: 'Spam', value: 'spam' },
           { name: 'Language', value: 'language' },
+          { name: 'Manual', value: 'manual' },
           { name: 'All', value: 'all' },
         )))
     .addSubcommand((sub) => sub.setName('list').setDescription('عرض الكلمات والعبارات الممنوعة')),
