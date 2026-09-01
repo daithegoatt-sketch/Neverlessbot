@@ -80,7 +80,8 @@ assert.deepEqual(offenseAction(1), { action: 'warning2', nextCount: 2 });
 assert.deepEqual(offenseAction(2), { action: 'mute', nextCount: 0 });
 assert.deepEqual(warningRemovalTypes('spam'), ['spam']);
 assert.deepEqual(warningRemovalTypes('language'), ['language']);
-assert.deepEqual(warningRemovalTypes('all'), ['spam', 'language']);
+assert.deepEqual(warningRemovalTypes('manual'), ['manual']);
+assert.deepEqual(warningRemovalTypes('all'), ['spam', 'language', 'manual']);
 assert.deepEqual(warningRemovalTypes('other'), []);
 
 const encoded = Buffer.from(JSON.stringify(['كلمة', 'badword']), 'utf8').toString('base64url');
@@ -93,6 +94,12 @@ assert.deepEqual(parseWarning('NLAUTOMOD1|warn|123456789012345678|22345678901234
   userId: '223456789012345678',
   type: 'spam',
   count: 2,
+});
+assert.deepEqual(parseWarning('NLAUTOMOD1|warn|123456789012345678|223456789012345678|manual|1'), {
+  guildId: '123456789012345678',
+  userId: '223456789012345678',
+  type: 'manual',
+  count: 1,
 });
 
 console.log('automod tests passed');
