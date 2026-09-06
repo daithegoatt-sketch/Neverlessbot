@@ -1,5 +1,7 @@
 'use strict';
 
+const { TextChannel } = require('discord.js');
+
 const CLAIM_PREFIX = 'hidden:claim:';
 const SECRET_TOPIC_PREFIX = 'neverless-hidden-owner:';
 const inFlight = new Map();
@@ -87,9 +89,8 @@ async function cleanupGuild(guild) {
   return removed;
 }
 
-function installSendGuard(client) {
-  const sample = client.channels.cache.find((channel) => typeof channel?.send === 'function');
-  const proto = sample ? Object.getPrototypeOf(sample) : null;
+function installSendGuard() {
+  const proto = TextChannel?.prototype;
   if (!proto?.send || proto.__neverlessHiddenClaimGuard) return false;
 
   originalSend = proto.send;
@@ -118,7 +119,7 @@ function installSendGuard(client) {
 function installHiddenAchievementGuard(client) {
   if (installed) return;
   installed = true;
-  installSendGuard(client);
+  installSendGuard();
   client.once('ready', () => {
     for (const guild of client.guilds.cache.values()) {
       cleanupGuild(guild).catch((error) => console.warn('[hidden-achievement-guard] Cleanup failed:', error.message));
