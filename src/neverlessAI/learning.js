@@ -30,7 +30,9 @@ async function processCorrection(guild, userId, feedback) {
     console.warn('[neverless-ai] Correction classifier failed:', error.message);
     return null;
   }
-  if (!correction?.valid || correction.confidence < 0.65 || !correction.meaning) return { valid: false };
+  // One weak complaint must not rewrite future behavior. Exact-question memory is accepted
+  // only when the classifier is strongly confident that a real misunderstanding happened.
+  if (!correction?.valid || correction.confidence < 0.78 || !correction.meaning) return { valid: false };
   const result = applyCorrection(guild, userId, {
     ...correction,
     previousQuestion: previous.question,
@@ -54,7 +56,7 @@ function learningNote(context, correction = null) {
     lines.push(`Learned wording convention: when the user uses "${rule.trigger}", interpret it as: ${rule.meaning}`);
   }
   if (correction?.valid && correction.meaning) {
-    lines.push(`The user's current message explicitly corrects the previous misunderstanding. Their intended meaning is: ${correction.meaning}. Acknowledge the correction naturally and answer using that meaning.`);
+    lines.push(`The user's current message corrects a high-confidence previous misunderstanding. Their intended meaning is: ${correction.meaning}. Acknowledge the correction naturally and answer using that meaning.`);
   }
   return lines.join('\n');
 }
