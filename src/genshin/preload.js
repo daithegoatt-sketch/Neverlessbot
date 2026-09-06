@@ -24,6 +24,7 @@ const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publ
 const { installModeration } = require('../moderation');
 const { installDelegatedMessageDelete } = require('../delegatedMessageDelete');
 const { installActivity } = require('../activityV2');
+const { installHiddenAchievementGuard } = require('../hiddenAchievementGuard');
 const { installHiddenAchievements } = require('../hiddenAchievementsV3');
 const { installServerTools } = require('../serverTools');
 const { installTempVoicePersistence } = require('../tempVoicePersistence');
@@ -117,6 +118,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installModeration(this);
     installDelegatedMessageDelete(this);
     installActivity(this);
+    installHiddenAchievementGuard(this);
     installHiddenAchievements(this);
     installNeverlessAI(this);
     installNicknameCommand(this);
