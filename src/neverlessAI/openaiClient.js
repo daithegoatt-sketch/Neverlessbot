@@ -90,11 +90,12 @@ async function runWithTools(options) {
   const model = admin ? ADMIN_MODEL : DEFAULT_MODEL;
   const customTools = [...toolDefinitions];
   let tools = allowWeb ? [{ type: 'web_search' }, ...customTools] : customTools;
+  const conversationInput = inputMessages(turns, userText);
 
   const firstBody = {
     model,
     instructions,
-    input: inputMessages(turns, userText),
+    input: conversationInput,
     tools,
     tool_choice: 'auto',
     max_output_tokens: 1400,
@@ -105,7 +106,7 @@ async function runWithTools(options) {
   try {
     response = await postResponse(firstBody);
   } catch (error) {
-    // Keep the assistant usable if a selected model/account does not support hosted web search.
+    // If hosted web search is unavailable for the selected account/model, retry with custom tools only.
     if (allowWeb && error instanceof OpenAIHttpError && error.status === 400) {
       tools = customTools;
       response = await postResponse({ ...firstBody, tools });
@@ -134,11 +135,14 @@ async function runWithTools(options) {
         output: JSON.stringify(result ?? null),
       });
     }
+
+    // Re-submit the full local conversation plus the model's function calls and our outputs.
+    // This avoids depending on server-side response storage and keeps store:false truly stateless.
+    conversationInput.push(...(response.output || []), ...outputs);
     response = await postResponse({
       model,
       instructions,
-      previous_response_id: response.id,
-      input: outputs,
+      input: conversationInput,
       tools,
       tool_choice: 'auto',
       max_output_tokens: 1400,
