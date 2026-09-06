@@ -10,7 +10,7 @@ const {
   parseHiddenCommand,
   parseClaimCustomId,
   qualifiesForDailyActivity,
-} = require('./hiddenAchievements');
+} = require('./hiddenAchievementsV2');
 
 assert.equal(kuwaitDay(Date.UTC(2026, 8, 6, 22, 30)), '2026-09-07');
 assert.equal(levelFromXp(xpForLevel(20)), 20);
