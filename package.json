@@ -20,6 +20,7 @@
     "discord.js": "^14.26.4",
     "enka-network-api": "^5.0.16",
     "ffmpeg-static": "^5.2.0",
-    "opusscript": "^0.1.1"
+    "opusscript": "^0.1.1",
+    "youtubei.js": "^18.0.0"
   }
 }
