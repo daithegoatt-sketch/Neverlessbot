@@ -14,7 +14,7 @@ const {
 } = require('./memory');
 const { processCorrection, learningNote } = require('./learning');
 const { TOOL_DEFINITIONS, createServerToolExecutor } = require('./serverTools');
-const { configured, runWithTools } = require('./openaiClient');
+const { configured, providerLabel, runWithTools } = require('./openaiClient');
 
 const ASK_CHANNEL_ID = '1546282420851179621';
 const ADMIN_CHANNEL_ID = '1546282473988685864';
@@ -151,7 +151,7 @@ async function handleAIMessage(message) {
     if (now - last > 15 * 60_000) {
       missingKeyNotices.set(message.channelId, now);
       await message.reply({
-        content: 'Neverless AI جاهز بالنظام، لكن مفتاح `OPENAI_API_KEY` غير موجود في متغيرات الاستضافة حاليًا.',
+        content: 'Neverless AI جاهز، لكن ما فيه مفتاح AI في متغيرات الاستضافة. أضف `GEMINI_API_KEY`، أو `OPENAI_API_KEY` كخيار بديل.',
         allowedMentions: { repliedUser: false },
       }).catch(() => {});
     }
@@ -198,7 +198,7 @@ async function initialize(client) {
   readyGuildId = guild.id;
   await initLongTermMemory(guild, client.user.id).catch((error) => console.warn('[neverless-ai] Long-term memory init failed:', error.message));
   startBackfill(guild);
-  console.log(`[neverless-ai] Ready in #${ask?.name || ASK_CHANNEL_ID} and admin test channel. Model=${process.env.NEVERLESS_AI_MODEL || 'gpt-5.4-mini'} key=${configured() ? 'configured' : 'missing'}.`);
+  console.log(`[neverless-ai] Ready in #${ask?.name || ASK_CHANNEL_ID} and admin test channel. Provider=${providerLabel()} key=${configured() ? 'configured' : 'missing'}.`);
 }
 
 function installNeverlessAI(client) {
