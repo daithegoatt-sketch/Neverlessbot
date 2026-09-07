@@ -1,5 +1,6 @@
 'use strict';
 
+const { Readable } = require('node:stream');
 const {
   Client,
   GatewayIntentBits,
@@ -7,6 +8,7 @@ const {
 const {
   AudioPlayerStatus,
   NoSubscriberBehavior,
+  StreamType,
   VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
@@ -20,10 +22,16 @@ const {
   parseRecord,
 } = require('./protocol');
 
+try {
+  const ffmpegPath = require('ffmpeg-static');
+  if (ffmpegPath && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = ffmpegPath;
+} catch {}
+
 const WORKER_ID = String(process.env.MUSIC_WORKER_ID || '').trim();
 const TOKEN = process.env.DISCORD_TOKEN;
 const HEARTBEAT_MS = 10_000;
 const REQUEST_TTL_MS = 45_000;
+const SOURCE_TIMEOUT_MS = 18_000;
 
 if (!TOKEN) {
   console.error('[music-worker] Missing DISCORD_TOKEN.');
@@ -58,9 +66,89 @@ const state = {
 };
 const seenRequests = new Set();
 let advancing = false;
+let youtubePromise = null;
 
 function safeText(value, max = 180) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function withTimeout(promise, ms = SOURCE_TIMEOUT_MS, code = 'SOURCE_TIMEOUT') {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(code)), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function youtube() {
+  if (!youtubePromise) {
+    youtubePromise = import('youtubei.js')
+      .then(({ Innertube, UniversalCache }) => Innertube.create({ cache: new UniversalCache(false) }))
+      .catch((error) => {
+        youtubePromise = null;
+        throw error;
+      });
+  }
+  return youtubePromise;
+}
+
+function youtubeVideoId(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || null;
+    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      if (url.searchParams.get('v')) return url.searchParams.get('v');
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (['shorts', 'live', 'embed'].includes(parts[0])) return parts[1] || null;
+    }
+  } catch {}
+  return null;
+}
+
+function youtubeTitle(node, fallback) {
+  return safeText(
+    node?.title?.text
+      || node?.title?.toString?.()
+      || node?.video_details?.title
+      || node?.basic_info?.title
+      || fallback,
+    180,
+  );
+}
+
+async function resolveYoutubeTrack(wanted) {
+  const yt = await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
+  const directId = youtubeVideoId(wanted);
+  if (directId) {
+    const info = await withTimeout(yt.getBasicInfo(directId), SOURCE_TIMEOUT_MS, 'YOUTUBE_INFO_TIMEOUT');
+    return {
+      provider: 'youtube',
+      title: youtubeTitle(info, wanted),
+      url: `https://www.youtube.com/watch?v=${directId}`,
+      videoId: directId,
+    };
+  }
+
+  const search = await withTimeout(
+    yt.search(wanted, { type: 'video' }),
+    SOURCE_TIMEOUT_MS,
+    'YOUTUBE_SEARCH_TIMEOUT',
+  );
+  const result = [...(search?.results || [])].find((item) => item?.video_id && item?.type === 'Video')
+    || [...(search?.results || [])].find((item) => item?.video_id);
+  if (!result?.video_id) return null;
+  return {
+    provider: 'youtube',
+    title: youtubeTitle(result, wanted),
+    url: `https://www.youtube.com/watch?v=${result.video_id}`,
+    videoId: result.video_id,
+  };
 }
 
 async function dataChannel(guild) {
@@ -166,31 +254,71 @@ async function resolveTrack(query) {
   const wanted = safeText(query, 400);
   if (!wanted) return null;
 
+  const looksLikeUrl = /^https?:\/\//i.test(wanted);
+  const isYoutubeUrl = Boolean(youtubeVideoId(wanted));
+  if (!looksLikeUrl || isYoutubeUrl) {
+    const youtubeTrack = await resolveYoutubeTrack(wanted).catch((error) => {
+      console.warn(`[music-worker ${WORKER_ID}] YouTube resolve failed:`, error.message);
+      return null;
+    });
+    if (youtubeTrack) return youtubeTrack;
+  }
+
   try {
     const type = await play.validate(wanted);
-    if (type === 'yt_video') {
-      const info = await play.video_basic_info(wanted);
-      return {
-        title: safeText(info.video_details?.title || wanted, 180),
-        url: info.video_details?.url || wanted,
-      };
-    }
     if (type === 'so_track') {
       const info = await play.soundcloud(wanted);
       return {
+        provider: 'soundcloud',
         title: safeText(info.name || wanted, 180),
         url: info.url || wanted,
       };
     }
-  } catch {}
+  } catch (error) {
+    console.warn(`[music-worker ${WORKER_ID}] SoundCloud resolve failed:`, error.message);
+  }
 
-  const results = await play.search(wanted, { limit: 1, source: { youtube: 'video' } }).catch(() => []);
-  const result = results?.[0];
-  if (!result?.url) return null;
-  return { title: safeText(result.title || wanted, 180), url: result.url };
+  return null;
+}
+
+async function youtubeAudioResource(track) {
+  const yt = await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
+  let stream;
+  let inputType = StreamType.WebmOpus;
+  try {
+    stream = await withTimeout(
+      yt.download(track.videoId, {
+        type: 'audio',
+        quality: 'best',
+        format: 'webm',
+        codec: 'opus',
+      }),
+      SOURCE_TIMEOUT_MS,
+      'YOUTUBE_STREAM_TIMEOUT',
+    );
+  } catch (firstError) {
+    console.warn(`[music-worker ${WORKER_ID}] Preferred YouTube Opus stream failed:`, firstError.message);
+    stream = await withTimeout(
+      yt.download(track.videoId, { type: 'audio', quality: 'best' }),
+      SOURCE_TIMEOUT_MS,
+      'YOUTUBE_STREAM_TIMEOUT',
+    );
+    inputType = StreamType.Arbitrary;
+  }
+
+  const nodeStream = typeof stream?.getReader === 'function' ? Readable.fromWeb(stream) : stream;
+  if (!nodeStream?.pipe) throw new Error('YOUTUBE_AUDIO_STREAM_UNAVAILABLE');
+  const resource = createAudioResource(nodeStream, {
+    inputType,
+    inlineVolume: true,
+    metadata: track,
+  });
+  if (resource.volume) resource.volume.setVolume(state.volume / 100);
+  return resource;
 }
 
 async function streamTrack(track) {
+  if (track.provider === 'youtube' && track.videoId) return youtubeAudioResource(track);
   const source = await play.stream(track.url, { quality: 2 });
   const resource = createAudioResource(source.stream, {
     inputType: source.type,
@@ -206,6 +334,9 @@ async function startTrack(guild, track) {
   const resource = await streamTrack(track);
   state.current = track;
   player.play(resource);
+  await entersState(player, AudioPlayerStatus.Playing, 8_000).catch((error) => {
+    throw new Error(`AUDIO_DID_NOT_START:${error.message}`);
+  });
   await publishStatus(guild).catch(() => {});
 }
 
@@ -276,8 +407,20 @@ async function handlePlay(guild, payload) {
   }
 
   state.voiceId = payload.voice_id;
-  await startTrack(guild, track);
-  await emitEvent(guild, { ...payload, code: 'playing', title: track.title });
+  try {
+    await startTrack(guild, track);
+    await emitEvent(guild, { ...payload, code: 'playing', title: track.title });
+  } catch (error) {
+    state.current = null;
+    player.stop(true);
+    console.warn(`[music-worker ${WORKER_ID}] Start track failed:`, error.message);
+    await emitEvent(guild, {
+      ...payload,
+      code: 'error',
+      reason: safeText(error.message, 120),
+      title: track.title,
+    });
+  }
 }
 
 async function handleSkip(guild, payload) {
@@ -378,6 +521,12 @@ async function bootstrapGuild(guild) {
 
 async function initialize() {
   console.log(`[music-worker ${WORKER_ID}] Logged in as ${client.user.tag}`);
+  try {
+    await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
+    console.log(`[music-worker ${WORKER_ID}] YouTube.js audio source ready.`);
+  } catch (error) {
+    console.warn(`[music-worker ${WORKER_ID}] YouTube.js init failed; worker stays online:`, error.message);
+  }
   for (const guild of client.guilds.cache.values()) {
     let ready = await bootstrapGuild(guild).catch(() => false);
     if (!ready) {
