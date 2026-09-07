@@ -5,7 +5,7 @@ const { searchCommandCatalog } = require('./commandCatalog');
 const { compactGuide } = require('./serverToolsV4');
 
 const rating = searchCommandCatalog('تقييم سكيرك بحسابي');
-assert.ok(rating.some((row) => row.syntax === 'تقييم <Character> بحسابي'));
+assert.ok(rating.some((row) => row.syntax === 'تقييم Skirk بحسابي'));
 assert.ok(!rating.some((row) => row.syntax === '/تقييم الشخصيات'));
 
 const theater = searchCommandCatalog('ابي امر تيم المسرح');
