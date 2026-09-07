@@ -27,6 +27,7 @@ const { installActivity } = require('../activityV2');
 const { installHiddenAchievementGuard } = require('../hiddenAchievementGuard');
 const { installHiddenAchievements } = require('../hiddenAchievementsV3');
 const { installServerTools } = require('../serverTools');
+const { installTicketSupport } = require('../ticketSupport');
 const { installTempVoicePersistence } = require('../tempVoicePersistence');
 const { installAutoMod } = require('../autoMod');
 const { installAntiRaid } = require('../antiRaid');
@@ -121,6 +122,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installHiddenAchievementGuard(this);
     installHiddenAchievements(this);
     installNeverlessAI(this);
+    installTicketSupport(this);
     installNicknameCommand(this);
     installGeneralChatGreetings(this);
     installTempVoicePersistence(this);
