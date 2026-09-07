@@ -4,7 +4,7 @@ let runtime = null;
 let loadError = null;
 
 try {
-  runtime = require('./indexV3');
+  runtime = require('./indexV4');
 } catch (error) {
   loadError = error;
   console.error('[neverless-ai] AI module failed to load; the rest of Neverless will continue:', error);
