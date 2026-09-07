@@ -1,8 +1,9 @@
 'use strict';
 
-const API_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/responses';
-const DEFAULT_MODEL = process.env.NEVERLESS_AI_MODEL || 'gpt-5.4-mini';
-const ADMIN_MODEL = process.env.NEVERLESS_AI_ADMIN_MODEL || DEFAULT_MODEL;
+const OPENAI_API_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/responses';
+const GEMINI_API_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/interactions';
+const OPENAI_DEFAULT_MODEL = process.env.NEVERLESS_AI_MODEL || 'gpt-5.4-mini';
+const GEMINI_DEFAULT_MODEL = process.env.NEVERLESS_GEMINI_MODEL || 'gemini-3.7-flash';
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_TOOL_ROUNDS = 6;
 
@@ -14,11 +15,69 @@ class OpenAIHttpError extends Error {
   }
 }
 
-function configured() {
-  return Boolean(String(process.env.OPENAI_API_KEY || '').trim());
+class GeminiHttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = 'GeminiHttpError';
+    this.status = status;
+  }
 }
 
-function extractText(response) {
+function provider() {
+  if (String(process.env.GEMINI_API_KEY || '').trim()) return 'gemini';
+  if (String(process.env.OPENAI_API_KEY || '').trim()) return 'openai';
+  return null;
+}
+
+function configured() {
+  return Boolean(provider());
+}
+
+function providerLabel(admin = false) {
+  if (provider() === 'gemini') {
+    const model = admin
+      ? (process.env.NEVERLESS_GEMINI_ADMIN_MODEL || GEMINI_DEFAULT_MODEL)
+      : GEMINI_DEFAULT_MODEL;
+    return `Gemini/${model}`;
+  }
+  if (provider() === 'openai') {
+    const model = admin
+      ? (process.env.NEVERLESS_AI_ADMIN_MODEL || OPENAI_DEFAULT_MODEL)
+      : OPENAI_DEFAULT_MODEL;
+    return `OpenAI/${model}`;
+  }
+  return 'not-configured';
+}
+
+async function postJson(url, headers, body, ErrorType, attempt = 0) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
+    if (!response.ok) {
+      const message = parsed?.error?.message || `${ErrorType.name} request failed with HTTP ${response.status}`;
+      if (attempt < 1 && (response.status === 429 || response.status >= 500)) {
+        await new Promise((resolve) => setTimeout(resolve, response.status === 429 ? 1400 : 800));
+        return postJson(url, headers, body, ErrorType, attempt + 1);
+      }
+      throw new ErrorType(response.status, message);
+    }
+    return parsed;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractOpenAIText(response) {
   if (typeof response?.output_text === 'string' && response.output_text.trim()) return response.output_text.trim();
   const chunks = [];
   for (const item of response?.output || []) {
@@ -31,43 +90,23 @@ function extractText(response) {
   return chunks.join('\n').trim();
 }
 
-function functionCalls(response) {
+function openAIFunctionCalls(response) {
   return (response?.output || []).filter((item) => item?.type === 'function_call' && item.name && item.call_id);
 }
 
-async function postResponse(body, attempt = 0) {
-  if (!configured()) throw new Error('OPENAI_API_KEY_MISSING');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  timer.unref?.();
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const raw = await response.text();
-    let parsed = null;
-    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
-    if (!response.ok) {
-      const message = parsed?.error?.message || `OpenAI request failed with HTTP ${response.status}`;
-      if (attempt < 1 && (response.status === 429 || response.status >= 500)) {
-        await new Promise((resolve) => setTimeout(resolve, response.status === 429 ? 1400 : 800));
-        return postResponse(body, attempt + 1);
-      }
-      throw new OpenAIHttpError(response.status, message);
-    }
-    return parsed;
-  } finally {
-    clearTimeout(timer);
-  }
+async function postOpenAI(body, attempt = 0) {
+  const key = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!key) throw new Error('OPENAI_API_KEY_MISSING');
+  return postJson(
+    OPENAI_API_URL,
+    { Authorization: `Bearer ${key}` },
+    body,
+    OpenAIHttpError,
+    attempt,
+  );
 }
 
-function inputMessages(turns, userText) {
+function openAIInputMessages(turns, userText) {
   const rows = [];
   for (const turn of turns || []) {
     if (!turn?.content || !['user', 'assistant'].includes(turn.role)) continue;
@@ -77,21 +116,15 @@ function inputMessages(turns, userText) {
   return rows.slice(-14);
 }
 
-async function runWithTools(options) {
+async function runOpenAIWithTools(options) {
   const {
-    turns = [],
-    userText,
-    instructions,
-    toolDefinitions = [],
-    executeTool,
-    admin = false,
-    allowWeb = true,
+    turns = [], userText, instructions, toolDefinitions = [], executeTool,
+    admin = false, allowWeb = true,
   } = options;
-  const model = admin ? ADMIN_MODEL : DEFAULT_MODEL;
+  const model = admin ? (process.env.NEVERLESS_AI_ADMIN_MODEL || OPENAI_DEFAULT_MODEL) : OPENAI_DEFAULT_MODEL;
   const customTools = [...toolDefinitions];
   let tools = allowWeb ? [{ type: 'web_search' }, ...customTools] : customTools;
-  const conversationInput = inputMessages(turns, userText);
-
+  const conversationInput = openAIInputMessages(turns, userText);
   const firstBody = {
     model,
     instructions,
@@ -104,19 +137,16 @@ async function runWithTools(options) {
 
   let response;
   try {
-    response = await postResponse(firstBody);
+    response = await postOpenAI(firstBody);
   } catch (error) {
-    // If hosted web search is unavailable for the selected account/model, retry with custom tools only.
     if (allowWeb && error instanceof OpenAIHttpError && error.status === 400) {
       tools = customTools;
-      response = await postResponse({ ...firstBody, tools });
-    } else {
-      throw error;
-    }
+      response = await postOpenAI({ ...firstBody, tools });
+    } else throw error;
   }
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const calls = functionCalls(response);
+    const calls = openAIFunctionCalls(response);
     if (!calls.length) break;
     const outputs = [];
     for (const call of calls) {
@@ -124,22 +154,12 @@ async function runWithTools(options) {
       try { args = call.arguments ? JSON.parse(call.arguments) : {}; }
       catch { args = { _invalid_json: true, raw: String(call.arguments || '').slice(0, 1000) }; }
       let result;
-      try {
-        result = executeTool ? await executeTool(call.name, args) : { error: 'NO_TOOL_EXECUTOR' };
-      } catch (error) {
-        result = { error: 'TOOL_EXECUTION_FAILED', message: String(error?.message || error).slice(0, 400) };
-      }
-      outputs.push({
-        type: 'function_call_output',
-        call_id: call.call_id,
-        output: JSON.stringify(result ?? null),
-      });
+      try { result = executeTool ? await executeTool(call.name, args) : { error: 'NO_TOOL_EXECUTOR' }; }
+      catch (error) { result = { error: 'TOOL_EXECUTION_FAILED', message: String(error?.message || error).slice(0, 400) }; }
+      outputs.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result ?? null) });
     }
-
-    // Re-submit the full local conversation plus the model's function calls and our outputs.
-    // This avoids depending on server-side response storage and keeps store:false truly stateless.
     conversationInput.push(...(response.output || []), ...outputs);
-    response = await postResponse({
+    response = await postOpenAI({
       model,
       instructions,
       input: conversationInput,
@@ -150,19 +170,123 @@ async function runWithTools(options) {
     });
   }
 
-  const text = extractText(response);
+  const text = extractOpenAIText(response);
   if (!text) throw new Error('OPENAI_EMPTY_RESPONSE');
-  return { text, responseId: response.id || null, model };
+  return { text, responseId: response.id || null, model, provider: 'openai' };
+}
+
+function geminiInputSteps(turns, userText) {
+  const rows = [];
+  for (const turn of (turns || []).slice(-12)) {
+    if (!turn?.content || !['user', 'assistant'].includes(turn.role)) continue;
+    rows.push({
+      type: turn.role === 'user' ? 'user_input' : 'model_output',
+      content: [{ type: 'text', text: String(turn.content).slice(0, 5000) }],
+    });
+  }
+  rows.push({ type: 'user_input', content: [{ type: 'text', text: String(userText || '').slice(0, 7000) }] });
+  return rows;
+}
+
+function extractGeminiText(response) {
+  if (typeof response?.output_text === 'string' && response.output_text.trim()) return response.output_text.trim();
+  const chunks = [];
+  for (const step of response?.steps || []) {
+    if (step?.type !== 'model_output') continue;
+    for (const part of step.content || []) if (part?.type === 'text' && part.text) chunks.push(part.text);
+  }
+  return chunks.join('\n').trim();
+}
+
+function geminiFunctionCalls(response) {
+  return (response?.steps || []).filter((step) => step?.type === 'function_call' && step.name && step.id);
+}
+
+async function postGemini(body, attempt = 0) {
+  const key = String(process.env.GEMINI_API_KEY || '').trim();
+  if (!key) throw new Error('GEMINI_API_KEY_MISSING');
+  return postJson(
+    GEMINI_API_URL,
+    {
+      'x-goog-api-key': key,
+      'x-goog-api-client': 'neverless-discord-bot/1.0',
+    },
+    body,
+    GeminiHttpError,
+    attempt,
+  );
+}
+
+function geminiTools(toolDefinitions, allowWeb) {
+  const tools = [...toolDefinitions];
+  // Google Search grounding is intentionally opt-in because it may not be available on the free tier.
+  if (allowWeb && process.env.NEVERLESS_GEMINI_GOOGLE_SEARCH === '1') tools.unshift({ type: 'google_search' });
+  return tools;
+}
+
+async function runGeminiWithTools(options) {
+  const {
+    turns = [], userText, instructions, toolDefinitions = [], executeTool,
+    admin = false, allowWeb = true,
+  } = options;
+  const model = admin
+    ? (process.env.NEVERLESS_GEMINI_ADMIN_MODEL || GEMINI_DEFAULT_MODEL)
+    : GEMINI_DEFAULT_MODEL;
+  const tools = geminiTools(toolDefinitions, allowWeb);
+  const history = geminiInputSteps(turns, userText);
+
+  let response = await postGemini({
+    model,
+    store: false,
+    system_instruction: instructions,
+    input: history,
+    tools,
+    generation_config: { max_output_tokens: 1400 },
+  });
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const calls = geminiFunctionCalls(response);
+    if (!calls.length) break;
+    history.push(...(response.steps || []));
+    for (const call of calls) {
+      const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+      let result;
+      try { result = executeTool ? await executeTool(call.name, args) : { error: 'NO_TOOL_EXECUTOR' }; }
+      catch (error) { result = { error: 'TOOL_EXECUTION_FAILED', message: String(error?.message || error).slice(0, 400) }; }
+      history.push({
+        type: 'function_result',
+        name: call.name,
+        call_id: call.id,
+        result: [{ type: 'text', text: JSON.stringify(result ?? null) }],
+      });
+    }
+    response = await postGemini({
+      model,
+      store: false,
+      system_instruction: instructions,
+      input: history,
+      tools,
+      generation_config: { max_output_tokens: 1400 },
+    });
+  }
+
+  const text = extractGeminiText(response);
+  if (!text) throw new Error('GEMINI_EMPTY_RESPONSE');
+  return { text, responseId: response.id || null, model, provider: 'gemini' };
+}
+
+async function runWithTools(options) {
+  if (provider() === 'gemini') return runGeminiWithTools(options);
+  if (provider() === 'openai') return runOpenAIWithTools(options);
+  throw new Error('AI_API_KEY_MISSING');
 }
 
 function stripJsonFence(value) {
   return String(value || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 }
 
-async function classifyCorrection(input) {
-  if (!configured()) return null;
-  const model = process.env.NEVERLESS_AI_LEARNING_MODEL || DEFAULT_MODEL;
-  const instructions = [
+function correctionInstructions() {
+  return [
     'You classify explicit user corrections to a Discord assistant.',
     'Do not infer a correction just because the user disagrees with a conclusion. The feedback must indicate that the assistant misunderstood the question, wording, referent, or desired interpretation.',
     'Return JSON only with keys: valid(boolean), meaning(string), scope("exact_question"|"general_pattern"), trigger(string), explicit(boolean), confidence(number 0..1).',
@@ -170,22 +294,11 @@ async function classifyCorrection(input) {
     'Use general_pattern only when the user clearly teaches a reusable wording convention. Otherwise exact_question.',
     'explicit=true only when the user clearly states what they meant or a reusable convention.',
   ].join(' ');
-  const payload = {
-    previous_question: String(input.previousQuestion || '').slice(0, 1500),
-    previous_answer: String(input.previousAnswer || '').slice(0, 2200),
-    correction_feedback: String(input.feedback || '').slice(0, 1500),
-    existing_active_rules: input.existingRules || [],
-  };
-  const response = await postResponse({
-    model,
-    instructions,
-    input: [{ role: 'user', content: JSON.stringify(payload) }],
-    max_output_tokens: 350,
-    store: false,
-  });
-  const text = stripJsonFence(extractText(response));
+}
+
+function normalizeCorrection(text) {
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(stripJsonFence(text));
     if (!parsed || typeof parsed !== 'object') return null;
     return {
       valid: Boolean(parsed.valid),
@@ -200,12 +313,47 @@ async function classifyCorrection(input) {
   }
 }
 
+async function classifyCorrection(input) {
+  if (!configured()) return null;
+  const payload = {
+    previous_question: String(input.previousQuestion || '').slice(0, 1500),
+    previous_answer: String(input.previousAnswer || '').slice(0, 2200),
+    correction_feedback: String(input.feedback || '').slice(0, 1500),
+    existing_active_rules: input.existingRules || [],
+  };
+
+  if (provider() === 'gemini') {
+    const model = process.env.NEVERLESS_GEMINI_LEARNING_MODEL || GEMINI_DEFAULT_MODEL;
+    const response = await postGemini({
+      model,
+      store: false,
+      system_instruction: correctionInstructions(),
+      input: [{ type: 'user_input', content: [{ type: 'text', text: JSON.stringify(payload) }] }],
+      generation_config: { max_output_tokens: 350 },
+    });
+    return normalizeCorrection(extractGeminiText(response));
+  }
+
+  const model = process.env.NEVERLESS_AI_LEARNING_MODEL || OPENAI_DEFAULT_MODEL;
+  const response = await postOpenAI({
+    model,
+    instructions: correctionInstructions(),
+    input: [{ role: 'user', content: JSON.stringify(payload) }],
+    max_output_tokens: 350,
+    store: false,
+  });
+  return normalizeCorrection(extractOpenAIText(response));
+}
+
 module.exports = {
   configured,
+  provider,
+  providerLabel,
   runWithTools,
   classifyCorrection,
-  extractText,
-  functionCalls,
-  inputMessages,
+  extractText: extractOpenAIText,
+  functionCalls: openAIFunctionCalls,
+  inputMessages: openAIInputMessages,
   OpenAIHttpError,
+  GeminiHttpError,
 };
