@@ -8,10 +8,12 @@ const {
 } = require('discord.js');
 const { whenAccountStoreReady, getAllLinkedUsers, unlinkUid } = require('./genshin/accountStore');
 const { clearLeaderboardCache } = require('./genshin/leaderboard');
+const { isGifOnlyExternalLinks } = require('./linkPolicy');
 
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || '1538557238627672164';
 const DATA_CHANNEL_NAME = 'neverless-data';
 const LINK_CONFIG_PREFIX = 'NLCFG1|links|';
+const LINK_BYPASS_ROLE_PREFIX = 'NLCFG1|linkbypassrole|';
 const MUTE_ADMIN_CONFIG_PREFIX = 'NLCFG1|muteadmin|';
 const TIMER_PREFIX = 'NLMOD1|';
 const INDEFINITE_TIMEOUT_ROLE = 'Neverless Indefinite Timeout';
@@ -21,6 +23,8 @@ const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 const allowedLinkChannels = new Map();
 const configMessageIds = new Map();
+const linkBypassRoles = new Map();
+const linkBypassMessageIds = new Map();
 const muteAdminRoles = new Map();
 const muteAdminMessageIds = new Map();
 const timerMessageIds = new Map();
@@ -120,6 +124,14 @@ function parseConfig(content) {
   return /^\d{15,22}$/.test(guildId) ? { guildId, ids } : null;
 }
 
+function parseLinkBypassRoleConfig(content) {
+  const value = String(content || '').trim();
+  if (!value.startsWith(LINK_BYPASS_ROLE_PREFIX)) return null;
+  const [guildId, roleId] = value.slice(LINK_BYPASS_ROLE_PREFIX.length).split('|');
+  if (!/^\d{15,22}$/.test(guildId || '') || !/^\d{15,22}$/.test(roleId || '')) return null;
+  return { guildId, roleId };
+}
+
 function parseMuteAdminConfig(content) {
   const value = String(content || '').trim();
   if (!value.startsWith(MUTE_ADMIN_CONFIG_PREFIX)) return null;
@@ -149,6 +161,21 @@ async function persistAllowedLinks(guild) {
   else {
     message = await channel.send(content).catch(() => null);
     if (message) configMessageIds.set(configKey(guild.id), message.id);
+  }
+}
+
+async function persistLinkBypassRole(guild) {
+  const channel = dataChannel(guild);
+  const roleId = linkBypassRoles.get(guild.id);
+  if (!channel || !roleId) return;
+  const content = `${LINK_BYPASS_ROLE_PREFIX}${guild.id}|${roleId}`;
+  const key = configKey(guild.id);
+  const existingId = linkBypassMessageIds.get(key);
+  let message = existingId ? await channel.messages.fetch(existingId).catch(() => null) : null;
+  if (message) await message.edit(content).catch(() => {});
+  else {
+    message = await channel.send(content).catch(() => null);
+    if (message) linkBypassMessageIds.set(key, message.id);
   }
 }
 
@@ -232,6 +259,7 @@ async function loadPersistentModeration(guild) {
   if (!channel) return;
   const messages = await fetchAllDataMessages(channel);
   let latestConfig = null;
+  let latestLinkBypassRole = null;
   let latestMuteAdmin = null;
   const latestTimers = new Map();
 
@@ -240,6 +268,10 @@ async function loadPersistentModeration(guild) {
     const config = parseConfig(message.content);
     if (config?.guildId === guild.id && (!latestConfig || message.createdTimestamp > latestConfig.createdTimestamp)) {
       latestConfig = { ...config, messageId: message.id, createdTimestamp: message.createdTimestamp };
+    }
+    const linkBypass = parseLinkBypassRoleConfig(message.content);
+    if (linkBypass?.guildId === guild.id && (!latestLinkBypassRole || message.createdTimestamp > latestLinkBypassRole.createdTimestamp)) {
+      latestLinkBypassRole = { ...linkBypass, messageId: message.id, createdTimestamp: message.createdTimestamp };
     }
     const muteAdmin = parseMuteAdminConfig(message.content);
     if (muteAdmin?.guildId === guild.id && (!latestMuteAdmin || message.createdTimestamp > latestMuteAdmin.createdTimestamp)) {
@@ -255,6 +287,13 @@ async function loadPersistentModeration(guild) {
 
   allowedLinkChannels.set(guild.id, new Set(latestConfig?.ids || []));
   if (latestConfig) configMessageIds.set(configKey(guild.id), latestConfig.messageId);
+
+  if (latestLinkBypassRole) {
+    linkBypassRoles.set(guild.id, latestLinkBypassRole.roleId);
+    linkBypassMessageIds.set(configKey(guild.id), latestLinkBypassRole.messageId);
+  } else {
+    linkBypassRoles.delete(guild.id);
+  }
 
   if (latestMuteAdmin) {
     muteAdminRoles.set(guild.id, latestMuteAdmin.roleId);
@@ -289,15 +328,17 @@ function hasExternalLink(content) {
   return /(?:https?:\/\/|www\.)\S+|(?:discord\.gg|discord(?:app)?\.com\/invite)\/\S+/iu.test(value);
 }
 
-function isLinkAllowed(message) {
-  if (message.member?.permissions?.has(PermissionFlagsBits.Administrator) || message.member?.permissions?.has(PermissionFlagsBits.ManageMessages)) return true;
-  return allowedLinkChannels.get(message.guildId)?.has(message.channelId) || false;
-}
-
 function memberHasRole(member, roleId) {
   if (!member || !roleId) return false;
   if (member.roles?.cache?.has?.(roleId)) return true;
   return Array.isArray(member.roles) && member.roles.includes(roleId);
+}
+
+function isLinkAllowed(message) {
+  if (message.member?.permissions?.has(PermissionFlagsBits.Administrator) || message.member?.permissions?.has(PermissionFlagsBits.ManageMessages)) return true;
+  const bypassRoleId = linkBypassRoles.get(message.guildId);
+  if (memberHasRole(message.member, bypassRoleId)) return true;
+  return allowedLinkChannels.get(message.guildId)?.has(message.channelId) || false;
 }
 
 function hasMuteAccess(interaction) {
@@ -336,11 +377,11 @@ async function ensureDelegatedTargetAllowed(interaction, member) {
 
 async function handleLinkFilter(message) {
   if (!message?.guildId || message.author?.bot || !hasExternalLink(message.content) || isLogOrDataChannel(message.channel)) return;
-  if (isLinkAllowed(message)) return;
+  if (isGifOnlyExternalLinks(message.content) || isLinkAllowed(message)) return;
   filteredDeletes.add(message.id);
   setTimeout(() => filteredDeletes.delete(message.id), 5000).unref?.();
   await message.delete().catch(() => {});
-  await logEvent(message.guild, '🔗 Blocked Link', `تم حذف رابط خارج الرومات المسموحة.`, [
+  await logEvent(message.guild, '🔗 Blocked Link', 'تم حذف رابط خارج الرومات المسموحة.', [
     { name: 'Member', value: `${message.author.tag} (${message.author.id})`, inline: true },
     { name: 'Channel', value: `<#${message.channelId}>`, inline: true },
     { name: 'Content', value: message.content || '(empty)' },
@@ -548,6 +589,35 @@ async function handleLinksCommand(interaction) {
   return true;
 }
 
+async function handleBypassGifsRole(interaction) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'هذا الأمر للـAdministrator فقط.', ephemeral: true });
+    return true;
+  }
+  const role = interaction.options.getRole('role', true);
+  if (role.id === interaction.guild.id) {
+    await interaction.reply({ content: 'لا يمكن اختيار رتبة @everyone.', ephemeral: true });
+    return true;
+  }
+  if (role.managed) {
+    await interaction.reply({ content: 'اختر رتبة عادية وليست رتبة يديرها Bot أو Integration.', ephemeral: true });
+    return true;
+  }
+
+  linkBypassRoles.set(interaction.guildId, role.id);
+  await persistLinkBypassRole(interaction.guild);
+  await interaction.reply({
+    content: `تم تحديد ${role} كرتبة تتجاوز **فلتر الروابط**. روابط GIF الموثوقة مسموحة أصلًا لكل الأعضاء.`,
+    allowedMentions: { roles: [] },
+    ephemeral: true,
+  });
+  await logEvent(interaction.guild, '🔗 Link Bypass Role Updated', `${role.name} (${role.id})`, [
+    { name: 'By', value: `${interaction.user.tag} (${interaction.user.id})` },
+    { name: 'Access', value: 'Bypass Neverless external-link filter' },
+  ]);
+  return true;
+}
+
 async function handleAddAdmin(interaction) {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({ content: 'هذا الأمر للـAdministrator فقط.', ephemeral: true });
@@ -623,6 +693,7 @@ async function handleModerationInteraction(interaction) {
   }
 
   if (interaction.commandName === 'addadmin') return handleAddAdmin(interaction);
+  if (interaction.commandName === 'bypass_gifs_role') return handleBypassGifsRole(interaction);
   if (interaction.commandName === 'mute') {
     if (!await requireMuteAccess(interaction)) return true;
     return handleTimeout(interaction);
@@ -685,6 +756,8 @@ module.exports = {
   handleModerationInteraction,
   parseDuration,
   hasExternalLink,
+  isGifOnlyExternalLinks,
+  parseLinkBypassRoleConfig,
   parseMuteAdminConfig,
   memberHasRole,
   hasMuteAccess,
