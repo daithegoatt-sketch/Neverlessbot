@@ -34,6 +34,11 @@ const commands = [
     .addRoleOption((o) => o.setName('support_role').setDescription('رتبة فريق الدعم').setRequired(true))
     .addStringOption((o) => o.setName('image_url').setDescription('صورة اختيارية للوحة التذاكر').setRequired(false)),
   new SlashCommandBuilder()
+    .setName('addsupport')
+    .setDescription('تحديد رتبة دعم التذاكر بدون إعادة إعداد النظام')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption((o) => o.setName('role').setDescription('الرتبة المخولة بإدارة ومساعدة أصحاب التذاكر').setRequired(true)),
+  new SlashCommandBuilder()
     .setName('tempvoice')
     .setDescription('إنشاء نظام الرومات الصوتية المؤقتة')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
