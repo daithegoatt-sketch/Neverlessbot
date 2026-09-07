@@ -137,6 +137,11 @@ const commands = [
       .addChannelOption((o) => o.setName('channel').setDescription('الروم').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
     .addSubcommand((sub) => sub.setName('list').setDescription('عرض الرومات المسموح فيها روابط')),
   new SlashCommandBuilder()
+    .setName('bypass_gifs_role')
+    .setDescription('تحديد رتبة تتجاوز فلتر الروابط في Neverless')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption((o) => o.setName('role').setDescription('الرتبة التي يسمح لها بإرسال الروابط').setRequired(true)),
+  new SlashCommandBuilder()
     .setName('broadcast')
     .setDescription('Admin: إرسال إعلان خاص لكل أعضاء السيرفر')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
