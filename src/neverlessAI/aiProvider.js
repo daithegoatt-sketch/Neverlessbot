@@ -1,9 +1,10 @@
 'use strict';
 
-const openai = require('./openaiClient');
+const openai = require('./openaiClientV2');
 const gemini = require('./geminiClient');
 
 const MAX_CONCURRENT = Math.max(1, Math.min(4, Number(process.env.NEVERLESS_AI_CONCURRENCY) || 2));
+const MAX_WAITERS = Math.max(2, Math.min(20, Number(process.env.NEVERLESS_AI_MAX_WAITERS) || 8));
 let active = 0;
 const waiters = [];
 
@@ -19,7 +20,7 @@ function configured() {
 
 function providerLabel(admin = false) {
   if (provider() === 'gemini') return `Gemini/${gemini.modelLabel(admin)}`;
-  if (provider() === 'openai') return 'OpenAI';
+  if (provider() === 'openai') return `OpenAI/${openai.modelLabel(admin)}`;
   return 'not-configured';
 }
 
@@ -27,6 +28,11 @@ function acquire() {
   if (active < MAX_CONCURRENT) {
     active += 1;
     return Promise.resolve();
+  }
+  if (waiters.length >= MAX_WAITERS) {
+    const error = new Error('AI_BUSY');
+    error.code = 'AI_BUSY';
+    return Promise.reject(error);
   }
   return new Promise((resolve) => waiters.push(resolve)).then(() => { active += 1; });
 }
@@ -66,4 +72,5 @@ module.exports = {
   runWithTools,
   classifyCorrection,
   MAX_CONCURRENT,
+  MAX_WAITERS,
 };
