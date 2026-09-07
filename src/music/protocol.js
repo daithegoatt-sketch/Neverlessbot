@@ -5,7 +5,7 @@ const { ChannelType } = require('discord.js');
 const CMD_CHANNEL_ID = '1538570405617598505';
 const DATA_CHANNEL_NAME = 'neverless-data';
 const PREFIX = 'NLMUSIC1';
-const HEARTBEAT_STALE_MS = 35_000;
+const HEARTBEAT_STALE_MS = 90_000;
 
 function encode(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -43,7 +43,6 @@ function normalize(text) {
 function parseMusicCommand(content) {
   const text = normalize(content);
   if (!text) return null;
-  const lower = text.toLowerCase();
 
   if (/^(?:امر|أمر|اوامر الاغاني|أوامر الأغاني|اوامر الأغاني|أوامر الاغاني|music commands)$/iu.test(text)) {
     return { action: 'help' };
