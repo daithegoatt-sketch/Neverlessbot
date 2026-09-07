@@ -13,10 +13,12 @@ const {
 } = require('./protocol');
 
 const statuses = new Map();
+const statusRecordIds = new Map();
 const pins = new Map();
 const pinRecordIds = new Map();
 let installed = false;
 let dataChannel = null;
+let lastStatusRefreshAt = 0;
 
 function now() {
   return Date.now();
@@ -55,6 +57,17 @@ async function grantWorkersDataAccess(guild) {
   }
 }
 
+function rememberStatusMessage(message, parsed) {
+  if (!parsed || parsed.type !== 'STATUS') return false;
+  const heartbeatAt = Number(parsed.payload.heartbeat_at) || message.editedTimestamp || message.createdTimestamp || 0;
+  const previous = statuses.get(parsed.id);
+  if (!previous || heartbeatAt >= Number(previous.heartbeat_at || 0)) {
+    statuses.set(parsed.id, { ...parsed.payload, heartbeat_at: heartbeatAt });
+  }
+  if (message?.id) statusRecordIds.set(String(parsed.id), message.id);
+  return true;
+}
+
 async function loadState(guild) {
   const channel = await findDataChannel(guild);
   if (!channel) return;
@@ -68,11 +81,7 @@ async function loadState(guild) {
     for (const message of batch.values()) {
       const parsed = parseRecord(message.content);
       if (!parsed) continue;
-      if (parsed.type === 'STATUS') {
-        const heartbeatAt = Number(parsed.payload.heartbeat_at) || message.createdTimestamp || 0;
-        const previous = statuses.get(parsed.id);
-        if (!previous || heartbeatAt > (previous.heartbeat_at || 0)) statuses.set(parsed.id, { ...parsed.payload, heartbeat_at: heartbeatAt });
-      }
+      if (parsed.type === 'STATUS') rememberStatusMessage(message, parsed);
       if (parsed.type === 'PIN') {
         const previous = latestPins.get(parsed.id);
         if (!previous || message.createdTimestamp > previous.createdTimestamp) {
@@ -87,16 +96,47 @@ async function loadState(guild) {
     if (pin.voice_id) pins.set(String(pin.voice_id), String(workerId));
     pinRecordIds.set(String(workerId), pin.messageId);
   }
+  lastStatusRefreshAt = now();
 }
 
 function applyControlRecord(message) {
   const parsed = parseRecord(message.content);
   if (!parsed) return false;
-  if (parsed.type === 'STATUS') {
-    statuses.set(parsed.id, { ...parsed.payload, heartbeat_at: Number(parsed.payload.heartbeat_at) || now() });
-    return true;
-  }
+  if (parsed.type === 'STATUS') return rememberStatusMessage(message, parsed);
   return false;
+}
+
+async function refreshWorkerStatuses(guild, force = false) {
+  if (!force && now() - lastStatusRefreshAt < 5_000) return;
+  const channel = await findDataChannel(guild);
+  if (!channel) return;
+
+  let refreshed = 0;
+  for (const workerId of ['1', '2', '3']) {
+    const messageId = statusRecordIds.get(workerId);
+    if (!messageId) continue;
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (!message) {
+      statusRecordIds.delete(workerId);
+      continue;
+    }
+    const parsed = parseRecord(message.content);
+    if (parsed?.type === 'STATUS' && String(parsed.id) === workerId) {
+      rememberStatusMessage(message, parsed);
+      refreshed += 1;
+    }
+  }
+
+  if (refreshed < 3) {
+    const batch = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    if (batch) {
+      for (const message of batch.values()) {
+        const parsed = parseRecord(message.content);
+        if (parsed?.type === 'STATUS') rememberStatusMessage(message, parsed);
+      }
+    }
+  }
+  lastStatusRefreshAt = now();
 }
 
 function healthyWorkers() {
@@ -185,6 +225,7 @@ async function handlePin(message) {
     await reply(message, 'ادخل الروم الصوتي اللي تبي تثبت فيه البوت أول.');
     return true;
   }
+  await refreshWorkerStatuses(message.guild, true).catch(() => {});
   const status = statuses.get(String(target.id));
   if (status?.voice_id && String(status.voice_id) !== String(voiceId) && status.playing) {
     await reply(message, 'هذا Music Bot مشغول حاليًا في روم صوتي ثاني.');
@@ -223,6 +264,7 @@ async function handleMusicCommand(message) {
     return true;
   }
 
+  await refreshWorkerStatuses(message.guild, true).catch(() => {});
   let worker = command.action === 'play' ? freeWorkerForVoice(voiceId) : workerForVoice(voiceId);
   if (!worker) {
     const online = healthyWorkers().length;
@@ -308,6 +350,11 @@ function installMusicController(client) {
   client.on('messageUpdate', (_oldMessage, newMessage) => {
     if (newMessage?.channel?.name === DATA_CHANNEL_NAME) applyControlRecord(newMessage);
   });
+
+  const refreshTimer = setInterval(() => {
+    for (const guild of client.guilds.cache.values()) refreshWorkerStatuses(guild, true).catch(() => {});
+  }, 20_000);
+  refreshTimer.unref?.();
 }
 
 module.exports = { installMusicController };
