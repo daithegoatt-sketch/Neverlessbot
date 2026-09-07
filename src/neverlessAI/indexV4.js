@@ -3,6 +3,7 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { captureMessage, removeMessage, startBackfill } = require('./messageIndex');
 const { initLongTermMemory, getTurns, appendTurn, getLearningContext } = require('./memory');
+const { hydrateConversation, persistConversation } = require('./conversationStore');
 const { processCorrection, learningNote } = require('./learning');
 const { TOOL_DEFINITIONS, createServerToolExecutor } = require('./serverToolsV4');
 const { configured, providerLabel, runWithTools } = require('./aiProvider');
@@ -99,6 +100,9 @@ async function handleAIMessage(message) {
 
   const userId = message.author.id;
   const text = clean(message.content) || '[The user sent an attachment without text.]';
+  await hydrateConversation(message.guild, userId, message.client.user?.id).catch((error) => {
+    console.warn('[neverless-ai] Conversation restore failed:', error.message);
+  });
   const turns = getTurns(userId);
   const correction = await processCorrection(message.guild, userId, text);
   const learned = getLearningContext(userId, text);
@@ -147,7 +151,9 @@ async function handleAIMessage(message) {
 
   appendTurn(userId, 'user', text);
   appendTurn(userId, 'assistant', result.text);
+  const persistence = persistConversation(message.guild, userId, message.client.user?.id);
   await sendAnswer(message, result.text);
+  await persistence.catch(() => {});
 }
 
 async function initialize(client) {
