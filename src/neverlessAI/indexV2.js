@@ -12,7 +12,9 @@ const { splitResponse, shouldHandle, buildInstructions } = require('./index');
 const ASK_CHANNEL_ID = '1546282420851179621';
 const ADMIN_CHANNEL_ID = '1546282473988685864';
 const AI_CHANNELS = new Set([ASK_CHANNEL_ID, ADMIN_CHANNEL_ID]);
+const MAX_USER_QUEUE = 2;
 const queues = new Map();
+const queueDepth = new Map();
 const missingKeyNotices = new Map();
 let installed = false;
 let readyGuildId = null;
@@ -31,9 +33,19 @@ function queueKey(message) {
 
 function enqueue(message, task) {
   const key = queueKey(message);
+  const depth = queueDepth.get(key) || 0;
+  if (depth >= MAX_USER_QUEUE) {
+    const error = new Error('AI_USER_QUEUE_FULL');
+    error.code = 'AI_USER_QUEUE_FULL';
+    return Promise.reject(error);
+  }
+  queueDepth.set(key, depth + 1);
   const previous = queues.get(key) || Promise.resolve();
   const current = previous.catch(() => {}).then(task);
   const queued = current.finally(() => {
+    const nextDepth = Math.max(0, (queueDepth.get(key) || 1) - 1);
+    if (nextDepth) queueDepth.set(key, nextDepth);
+    else queueDepth.delete(key);
     if (queues.get(key) === queued) queues.delete(key);
   });
   queues.set(key, queued);
@@ -49,13 +61,25 @@ async function sendAnswer(message, text) {
   }
 }
 
+function shouldUseWeb(text) {
+  const value = clean(text).toLowerCase();
+  if (!value) return false;
+  if (/(لفلي|xp|تقييمي|بيلدي|build|سكيرك|skirk|genshin|قينشن|السيرفر|رساله|رسالة|روم|عضو|انجاز|achievement)/iu.test(value)) return false;
+  return /(اليوم|حاليا|حالياً|الحالي|الحالية|احدث|أحدث|اخر اخبار|آخر اخبار|آخر الأخبار|latest|current|today|recent|news|سعر|price|طقس|weather|نتيجة|موعد المباراة|هذا الاسبوع|هذا الأسبوع|this week)/iu.test(value);
+}
+
 function friendlyAIError(error) {
   const status = Number(error?.status) || 0;
   const message = String(error?.message || '');
-  if (status === 429) return 'Gemini عليه ضغط أو وصل حد الطلبات المؤقت لهذا المشروع. انتظر شوي وجرب مرة ثانية.';
-  if (status === 403) return 'Gemini رفض الطلب من المشروع الحالي. راجع حالة الـAPI/Free Tier في Google AI Studio.';
-  if (status === 401 || (status === 400 && /key|api/i.test(message))) return 'مفتاح Gemini غير صالح أو غير مقبول من Google. حدّث `GEMINI_API_KEY` في Railway.';
-  if (error?.code === 'AI_TIMEOUT' || /TIMEOUT/i.test(message)) return 'الرد أخذ وقت أطول من الحد، فوقفته حتى ما تتكدس طلبات البوت. جرّب مرة ثانية.';
+  const code = String(error?.code || error?.apiCode || '');
+  if (code === 'AI_USER_QUEUE_FULL') return 'عندي رسالتين منك قيد المعالجة حاليًا. انتظر الرد ثم أرسل التالية عشان ما تتكدس الطلبات.';
+  if (code === 'AI_BUSY') return 'Neverless AI عليه عدة طلبات حاليًا. انتظر لحظات وجرب مرة ثانية.';
+  if (code === 'AI_TIMEOUT' || /timeout|aborted/i.test(message)) return 'الطلب أخذ وقت أطول من الحد، فوقفته بدل ما أخلي البوت يعلق. جرّب مرة ثانية.';
+  if (status === 401) return 'مفتاح OpenAI غير صالح أو لم يعد فعالًا. راجع `OPENAI_API_KEY` في Railway.';
+  if (status === 403) return 'OpenAI رفض الوصول من هذا المشروع أو المفتاح. راجع صلاحيات مشروع الـAPI.';
+  if (status === 429 && /quota|credit|balance|billing|insufficient/i.test(`${message} ${code}`)) return 'رصيد OpenAI API أو حد المشروع لا يسمح بالطلب حاليًا. راجع Billing وUsage Limits.';
+  if (status === 429) return 'وصلنا حد الطلبات المؤقت في OpenAI. انتظر ثواني وجرب مرة ثانية.';
+  if (status === 400 && /model/i.test(message)) return 'الموديل المحدد غير متاح لهذا المشروع. تأكد أن `NEVERLESS_AI_MODEL` مضبوط على `gpt-5.6-luna`.';
   return 'صار خطأ أثناء تجهيز الرد. جرّب بعد شوي.';
 }
 
@@ -66,7 +90,7 @@ async function handleAIMessage(message) {
     if (now - last > 15 * 60_000) {
       missingKeyNotices.set(message.channelId, now);
       await message.reply({
-        content: 'Neverless AI جاهز، لكن ما فيه مفتاح AI في متغيرات الاستضافة. أضف `GEMINI_API_KEY`، أو `OPENAI_API_KEY` كخيار بديل.',
+        content: 'Neverless AI جاهز، لكن ما فيه مفتاح AI فعال في متغيرات الاستضافة. أضف `OPENAI_API_KEY` في Railway.',
         allowedMentions: { repliedUser: false },
       }).catch(() => {});
     }
@@ -101,7 +125,7 @@ async function handleAIMessage(message) {
     toolDefinitions: TOOL_DEFINITIONS,
     executeTool,
     admin: adminMode,
-    allowWeb: true,
+    allowWeb: shouldUseWeb(text),
   });
 
   appendTurn(userId, 'user', text);
@@ -130,14 +154,20 @@ function installNeverlessAI(client) {
     Promise.resolve(shouldHandle(message, client)).then((handled) => {
       if (!handled) return;
       enqueue(message, () => handleAIMessage(message)).catch((error) => {
-        console.error('[neverless-ai] Conversation failed:', error);
+        console.error('[neverless-ai] Conversation failed:', error?.message || error);
         message.reply({ content: friendlyAIError(error), allowedMentions: { repliedUser: false } }).catch(() => {});
       });
-    }).catch(() => {});
+    }).catch((error) => console.warn('[neverless-ai] shouldHandle failed:', error?.message || error));
   });
   client.on('messageUpdate', (_oldMessage, newMessage) => { if (newMessage?.guildId) captureMessage(newMessage); });
   client.on('messageDelete', (message) => { if (message?.guildId) removeMessage(message); });
   client.on('guildCreate', (guild) => { if (!readyGuildId || guild.id === readyGuildId) startBackfill(guild); });
 }
 
-module.exports = { installNeverlessAI, friendlyAIError, ASK_CHANNEL_ID, ADMIN_CHANNEL_ID };
+module.exports = {
+  installNeverlessAI,
+  friendlyAIError,
+  shouldUseWeb,
+  ASK_CHANNEL_ID,
+  ADMIN_CHANNEL_ID,
+};
