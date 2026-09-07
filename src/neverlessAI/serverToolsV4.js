@@ -12,6 +12,9 @@ const {
 } = require('../genshin/leaderboard');
 const { getGuide } = require('../genshin/guideClient');
 const { resolveCharacter } = require('../genshin/characterResolver');
+const { getLinkedUid, whenAccountStoreReady } = require('../genshin/accountStore');
+const { fetchAccount } = require('../genshin/enkaClient');
+const { rateCurrentCharacter } = require('../genshin/liveAccountRating');
 const { getCurrentTheaterSeason, resolveDifficulty, DIFFICULTIES } = require('../genshin/theaterClient');
 const { buildTeam, curatedNames } = require('../genshin/theaterPlanner');
 const { searchCommandCatalog } = require('./commandCatalog');
@@ -104,6 +107,17 @@ const KNOWLEDGE_TOOLS = [
     type: 'function',
     name: 'get_genshin_guide',
     description: 'Read Neverless source-backed Genshin guide data for one character: role, stat targets/priority, weapons, artifacts, combos and verified team options. Use for general build/team questions instead of inventing teams.',
+    parameters: {
+      type: 'object',
+      properties: { character: { type: 'string' } },
+      required: ['character'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_current_genshin_build',
+    description: 'Read the requesting member current linked Showcase build using the same live Neverless rateCurrentCharacter system. Use for questions like كم تقييمي, شرايك ببيلدي, احصائياتي الحالية, or how to improve the current build. This is read-only and more reliable than an empty local history when the character is currently visible.',
     parameters: {
       type: 'object',
       properties: { character: { type: 'string' } },
@@ -217,6 +231,48 @@ function compactCharacterRow(row) {
       em: Number(stats.em) || null,
     },
     strengths: Array.isArray(row.strengths) ? row.strengths.slice(0, 3) : [],
+  };
+}
+
+function compactRatedBuild(rated) {
+  if (!rated) return null;
+  const stats = rated.snapshot?.stats || {};
+  const evaluation = rated.evaluation || {};
+  return {
+    character: rated.name || rated.snapshot?.name || null,
+    score: Number(rated.score) || 0,
+    ranking_score: Number(rated.rankingScore ?? evaluation.rankingScore ?? rated.score) || 0,
+    akasha_top_percent: Number(rated.akasha?.topPercent ?? rated.akasha) || null,
+    weapon: rated.snapshot?.weapon ? {
+      name: rated.snapshot.weapon.name || null,
+      refinement: rated.snapshot.weapon.refinement || null,
+    } : null,
+    stats: {
+      atk: Number(stats.atk) || null,
+      hp: Number(stats.hp) || null,
+      def: Number(stats.def) || null,
+      crit_rate: Number(stats.critRate) || null,
+      crit_dmg: Number(stats.critDmg) || null,
+      er: Number(stats.er) || null,
+      em: Number(stats.em) || null,
+    },
+    evaluation: {
+      relevant_stats: (evaluation.relevantStats || []).slice(0, 10).map((row) => ({
+        key: row.key || null,
+        label: row.label || row.key || null,
+        value: Number(row.value ?? row.effectiveValue) || 0,
+        effective_value: Number(row.effectiveValue ?? row.value) || 0,
+        target: row.target ?? null,
+        ratio: Number(row.ratio) || null,
+        status: row.status || null,
+      })),
+      artifact_count: Number(evaluation.artifactCount) || 0,
+      artifact_avg_level: Number(evaluation.artifactAvgLevel) || 0,
+      main_stat_score: Number(evaluation.mainStatScore) || 0,
+      artifact_set_score: Number(evaluation.artifactSetScore) || 0,
+      weapon_score: Number(evaluation.weaponScore) || 0,
+      notes: (evaluation.notes || []).slice(0, 10).map((note) => ({ type: note.type || null, text: note.text || note.message || String(note) })),
+    },
   };
 }
 
@@ -374,6 +430,28 @@ function createServerToolExecutor(context) {
       return guide ? compactGuide(guide) : { error: 'GUIDE_NOT_AVAILABLE', character };
     }
 
+    if (name === 'get_current_genshin_build') {
+      const character = await resolveCharacter(args.character).catch(() => null) || String(args.character || '').trim();
+      if (!character) return { error: 'CHARACTER_NOT_FOUND' };
+      await whenAccountStoreReady().catch(() => {});
+      const uid = getLinkedUid(requester.id);
+      if (!uid) return { error: 'NO_LINKED_UID', character };
+      let account;
+      try {
+        account = await fetchAccount(uid, { forceRefresh: true });
+      } catch (error) {
+        return { error: 'ENKA_UNAVAILABLE', character, message: String(error?.message || error).slice(0, 200) };
+      }
+      const rated = await rateCurrentCharacter(uid, account, character, { forceAkashaRefresh: true }).catch(() => null);
+      if (!rated) return { error: 'CHARACTER_NOT_VISIBLE_OR_GUIDE_UNAVAILABLE', character, uid };
+      return {
+        member: compactMember(requester),
+        uid,
+        build: compactRatedBuild(rated),
+        source: 'Neverless live linked Showcase rating',
+      };
+    }
+
     if (name === 'get_current_theater_knowledge') return theaterKnowledge(args.difficulty || null);
 
     return baseExecutor(name, args);
@@ -385,6 +463,7 @@ module.exports = {
   TOOL_DEFINITIONS,
   createServerToolExecutor,
   compactGuide,
+  compactRatedBuild,
   activityRows,
   inviteRows,
   theaterKnowledge,
