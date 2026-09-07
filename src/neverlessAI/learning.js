@@ -5,7 +5,7 @@ const {
   getLearningContext,
   applyCorrection,
 } = require('./memory');
-const { classifyCorrection } = require('./openaiClient');
+const { classifyCorrection } = require('./aiProvider');
 
 function isCorrectionSignal(text) {
   const value = String(text || '').trim();
@@ -30,8 +30,6 @@ async function processCorrection(guild, userId, feedback) {
     console.warn('[neverless-ai] Correction classifier failed:', error.message);
     return null;
   }
-  // One weak complaint must not rewrite future behavior. Exact-question memory is accepted
-  // only when the classifier is strongly confident that a real misunderstanding happened.
   if (!correction?.valid || correction.confidence < 0.78 || !correction.meaning) return { valid: false };
   const result = applyCorrection(guild, userId, {
     ...correction,
