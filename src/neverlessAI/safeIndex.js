@@ -4,6 +4,7 @@ let runtime = null;
 let loadError = null;
 
 try {
+  require('./ownerMode').installOwnerPatch();
   runtime = require('./indexV4');
 } catch (error) {
   loadError = error;
