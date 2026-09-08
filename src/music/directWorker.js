@@ -122,7 +122,7 @@ function localStatusPayload(state) {
 async function publishStatus(guild) {
   const state = stateFor(guild.id);
   const channel = await dataChannel(guild);
-  if (!channel) return;
+  if (!channel) return false;
   const payload = localStatusPayload(state);
   peerMap(guild.id).set(WORKER_ID, payload);
   const content = record('STATUS', WORKER_ID, payload);
@@ -142,11 +142,12 @@ async function publishStatus(guild) {
   }
   if (statusMessage) {
     state.statusMessageId = statusMessage.id;
-    await statusMessage.edit({ content, allowedMentions: { parse: [] } }).catch(() => {});
-  } else {
-    statusMessage = await channel.send({ content, allowedMentions: { parse: [] } }).catch(() => null);
-    if (statusMessage) state.statusMessageId = statusMessage.id;
+    const edited = await statusMessage.edit({ content, allowedMentions: { parse: [] } }).catch(() => null);
+    return Boolean(edited);
   }
+  statusMessage = await channel.send({ content, allowedMentions: { parse: [] } }).catch(() => null);
+  if (statusMessage) state.statusMessageId = statusMessage.id;
+  return Boolean(statusMessage);
 }
 
 function ingestStatus(message) {
@@ -160,10 +161,11 @@ function ingestStatus(message) {
 
 async function refreshPeerStatuses(guild) {
   const channel = await dataChannel(guild);
-  if (!channel) return;
+  if (!channel) return false;
   const batch = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-  if (!batch) return;
+  if (!batch) return false;
   for (const message of batch.values()) ingestStatus(message);
+  return true;
 }
 
 function isFreshStatus(payload) {
@@ -191,6 +193,14 @@ function workerIsFree(guildId, id) {
 
 function firstFreeWorker(guildId) {
   return ['1', '2', '3'].find((id) => workerIsFree(guildId, id)) || null;
+}
+
+function fallbackWorkerForVoice(voiceId) {
+  try {
+    return String((BigInt(String(voiceId)) % 3n) + 1n);
+  } catch {
+    return '1';
+  }
 }
 
 function pendingKey(message) {
@@ -243,9 +253,12 @@ async function ensureVoice(state, guild, voiceChannel) {
   state.connection = connection;
   state.subscription = connection.subscribe(state.player);
 
-  connection.on('error', (error) => {
-    console.warn(`[music-direct ${WORKER_ID}] Voice connection error:`, error?.message || error);
-  });
+  if (!connection.__neverlessMusicErrorHook) {
+    connection.__neverlessMusicErrorHook = true;
+    connection.on('error', (error) => {
+      console.warn(`[music-direct ${WORKER_ID}] Voice connection error:`, error?.message || error);
+    });
+  }
 
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
@@ -452,6 +465,54 @@ async function disconnectFromVoice(message, voice) {
   return true;
 }
 
+async function claimVoiceOnly(message, voice) {
+  const currentOwner = ownerForVoice(message.guildId, voice.id);
+  if (currentOwner) {
+    if (currentOwner !== WORKER_ID) return false;
+    const state = stateFor(message.guildId);
+    state.textId = message.channelId;
+    await ensureVoice(state, message.guild, voice);
+    await publishStatus(message.guild).catch(() => {});
+    return true;
+  }
+
+  await sleep((Number(WORKER_ID) - 1) * CLAIM_STAGGER_MS);
+  const coordinationReady = await refreshPeerStatuses(message.guild).catch(() => false);
+  if (!coordinationReady) {
+    if (fallbackWorkerForVoice(voice.id) !== WORKER_ID) return false;
+    const state = stateFor(message.guildId);
+    state.voiceId = String(voice.id);
+    state.textId = message.channelId;
+    await ensureVoice(state, message.guild, voice);
+    return true;
+  }
+
+  const ownerAfterWait = ownerForVoice(message.guildId, voice.id);
+  if (ownerAfterWait) {
+    if (ownerAfterWait !== WORKER_ID) return false;
+    const state = stateFor(message.guildId);
+    state.textId = message.channelId;
+    await ensureVoice(state, message.guild, voice);
+    return true;
+  }
+
+  const winner = firstFreeWorker(message.guildId);
+  if (!winner || winner !== WORKER_ID) return false;
+  const state = stateFor(message.guildId);
+  state.voiceId = String(voice.id);
+  state.textId = message.channelId;
+  await publishStatus(message.guild).catch(() => {});
+  try {
+    await ensureVoice(state, message.guild, voice);
+    await publishStatus(message.guild).catch(() => {});
+    return true;
+  } catch (error) {
+    state.voiceId = null;
+    await publishStatus(message.guild).catch(() => {});
+    throw error;
+  }
+}
+
 async function claimAndPlay(message, voice, query) {
   const currentOwner = ownerForVoice(message.guildId, voice.id);
   if (currentOwner) {
@@ -460,7 +521,11 @@ async function claimAndPlay(message, voice, query) {
   }
 
   await sleep((Number(WORKER_ID) - 1) * CLAIM_STAGGER_MS);
-  await refreshPeerStatuses(message.guild).catch(() => {});
+  const coordinationReady = await refreshPeerStatuses(message.guild).catch(() => false);
+  if (!coordinationReady) {
+    if (fallbackWorkerForVoice(voice.id) === WORKER_ID) await handlePlay(message, voice, query);
+    return;
+  }
 
   const ownerAfterWait = ownerForVoice(message.guildId, voice.id);
   if (ownerAfterWait) {
@@ -508,7 +573,12 @@ async function handleMessage(message) {
 
   if (/^(?:ش|شغل|تشغيل|play|p)$/iu.test(text)) {
     markPending(message);
-    if (WORKER_ID === '1') await reply(message, 'اكتب اسم الأغنية أو رابط YouTube في الرسالة التالية.');
+    try {
+      const claimed = await claimVoiceOnly(message, voice);
+      if (claimed) await reply(message, 'دخلت الروم. اكتب اسم الأغنية أو رابط YouTube في الرسالة التالية.');
+    } catch (error) {
+      console.warn(`[music-direct ${WORKER_ID}] Join-on-prompt failed:`, error?.message || error);
+    }
     return;
   }
 
@@ -536,15 +606,15 @@ async function handleMessage(message) {
 
 async function initializeGuild(guild) {
   stateFor(guild.id);
-  await refreshPeerStatuses(guild).catch(() => {});
-  await publishStatus(guild).catch(() => {});
+  await refreshPeerStatuses(guild).catch(() => false);
+  await publishStatus(guild).catch(() => false);
 }
 
 client.once('ready', async () => {
   console.log(`[music-direct ${WORKER_ID}] ${client.user.tag} online. Backend=@discordjs/voice + play-dl.`);
   for (const guild of client.guilds.cache.values()) await initializeGuild(guild);
   const timer = setInterval(() => {
-    for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => {});
+    for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => false);
   }, HEARTBEAT_MS);
   timer.unref?.();
 });
@@ -569,7 +639,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     state.current = null;
     state.queue = [];
   }
-  publishStatus(oldState.guild).catch(() => {});
+  publishStatus(oldState.guild).catch(() => false);
 });
 
 client.login(TOKEN).catch((error) => {
