@@ -45,14 +45,17 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
+    # MUSIC is used for metadata/search. ANDROID_VR/WEB clients provide playback.
     clients:
       - MUSIC
+      - ANDROID_VR
       - WEB
-      - MWEB
       - WEBEMBEDDED
+      - MWEB
       - TVHTML5_SIMPLY
 
 logging:
   level:
     root: INFO
     lavalink: INFO
+    dev.lavalink.youtube: INFO
