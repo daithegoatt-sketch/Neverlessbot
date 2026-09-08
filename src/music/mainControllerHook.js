@@ -1,9 +1,9 @@
 'use strict';
 
 const { Client } = require('discord.js');
-const { installMusicControllerV2 } = require('./controllerV2');
+const { installMusicControllerFinal } = require('./controllerFinal');
 
-const hookKey = Symbol.for('neverless.music.main-controller-v2');
+const hookKey = Symbol.for('neverless.music.main-controller-final');
 
 if (!Client.prototype[hookKey]) {
   const originalLogin = Client.prototype.login;
@@ -11,9 +11,9 @@ if (!Client.prototype[hookKey]) {
 
   Client.prototype.login = function neverlessMusicControlledLogin(...args) {
     const mode = String(process.env.BOT_MODE || 'main').trim().toLowerCase();
-    if (mode !== 'music' && !this.__neverlessMusicControllerV2Installed) {
-      this.__neverlessMusicControllerV2Installed = true;
-      installMusicControllerV2(this);
+    if (mode !== 'music' && !this.__neverlessMusicControllerFinalInstalled) {
+      this.__neverlessMusicControllerFinalInstalled = true;
+      installMusicControllerFinal(this);
     }
     return originalLogin.apply(this, args);
   };
