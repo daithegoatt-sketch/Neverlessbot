@@ -72,7 +72,7 @@ function reconcileStatusesWithDiscord(guild) {
         voice_id: actualVoiceId,
         playing: actualVoiceId ? Boolean(status.playing) : false,
         current_title: actualVoiceId ? status.current_title : null,
-        queue_length: actualVoiceId ? status.queue_length : 0,
+        queue_length: actualVoiceId ? Number(status.queue_length || 0) : 0,
       });
     }
   }
@@ -142,11 +142,9 @@ async function refreshWorkerStatuses(guild, force = false) {
   }
   if (refreshed < 3) {
     const batch = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-    if (batch) {
-      for (const message of batch.values()) {
-        const parsed = parseRecord(message.content);
-        if (parsed?.type === 'STATUS') rememberStatusMessage(message, parsed);
-      }
+    if (batch) for (const message of batch.values()) {
+      const parsed = parseRecord(message.content);
+      if (parsed?.type === 'STATUS') rememberStatusMessage(message, parsed);
     }
   }
   reconcileStatusesWithDiscord(guild);
@@ -156,7 +154,7 @@ async function refreshWorkerStatuses(guild, force = false) {
 function healthyWorkers() {
   const cutoff = now() - HEARTBEAT_STALE_MS;
   return [...statuses.entries()]
-    .filter(([, status]) => Number(status.heartbeat_at) >= cutoff)
+    .filter(([, status]) => Number(status.heartbeat_at) >= cutoff && status.backend_ready !== false)
     .map(([id, status]) => ({ id, ...status }));
 }
 
@@ -239,19 +237,16 @@ async function handlePinCommand(message) {
   const target = mentionedWorker(message);
   if (!target) return false;
 
-  if (!healthyWorkers().length) await refreshWorkerStatuses(message.guild, true).catch(() => {});
   reconcileStatusesWithDiscord(message.guild);
+  if (!healthyWorkers().length) await refreshWorkerStatuses(message.guild, true).catch(() => {});
 
   if (isUnpin) {
     await persistPin(message.guild, target.id, null);
     await sendRequest(message.guild, target.id, {
-      action: 'unpin',
-      guild_id: message.guildId,
-      channel_id: message.channelId,
-      user_id: message.author.id,
-      message_id: message.id,
+      action: 'unpin', guild_id: message.guildId, channel_id: message.channelId,
+      user_id: message.author.id, message_id: message.id,
     }).catch(() => {});
-    await reply(message, `تم إلغاء تثبيت <@${target.botId}>. إذا الروم فاضي بيطلع، وإذا فيه أشخاص يبقى لين يفضى.`);
+    await reply(message, `تم إلغاء تثبيت <@${target.botId}>. إذا الروم فاضي بيطلع بعد 5 ثوانٍ، وإذا فيه أشخاص يبقى لين يفضى.`);
     return true;
   }
 
@@ -267,15 +262,19 @@ async function handlePinCommand(message) {
   }
   await persistPin(message.guild, target.id, voiceId);
   await sendRequest(message.guild, target.id, {
-    action: 'pin',
-    guild_id: message.guildId,
-    voice_id: voiceId,
-    channel_id: message.channelId,
-    user_id: message.author.id,
-    message_id: message.id,
+    action: 'pin', guild_id: message.guildId, voice_id: voiceId, channel_id: message.channelId,
+    user_id: message.author.id, message_id: message.id,
   }).catch(() => {});
   await reply(message, `تم تثبيت <@${target.botId}> في <#${voiceId}>. بيبقى في الروم حتى لو صار فاضي.`);
   return true;
+}
+
+function immediateText(command) {
+  if (command.action === 'play') return `جاري تشغيل **${clean(command.query).slice(0, 160)}**...`;
+  if (command.action === 'skip') return 'جاري التخطي...';
+  if (command.action === 'stop') return 'جاري إيقاف التشغيل...';
+  if (command.action === 'volume') return `جاري ضبط الصوت على **${command.value}%**...`;
+  return null;
 }
 
 async function handleMusicCommand(message) {
@@ -296,7 +295,6 @@ async function handleMusicCommand(message) {
     return true;
   }
 
-  // Live STATUS updates arrive through messageUpdate. Avoid three Discord fetches on every command.
   reconcileStatusesWithDiscord(message.guild);
   if (!healthyWorkers().length) {
     await refreshWorkerStatuses(message.guild, true).catch(() => {});
@@ -310,9 +308,11 @@ async function handleMusicCommand(message) {
     const reserved = healthy.filter((row) => row.pinned_voice_id && String(row.pinned_voice_id) !== String(voiceId)).length;
     await reply(message, online
       ? (reserved === online ? 'كل Music Bots مثبتين حاليًا في رومات ثانية.' : 'كل Music Bots مستخدمين حاليًا في رومات ثانية.')
-      : 'Music Bots مو متصلين حاليًا.');
+      : 'Music Bots مو جاهزين حاليًا.');
     return true;
   }
+
+  const ack = await reply(message, immediateText(command));
   await sendRequest(message.guild, worker.id, {
     action: command.action,
     query: command.query || null,
@@ -322,11 +322,23 @@ async function handleMusicCommand(message) {
     channel_id: message.channelId,
     user_id: message.author.id,
     message_id: message.id,
+    response_message_id: ack?.id || null,
   }).catch(async (error) => {
     console.warn('[music] Request failed:', error.message);
-    await reply(message, 'ما قدرت أوصل لـMusic Bot حاليًا.');
+    if (ack) await ack.edit({ content: 'ما قدرت أوصل لـMusic Bot حاليًا.' }).catch(() => {});
+    else await reply(message, 'ما قدرت أوصل لـMusic Bot حاليًا.');
   });
   return true;
+}
+
+function friendlyError(reason) {
+  const value = String(reason || '');
+  if (value.includes('VOICE_HANDSHAKE_TIMEOUT')) return 'دخل البوت الروم لكن اتصال الصوت مع Discord ما اكتمل.';
+  if (value.includes('VOICE_JOIN_TIMEOUT')) return 'ما قدرت أدخل Music Bot للروم الصوتي.';
+  if (value.includes('LAVALINK_UNAVAILABLE')) return 'خدمة الصوت Lavalink مو جاهزة حاليًا.';
+  if (value.includes('PLAYBACK_START_TIMEOUT')) return 'تم العثور على الأغنية لكن الصوت ما بدأ من Lavalink.';
+  if (value.includes('MISSING_')) return 'Music Bot ما عنده صلاحيات الصوت المطلوبة في هذا الروم.';
+  return 'صار خطأ أثناء تشغيل الأغنية.';
 }
 
 async function handleWorkerEvent(client, message) {
@@ -338,10 +350,12 @@ async function handleWorkerEvent(client, message) {
     await message.delete().catch(() => {});
     return true;
   }
-  const original = payload.message_id ? await channel.messages.fetch(payload.message_id).catch(() => null) : null;
+  const response = payload.response_message_id ? await channel.messages.fetch(payload.response_message_id).catch(() => null) : null;
+  const original = !response && payload.message_id ? await channel.messages.fetch(payload.message_id).catch(() => null) : null;
   const send = async (text) => {
     if (!text) return;
-    if (original) await original.reply({ content: text, allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
+    if (response) await response.edit({ content: text, allowedMentions: { parse: [] } }).catch(() => {});
+    else if (original) await original.reply({ content: text, allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
     else await channel.send({ content: text, allowedMentions: { parse: [] } }).catch(() => {});
   };
   if (payload.code === 'playing') await send(`تشغيل **${payload.title || 'الأغنية'}**`);
@@ -353,7 +367,7 @@ async function handleWorkerEvent(client, message) {
   else if (payload.code === 'not_found') await send('ما لقيت نتيجة مناسبة للأغنية.');
   else if (payload.code === 'error') {
     console.warn(`[music] Worker ${payload.worker_id || '?'} playback error: ${payload.reason || 'unknown'}`);
-    await send('صار خطأ أثناء تشغيل الأغنية. جرّب اسم ثاني أو رابط مباشر.');
+    await send(friendlyError(payload.reason));
   }
   await message.delete().catch(() => {});
   return true;
@@ -391,9 +405,12 @@ function installMusicController(client) {
       if (newMessage.guild) reconcileStatusesWithDiscord(newMessage.guild);
     }
   });
+  client.on('voiceStateUpdate', (_oldState, newState) => {
+    if (newState?.guild) reconcileStatusesWithDiscord(newState.guild);
+  });
   const refreshTimer = setInterval(() => {
     for (const guild of client.guilds.cache.values()) refreshWorkerStatuses(guild, true).catch(() => {});
-  }, 20_000);
+  }, 15_000);
   refreshTimer.unref?.();
 }
 
