@@ -3,6 +3,7 @@
 const { accountEvaluationText } = require('./responses');
 const { akashaImprovementAdvice } = require('./ratingCopyV2');
 const { formatStat } = require('./statProfile');
+const { buildPriorityNote } = require('./buildLogic');
 
 function normalize(value) {
   return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
@@ -101,6 +102,16 @@ function stripSetAdviceFromAkasha(text) {
     .trim();
 }
 
+function buildLogicText(guide, lang) {
+  const priority = String(guide?.stats?.priority || '').trim();
+  if (!priority) return null;
+  const ar = lang === 'ar';
+  const lines = [`**${ar ? 'أولوية البيلد' : 'Build priority'}:** ${priority}`];
+  const note = buildPriorityNote(guide, lang);
+  if (note) lines.push(`• ${note}`);
+  return lines.join('\n');
+}
+
 function effectiveCombatText(evaluation, lang) {
   const ar = lang === 'ar';
   const rows = (evaluation?.relevantStats || []).filter((row) => Number(row?.combatBonus) > 0 && Number.isFinite(Number(row?.effectiveValue)));
@@ -145,8 +156,10 @@ function enhancedAccountEvaluationText(snapshot, evaluation, comparison, guide, 
   base = removeGenericSetWarnings(base);
   base = injectSetUpgrade(base, issue, lang);
 
+  const logic = buildLogicText(guide, lang);
   const combat = effectiveCombatText(evaluation, lang);
   const fairness = fairnessText(evaluation, akashaRanking, lang);
+  if (logic) base = `${base}\n\n${logic}`;
   if (combat) base = `${base}\n\n${combat}`;
   if (fairness) base = `${base}\n\n${fairness}`;
 
@@ -163,4 +176,5 @@ module.exports = {
   cleanSetName,
   effectiveCombatText,
   fairnessText,
+  buildLogicText,
 };
