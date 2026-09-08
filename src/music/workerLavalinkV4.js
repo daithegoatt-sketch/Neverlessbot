@@ -21,6 +21,7 @@ const EMPTY_LEAVE_MS = 5_000;
 const VOICE_JOIN_TIMEOUT_MS = 8_000;
 const VOICE_HANDSHAKE_TIMEOUT_MS = 8_000;
 const PLAY_START_TIMEOUT_MS = 12_000;
+const PLAY_STABILITY_MS = 700;
 
 if (!TOKEN) throw new Error('MUSIC_WORKER_MISSING_DISCORD_TOKEN');
 if (!/^[123]$/.test(WORKER_ID)) throw new Error('MUSIC_WORKER_ID_MUST_BE_1_2_3');
@@ -54,6 +55,7 @@ let lavalink = null;
 function safeText(value, max = 180) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function actualVoiceId(guild) { return guild?.members?.me?.voice?.channelId || null; }
 function currentPlayer(guildId = state.guildId) { return lavalink && guildId ? lavalink.getPlayer(String(guildId)) || null : null; }
 function queueLength(player) { return Array.isArray(player?.queue?.tracks) ? player.queue.tracks.length : 0; }
@@ -151,7 +153,6 @@ function scheduleEmptyLeave(guild) {
     const nowVoice = actualVoiceId(guild);
     if (!nowVoice || String(nowVoice) !== expectedVoice || voiceHasHuman(guild, nowVoice)) return;
     await disconnectVoice(guild, 'EMPTY_VOICE_5S').catch(() => {});
-    await publishStatus(guild).catch(() => {});
   }, EMPTY_LEAVE_MS);
   state.emptyTimer.unref?.();
 }
@@ -170,7 +171,8 @@ function waitUntil(check, timeoutMs, stepMs = 100) {
     const tick = () => {
       if (check()) return resolve(true);
       if (Date.now() - started >= timeoutMs) return resolve(false);
-      setTimeout(tick, stepMs).unref?.();
+      const timer = setTimeout(tick, stepMs);
+      timer.unref?.();
     };
     tick();
   });
@@ -208,6 +210,21 @@ function waitForPlayback(guildId, timeoutMs = PLAY_START_TIMEOUT_MS) {
   });
 }
 
+async function reconnectPinned(guild) {
+  if (!state.pinnedVoiceId || !backendUsable()) return;
+  const wanted = String(state.pinnedVoiceId);
+  const channel = guild.channels.cache.get(wanted) || await guild.channels.fetch(wanted).catch(() => null);
+  if (!channel?.isVoiceBased?.()) {
+    state.pinnedVoiceId = null;
+    await publishStatus(guild).catch(() => {});
+    return;
+  }
+  if (String(actualVoiceId(guild) || '') === wanted) return;
+  await ensurePlayer(guild, wanted, null).catch((error) => {
+    console.warn(`[music-worker ${WORKER_ID}] Pinned reconnect failed:`, error?.message || error);
+  });
+}
+
 function setupLavalink() {
   if (!LAVALINK_HOST || !LAVALINK_PASSWORD) {
     console.warn(`[music-worker ${WORKER_ID}] Lavalink variables are missing.`);
@@ -242,7 +259,10 @@ function setupLavalink() {
   manager.nodeManager.on('connect', (node) => {
     state.backendReady = true;
     console.log(`[music-worker ${WORKER_ID}] Lavalink connected: ${node.id}`);
-    for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => {});
+    for (const guild of client.guilds.cache.values()) {
+      publishStatus(guild).catch(() => {});
+      reconnectPinned(guild).catch(() => {});
+    }
   });
   manager.nodeManager.on('disconnect', (node, reason) => {
     state.backendReady = false;
@@ -278,11 +298,9 @@ function setupLavalink() {
     settlePlayback(player.guildId, { ok: false, reason });
   });
   manager.on('trackEnd', (player, _track, payload) => {
-    const guild = client.guilds.cache.get(String(player.guildId));
-    if (payload?.reason && !['replaced', 'stopped'].includes(String(payload.reason).toLowerCase())) {
-      console.log(`[music-worker ${WORKER_ID}] Track ended: ${payload.reason}`);
-    }
     state.currentTitle = null;
+    console.log(`[music-worker ${WORKER_ID}] Track ended: ${payload?.reason || 'unknown'}`);
+    const guild = client.guilds.cache.get(String(player.guildId));
     if (guild) publishStatus(guild).catch(() => {});
   });
   manager.on('queueEnd', (player) => {
@@ -298,7 +316,7 @@ function setupLavalink() {
 }
 
 lavalink = setupLavalink();
-// Official lavalink-client usage forwards the complete raw stream; the manager filters what it needs.
+// Follow the official lavalink-client integration: forward the complete Discord raw stream.
 client.on('raw', (packet) => {
   try { lavalink?.sendRawData(packet); } catch (error) {
     console.warn(`[music-worker ${WORKER_ID}] Raw packet forward failed:`, error?.message || error);
@@ -340,7 +358,6 @@ async function ensurePlayer(guild, voiceId, textChannelId = null) {
     throw new Error('VOICE_JOIN_TIMEOUT');
   }
 
-  // Discord being visually joined is not enough: Lavalink must receive the full voice handshake.
   const handshake = await waitUntil(() => voiceHandshakeReady(player, wanted), VOICE_HANDSHAKE_TIMEOUT_MS);
   if (!handshake) {
     console.warn(`[music-worker ${WORKER_ID}] Missing Lavalink voice handshake`, {
@@ -391,12 +408,17 @@ async function handlePlay(guild, payload) {
       await emitEvent(guild, { ...payload, code: 'queued', title });
       return;
     }
+
     const playbackPromise = waitForPlayback(guild.id);
     await player.play();
     const playback = await playbackPromise;
     if (!playback?.ok) throw new Error(playback?.reason || 'PLAYBACK_START_FAILED');
+    await sleep(PLAY_STABILITY_MS);
     if (String(actualVoiceId(guild) || '') !== String(payload.voice_id)) throw new Error('VOICE_NOT_CONNECTED');
-    state.currentTitle = trackTitle(playback.track, title);
+    if (!voiceHandshakeReady(player, payload.voice_id)) throw new Error('VOICE_HANDSHAKE_LOST');
+    if (!player.playing || !player.queue?.current) throw new Error('TRACK_ENDED_IMMEDIATELY');
+
+    state.currentTitle = trackTitle(player.queue.current, trackTitle(playback.track, title));
     await publishStatus(guild).catch(() => {});
     await emitEvent(guild, { ...payload, code: 'playing', title: state.currentTitle || title });
   } catch (error) {
@@ -492,6 +514,7 @@ async function bootstrapGuild(guild) {
     }
   }
   await publishStatus(guild);
+  if (state.pinnedVoiceId && backendUsable()) reconnectPinned(guild).catch(() => {});
   return true;
 }
 
@@ -529,6 +552,10 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     if (player) player.destroy('DISCORD_VOICE_DISCONNECT', true).catch(() => {});
     state.currentTitle = null;
     publishStatus(guild).catch(() => {});
+    if (state.pinnedVoiceId) {
+      const timer = setTimeout(() => reconnectPinned(guild).catch(() => {}), 800);
+      timer.unref?.();
+    }
     return;
   }
   const activeVoice = actualVoiceId(guild);
