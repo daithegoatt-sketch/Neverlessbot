@@ -1,32 +1,25 @@
 'use strict';
 
-const { Readable } = require('node:stream');
-const { Client, GatewayIntentBits } = require('discord.js');
 const {
-  AudioPlayerStatus,
-  NoSubscriberBehavior,
-  StreamType,
-  VoiceConnectionStatus,
-  createAudioPlayer,
-  createAudioResource,
-  entersState,
-  joinVoiceChannel,
-} = require('@discordjs/voice');
-const play = require('@iamtraction/play-dl');
-const { DATA_CHANNEL_NAME, record, parseRecord } = require('./protocol');
-
-try {
-  const ffmpegPath = require('ffmpeg-static');
-  if (ffmpegPath && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = ffmpegPath;
-} catch {}
+  Client,
+  GatewayIntentBits,
+} = require('discord.js');
+const { LavalinkManager } = require('lavalink-client');
+const {
+  DATA_CHANNEL_NAME,
+  record,
+  parseRecord,
+} = require('./protocol');
 
 const WORKER_ID = String(process.env.MUSIC_WORKER_ID || '').trim();
 const TOKEN = process.env.DISCORD_TOKEN;
+const LAVALINK_HOST = String(process.env.LAVALINK_HOST || '').trim();
+const LAVALINK_PORT = Math.max(1, Number(process.env.LAVALINK_PORT || 2333));
+const LAVALINK_PASSWORD = String(process.env.LAVALINK_PASSWORD || '').trim();
+const LAVALINK_SECURE = /^(?:1|true|yes)$/i.test(String(process.env.LAVALINK_SECURE || 'false'));
 const HEARTBEAT_MS = 10_000;
 const REQUEST_TTL_MS = 45_000;
-const SOURCE_TIMEOUT_MS = 20_000;
 const EMPTY_LEAVE_MS = 5_000;
-const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36';
 
 if (!TOKEN) {
   console.error('[music-worker] Missing DISCORD_TOKEN.');
@@ -46,157 +39,147 @@ const client = new Client({
   ],
 });
 
-const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 const state = {
   guildId: null,
   voiceId: null,
   pinnedVoiceId: null,
-  connection: null,
-  current: null,
-  queue: [],
+  currentTitle: null,
   volume: 100,
   statusMessageId: null,
   heartbeatTimer: null,
-  emptyTimer: null,
+  emptyLeaveTimer: null,
   startedAt: Date.now(),
+  backendReady: false,
 };
+
 const seenRequests = new Set();
-let advancing = false;
-let youtubePromise = null;
+const lavalinkConfigured = Boolean(LAVALINK_HOST && LAVALINK_PASSWORD);
+let lavalink = null;
 
 function safeText(value, max = 180) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
-function withTimeout(promise, ms = SOURCE_TIMEOUT_MS, code = 'SOURCE_TIMEOUT') {
-  let timer;
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(code)), ms);
-      timer.unref?.();
-    }),
-  ]).finally(() => clearTimeout(timer));
+function currentPlayer(guildId = state.guildId) {
+  if (!lavalink || !guildId) return null;
+  return lavalink.getPlayer(String(guildId)) || null;
 }
 
-async function youtube() {
-  if (!youtubePromise) {
-    youtubePromise = import('youtubei.js')
-      .then(({ Innertube, UniversalCache }) => Innertube.create({ cache: new UniversalCache(false) }))
-      .catch((error) => {
-        youtubePromise = null;
-        throw error;
-      });
-  }
-  return youtubePromise;
+function playerQueueLength(player) {
+  return Array.isArray(player?.queue?.tracks) ? player.queue.tracks.length : 0;
 }
 
-function youtubeVideoId(value) {
-  const text = String(value || '').trim();
-  if (!text) return null;
-  try {
-    const url = new URL(text);
-    const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || null;
-    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
-      if (url.searchParams.get('v')) return url.searchParams.get('v');
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (['shorts', 'live', 'embed'].includes(parts[0])) return parts[1] || null;
-    }
-  } catch {}
-  return null;
-}
-
-function youtubeTitle(node, fallback) {
+function currentTrackTitle(player) {
   return safeText(
-    node?.title?.text
-      || node?.title?.toString?.()
-      || node?.video_details?.title
-      || node?.basic_info?.title
-      || fallback,
+    player?.queue?.current?.info?.title
+      || player?.queue?.current?.title
+      || state.currentTitle
+      || '',
     180,
-  );
+  ) || null;
 }
 
-async function resolveYoutubeTrack(wanted) {
-  const yt = await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
-  const directId = youtubeVideoId(wanted);
-  if (directId) {
-    const info = await withTimeout(
-      yt.getBasicInfo(directId, { client: 'ANDROID' }),
-      SOURCE_TIMEOUT_MS,
-      'YOUTUBE_INFO_TIMEOUT',
-    );
-    return {
-      provider: 'youtube',
-      title: youtubeTitle(info, wanted),
-      url: `https://www.youtube.com/watch?v=${directId}`,
-      videoId: directId,
-    };
-  }
-
-  const search = await withTimeout(yt.search(wanted, { type: 'video' }), SOURCE_TIMEOUT_MS, 'YOUTUBE_SEARCH_TIMEOUT');
-  const results = [...(search?.results || [])];
-  const result = results.find((item) => item?.video_id && String(item?.type || '').toLowerCase() === 'video')
-    || results.find((item) => item?.video_id)
-    || results.find((item) => item?.id);
-  const videoId = result?.video_id || result?.id || null;
-  if (!videoId) return null;
-  return {
-    provider: 'youtube',
-    title: youtubeTitle(result, wanted),
-    url: `https://www.youtube.com/watch?v=${videoId}`,
-    videoId,
-  };
+function backendUsable() {
+  return Boolean(lavalink && state.backendReady && lavalink.useable);
 }
 
-async function resolveRedirect(url) {
-  try {
-    const response = await withTimeout(fetch(url, {
-      redirect: 'follow',
-      headers: { 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(8_000),
-    }), 9_000, 'URL_REDIRECT_TIMEOUT');
-    const finalUrl = response.url || url;
-    try { await response.body?.cancel?.(); } catch {}
-    return finalUrl;
-  } catch {
-    return url;
+function setupLavalink() {
+  if (!lavalinkConfigured) {
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink is not configured yet. Set LAVALINK_HOST and LAVALINK_PASSWORD.`);
+    return null;
   }
+
+  const manager = new LavalinkManager({
+    nodes: [{
+      id: 'neverless-lavalink',
+      host: LAVALINK_HOST,
+      port: LAVALINK_PORT,
+      authorization: LAVALINK_PASSWORD,
+      secure: LAVALINK_SECURE,
+      retryAmount: 20,
+      retryDelay: 5_000,
+    }],
+    sendToShard: (guildId, payload) => {
+      const guild = client.guilds.cache.get(String(guildId));
+      if (guild) guild.shard.send(payload);
+    },
+    autoSkip: true,
+    client: {
+      id: 'pending',
+      username: `Neverless Music ${WORKER_ID}`,
+    },
+    playerOptions: {
+      defaultSearchPlatform: 'ytsearch',
+      applyVolumeAsFilter: false,
+      onDisconnect: {
+        autoReconnect: true,
+        destroyPlayer: false,
+      },
+      onEmptyQueue: {
+        destroyAfterMs: 0,
+      },
+    },
+  });
+
+  manager.nodeManager.on('connect', (node) => {
+    state.backendReady = true;
+    console.log(`[music-worker ${WORKER_ID}] Lavalink node connected: ${node.id}`);
+    for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => {});
+  });
+  manager.nodeManager.on('disconnect', (node, reason) => {
+    state.backendReady = false;
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink node disconnected: ${node.id}`, reason || '');
+    for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => {});
+  });
+  manager.nodeManager.on('error', (node, error) => {
+    state.backendReady = false;
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink node error (${node.id}):`, error?.message || error);
+  });
+
+  manager.on('trackStart', (player, track) => {
+    if (String(player.guildId) !== String(state.guildId)) return;
+    state.currentTitle = safeText(track?.info?.title || track?.title || 'الأغنية', 180);
+    state.voiceId = player.voiceChannelId || state.voiceId;
+    const guild = client.guilds.cache.get(String(player.guildId));
+    if (guild) publishStatus(guild).catch(() => {});
+  });
+
+  manager.on('trackEnd', (player) => {
+    if (String(player.guildId) !== String(state.guildId)) return;
+    state.currentTitle = currentTrackTitle(player);
+    const guild = client.guilds.cache.get(String(player.guildId));
+    if (guild) publishStatus(guild).catch(() => {});
+  });
+
+  manager.on('trackError', (player, track, payload) => {
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink track error:`, payload?.exception?.message || payload?.message || track?.info?.title || 'unknown');
+    const guild = client.guilds.cache.get(String(player.guildId));
+    if (guild) publishStatus(guild).catch(() => {});
+  });
+
+  manager.on('trackStuck', (player, track, payload) => {
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink track stuck:`, payload?.thresholdMs || track?.info?.title || 'unknown');
+    const guild = client.guilds.cache.get(String(player.guildId));
+    if (guild) publishStatus(guild).catch(() => {});
+  });
+
+  manager.on('queueEnd', async (player) => {
+    if (String(player.guildId) !== String(state.guildId)) return;
+    state.currentTitle = null;
+    const guild = client.guilds.cache.get(String(player.guildId));
+    if (!guild) return;
+    if (!state.pinnedVoiceId) await disconnectVoice(guild, 'QUEUE_ENDED').catch(() => {});
+    else scheduleEmptyLeave(guild);
+    await publishStatus(guild).catch(() => {});
+  });
+
+  return manager;
 }
 
-async function resolveTrack(query) {
-  const wanted = safeText(query, 400);
-  if (!wanted) return null;
-  const looksLikeUrl = /^https?:\/\//i.test(wanted);
-  const isYoutubeUrl = Boolean(youtubeVideoId(wanted));
-
-  if (!looksLikeUrl || isYoutubeUrl) {
-    const youtubeTrack = await resolveYoutubeTrack(wanted).catch((error) => {
-      console.warn(`[music-worker ${WORKER_ID}] YouTube resolve failed:`, error.message);
-      return null;
-    });
-    if (youtubeTrack) return youtubeTrack;
-  }
-
-  let candidate = wanted;
-  if (/^https?:\/\/(?:on\.)?soundcloud\.com\//i.test(candidate)) candidate = await resolveRedirect(candidate);
-  try {
-    const type = await play.validate(candidate);
-    if (type === 'so_track') {
-      const info = await play.soundcloud(candidate);
-      return {
-        provider: 'soundcloud',
-        title: safeText(info.name || wanted, 180),
-        url: info.url || candidate,
-      };
-    }
-  } catch (error) {
-    console.warn(`[music-worker ${WORKER_ID}] SoundCloud resolve failed:`, error.message);
-  }
-
-  return null;
-}
+lavalink = setupLavalink();
+client.on('raw', (packet) => {
+  try { lavalink?.sendRawData(packet); } catch {}
+});
 
 async function dataChannel(guild) {
   let channel = guild.channels.cache.find((item) => item.name === DATA_CHANNEL_NAME && item.isTextBased?.()) || null;
@@ -208,15 +191,18 @@ async function dataChannel(guild) {
 }
 
 function statusPayload() {
+  const player = currentPlayer();
   return {
     bot_id: client.user?.id || null,
     guild_id: state.guildId,
     voice_id: state.voiceId,
     pinned_voice_id: state.pinnedVoiceId,
-    playing: Boolean(state.current),
-    current_title: state.current?.title || null,
-    queue_length: state.queue.length,
+    playing: Boolean(player?.playing || player?.queue?.current || state.currentTitle),
+    current_title: currentTrackTitle(player),
+    queue_length: playerQueueLength(player),
     volume: state.volume,
+    backend: 'lavalink',
+    backend_ready: backendUsable(),
     heartbeat_at: Date.now(),
     started_at: state.startedAt,
   };
@@ -249,291 +235,211 @@ async function emitEvent(guild, payload) {
   const channel = await dataChannel(guild);
   if (!channel) return;
   const eventId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const content = record('EVENT', eventId, { worker_id: WORKER_ID, ...payload });
+  const content = record('EVENT', eventId, {
+    worker_id: WORKER_ID,
+    ...payload,
+  });
   if (content.length > 1950) return;
   await channel.send({ content, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
-function clearEmptyTimer() {
-  if (state.emptyTimer) clearTimeout(state.emptyTimer);
-  state.emptyTimer = null;
-}
-
 function voiceHasHuman(guild, voiceId) {
+  if (!voiceId) return false;
   const channel = guild.channels.cache.get(String(voiceId));
   if (!channel?.isVoiceBased?.()) return false;
-  return channel.members.some((member) => !member.user?.bot);
+  return [...channel.members.values()].some((member) => !member.user?.bot);
 }
 
-async function leaveVoice(guild, { clearPin = false } = {}) {
-  clearEmptyTimer();
-  if (clearPin) state.pinnedVoiceId = null;
-  state.queue = [];
-  state.current = null;
-  player.stop(true);
-  const connection = state.connection;
-  state.connection = null;
-  state.voiceId = null;
-  try { connection?.destroy(); } catch {}
-  await publishStatus(guild).catch(() => {});
+function clearEmptyLeaveTimer() {
+  if (state.emptyLeaveTimer) clearTimeout(state.emptyLeaveTimer);
+  state.emptyLeaveTimer = null;
 }
 
 function scheduleEmptyLeave(guild) {
-  clearEmptyTimer();
-  if (!state.voiceId) return;
-  if (voiceHasHuman(guild, state.voiceId)) return;
-  const expectedVoice = String(state.voiceId);
-  state.emptyTimer = setTimeout(async () => {
-    state.emptyTimer = null;
-    if (!state.voiceId || String(state.voiceId) !== expectedVoice) return;
-    if (voiceHasHuman(guild, expectedVoice)) return;
-    await leaveVoice(guild, { clearPin: false });
+  clearEmptyLeaveTimer();
+  if (!state.voiceId || voiceHasHuman(guild, state.voiceId)) return;
+  const expectedVoiceId = String(state.voiceId);
+  state.emptyLeaveTimer = setTimeout(async () => {
+    state.emptyLeaveTimer = null;
+    if (String(state.voiceId || '') !== expectedVoiceId) return;
+    if (voiceHasHuman(guild, expectedVoiceId)) return;
+    await disconnectVoice(guild, 'EMPTY_VOICE_5S').catch(() => {});
+    await publishStatus(guild).catch(() => {});
   }, EMPTY_LEAVE_MS);
-  state.emptyTimer.unref?.();
+  state.emptyLeaveTimer.unref?.();
 }
 
-async function ensureConnection(guild, voiceId) {
-  if (state.connection && state.guildId === guild.id && String(state.voiceId) === String(voiceId)) {
-    scheduleEmptyLeave(guild);
-    return state.connection;
+async function disconnectVoice(guild, reason = 'DISCONNECT') {
+  clearEmptyLeaveTimer();
+  const player = currentPlayer(guild.id);
+  if (player) {
+    try { await player.destroy(reason, true); } catch {}
   }
-  if (state.connection) {
-    try { state.connection.destroy(); } catch {}
-    state.connection = null;
-  }
-  const channel = guild.channels.cache.get(String(voiceId)) || await guild.channels.fetch(String(voiceId)).catch(() => null);
-  if (!channel?.isVoiceBased?.()) throw new Error('VOICE_CHANNEL_NOT_FOUND');
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true,
-    selfMute: false,
-  });
-  await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-  connection.subscribe(player);
-  state.connection = connection;
-  state.guildId = guild.id;
-  state.voiceId = channel.id;
-  connection.on(VoiceConnectionStatus.Disconnected, async () => {
-    try {
-      await Promise.race([
-        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-      ]);
-    } catch {
-      if (state.connection === connection) {
-        state.connection = null;
-        state.voiceId = null;
-        state.current = null;
-        state.queue = [];
-        try { connection.destroy(); } catch {}
-      }
-    }
-  });
-  await publishStatus(guild).catch(() => {});
-  scheduleEmptyLeave(guild);
-  return connection;
+  state.voiceId = null;
+  state.currentTitle = null;
 }
 
-async function getYoutubeStream(track) {
-  const yt = await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
-  const attempts = [
-    { type: 'audio', quality: 'best', format: 'webm', codec: 'opus', client: 'ANDROID' },
-    { type: 'audio', quality: 'best', format: 'any', client: 'ANDROID' },
-    { type: 'audio', quality: 'best', format: 'any', client: 'WEB' },
-  ];
-  let lastError = null;
-
-  for (const options of attempts) {
-    try {
-      const format = await withTimeout(
-        yt.getStreamingData(track.videoId, options),
-        SOURCE_TIMEOUT_MS,
-        'YOUTUBE_FORMAT_TIMEOUT',
-      );
-      const url = String(format?.url || '');
-      if (!url) throw new Error('YOUTUBE_FORMAT_URL_MISSING');
-      const response = await withTimeout(fetch(url, {
-        headers: {
-          'User-Agent': USER_AGENT,
-          Referer: 'https://www.youtube.com/',
-          Accept: '*/*',
-          Range: 'bytes=0-',
-        },
-        signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
-      }), SOURCE_TIMEOUT_MS, 'YOUTUBE_HTTP_TIMEOUT');
-      if (!response.ok || !response.body) throw new Error(`YOUTUBE_HTTP_${response.status}`);
-      const mime = String(format?.mime_type || format?.mimeType || response.headers.get('content-type') || '').toLowerCase();
-      const inputType = mime.includes('webm') && mime.includes('opus') ? StreamType.WebmOpus : StreamType.Arbitrary;
-      return { stream: Readable.fromWeb(response.body), inputType };
-    } catch (error) {
-      lastError = error;
-      console.warn(`[music-worker ${WORKER_ID}] YouTube stream attempt failed:`, error.message);
-    }
+async function ensurePlayer(guild, voiceId, textChannelId = null) {
+  if (!backendUsable()) {
+    throw new Error(lavalinkConfigured ? 'LAVALINK_UNAVAILABLE' : 'LAVALINK_NOT_CONFIGURED');
   }
 
-  try {
-    const webStream = await withTimeout(
-      yt.download(track.videoId, { type: 'audio', quality: 'best', client: 'ANDROID' }),
-      SOURCE_TIMEOUT_MS,
-      'YOUTUBE_DOWNLOAD_TIMEOUT',
-    );
-    const stream = typeof webStream?.getReader === 'function' ? Readable.fromWeb(webStream) : webStream;
-    if (stream?.pipe) return { stream, inputType: StreamType.Arbitrary };
-  } catch (error) {
-    lastError = error;
+  let player = currentPlayer(guild.id);
+  if (player && player.voiceChannelId && String(player.voiceChannelId) !== String(voiceId)) {
+    try { await player.destroy('MOVE_VOICE', true); } catch {}
+    player = null;
   }
 
-  throw lastError || new Error('YOUTUBE_AUDIO_STREAM_UNAVAILABLE');
-}
-
-async function streamTrack(track) {
-  if (track.provider === 'youtube' && track.videoId) {
-    const source = await getYoutubeStream(track);
-    const resource = createAudioResource(source.stream, {
-      inputType: source.inputType,
-      inlineVolume: true,
-      metadata: track,
+  if (!player) {
+    player = lavalink.createPlayer({
+      guildId: guild.id,
+      voiceChannelId: String(voiceId),
+      textChannelId: textChannelId ? String(textChannelId) : null,
+      volume: state.volume,
+      selfDeaf: true,
+      selfMute: false,
     });
-    if (resource.volume) resource.volume.setVolume(state.volume / 100);
-    return resource;
+  } else if (String(player.voiceChannelId || '') !== String(voiceId)) {
+    await player.changeVoiceState({ voiceChannelId: String(voiceId), selfDeaf: true, selfMute: false });
   }
 
-  const source = await withTimeout(play.stream(track.url, { quality: 2 }), SOURCE_TIMEOUT_MS, 'SOUNDCLOUD_STREAM_TIMEOUT');
-  const resource = createAudioResource(source.stream, {
-    inputType: source.type,
-    inlineVolume: true,
-    metadata: track,
-  });
-  if (resource.volume) resource.volume.setVolume(state.volume / 100);
-  return resource;
-}
-
-async function startTrack(guild, track) {
-  await ensureConnection(guild, state.voiceId);
-  const resource = await streamTrack(track);
-  state.current = track;
-  player.play(resource);
-  await entersState(player, AudioPlayerStatus.Playing, 10_000).catch((error) => {
-    throw new Error(`AUDIO_DID_NOT_START:${error.message}`);
-  });
+  if (!player.connected) await player.connect();
+  state.guildId = guild.id;
+  state.voiceId = String(voiceId);
+  scheduleEmptyLeave(guild);
   await publishStatus(guild).catch(() => {});
+  return player;
 }
 
-async function playNext() {
-  if (advancing) return;
-  advancing = true;
-  try {
-    const guild = state.guildId ? client.guilds.cache.get(state.guildId) : null;
-    if (!guild) {
-      state.current = null;
-      return;
-    }
-    const next = state.queue.shift() || null;
-    if (!next) {
-      state.current = null;
-      if (!state.pinnedVoiceId) await leaveVoice(guild, { clearPin: false });
-      else await publishStatus(guild).catch(() => {});
-      return;
-    }
-    state.voiceId = next.voiceId;
-    await ensureConnection(guild, next.voiceId);
-    await startTrack(guild, next.track);
-  } catch (error) {
-    console.warn(`[music-worker ${WORKER_ID}] Next track failed:`, error.message);
-    state.current = null;
-    setTimeout(() => playNext().catch(() => {}), 100).unref?.();
-  } finally {
-    advancing = false;
-  }
+function trackTitle(track, fallback = 'الأغنية') {
+  return safeText(track?.info?.title || track?.title || fallback, 180);
 }
 
-player.on(AudioPlayerStatus.Idle, () => {
-  if (!state.current) return;
-  state.current = null;
-  playNext().catch(() => {});
-});
-
-player.on('error', (error) => {
-  console.warn(`[music-worker ${WORKER_ID}] Player error:`, error.message);
-  state.current = null;
-  playNext().catch(() => {});
-});
+async function findTrack(player, query, requesterId) {
+  const wanted = safeText(query, 400);
+  if (!wanted) return null;
+  const requestUser = { id: String(requesterId || 'unknown') };
+  const looksLikeUrl = /^https?:\/\//i.test(wanted);
+  const search = await player.search(
+    looksLikeUrl ? { query: wanted } : { query: wanted, source: 'ytsearch' },
+    requestUser,
+    false,
+  );
+  return Array.isArray(search?.tracks) && search.tracks.length ? search.tracks[0] : null;
+}
 
 async function handlePlay(guild, payload) {
-  const track = await resolveTrack(payload.query);
-  if (!track) {
-    await emitEvent(guild, { ...payload, code: 'not_found' });
-    return;
-  }
   const sameVoice = !state.voiceId || String(state.voiceId) === String(payload.voice_id);
   if (!sameVoice) {
     await emitEvent(guild, { ...payload, code: 'error', reason: 'WORKER_BUSY_OTHER_VOICE' });
     return;
   }
-  await ensureConnection(guild, payload.voice_id);
-  if (state.current || player.state.status !== AudioPlayerStatus.Idle) {
-    state.queue.push({ track, voiceId: payload.voice_id });
-    await publishStatus(guild).catch(() => {});
-    await emitEvent(guild, { ...payload, code: 'queued', title: track.title });
+
+  let player;
+  try {
+    player = await ensurePlayer(guild, payload.voice_id, payload.channel_id);
+  } catch (error) {
+    await emitEvent(guild, {
+      ...payload,
+      code: 'error',
+      reason: safeText(error.message, 120),
+    });
     return;
   }
-  state.voiceId = payload.voice_id;
+
+  let track;
   try {
-    await startTrack(guild, track);
-    await emitEvent(guild, { ...payload, code: 'playing', title: track.title });
+    track = await findTrack(player, payload.query, payload.user_id);
   } catch (error) {
-    state.current = null;
-    player.stop(true);
-    console.warn(`[music-worker ${WORKER_ID}] Start track failed:`, error.message);
-    await emitEvent(guild, { ...payload, code: 'error', reason: safeText(error.message, 120), title: track.title });
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink search failed:`, error.message);
+    await emitEvent(guild, { ...payload, code: 'error', reason: safeText(error.message, 120) });
+    return;
+  }
+
+  if (!track) {
+    await emitEvent(guild, { ...payload, code: 'not_found' });
+    return;
+  }
+
+  const wasBusy = Boolean(player.playing || player.queue?.current || playerQueueLength(player));
+  await player.queue.add(track);
+  const title = trackTitle(track, payload.query);
+
+  if (wasBusy) {
+    await publishStatus(guild).catch(() => {});
+    await emitEvent(guild, { ...payload, code: 'queued', title });
+    return;
+  }
+
+  try {
+    await player.play();
+    state.currentTitle = title;
+    await publishStatus(guild).catch(() => {});
+    await emitEvent(guild, { ...payload, code: 'playing', title });
+  } catch (error) {
+    state.currentTitle = null;
+    console.warn(`[music-worker ${WORKER_ID}] Lavalink play failed:`, error.message);
+    await emitEvent(guild, {
+      ...payload,
+      code: 'error',
+      reason: safeText(error.message, 120),
+      title,
+    });
   }
 }
 
 async function handleSkip(guild, payload) {
-  if (!state.current && !state.queue.length) {
+  const player = currentPlayer(guild.id);
+  if (!player || (!player.playing && !player.queue?.current && !playerQueueLength(player))) {
     await emitEvent(guild, { ...payload, code: 'not_playing' });
     return;
   }
-  const nextTitle = state.queue[0]?.track?.title || null;
-  player.stop(true);
+  const nextTitle = trackTitle(player.queue?.tracks?.[0], '') || null;
+  await player.skip(0, false).catch(() => player.stopPlaying(false, false));
   await emitEvent(guild, { ...payload, code: 'skipped', next_title: nextTitle });
+  await publishStatus(guild).catch(() => {});
 }
 
 async function handleStop(guild, payload) {
-  if (!state.current && !state.queue.length) {
+  const player = currentPlayer(guild.id);
+  if (!player || (!player.playing && !player.queue?.current && !playerQueueLength(player))) {
     await emitEvent(guild, { ...payload, code: 'not_playing' });
     return;
   }
-  state.queue = [];
-  state.current = null;
-  player.stop(true);
-  if (!state.pinnedVoiceId) await leaveVoice(guild, { clearPin: false });
-  else await publishStatus(guild).catch(() => {});
+  await player.stopPlaying(true, false).catch(() => {});
+  state.currentTitle = null;
+  if (!state.pinnedVoiceId) await disconnectVoice(guild, 'STOPPED').catch(() => {});
+  else scheduleEmptyLeave(guild);
+  await publishStatus(guild).catch(() => {});
   await emitEvent(guild, { ...payload, code: 'stopped' });
 }
 
 async function handleVolume(guild, payload) {
   const value = Math.max(0, Math.min(200, Number(payload.value) || 0));
   state.volume = value;
-  const resource = player.state?.resource;
-  if (resource?.volume) resource.volume.setVolume(value / 100);
+  const player = currentPlayer(guild.id);
+  if (player) await player.setVolume(value, true).catch(() => {});
   await publishStatus(guild).catch(() => {});
   await emitEvent(guild, { ...payload, code: 'volume', value });
 }
 
 async function handlePin(guild, payload) {
-  if (state.current && state.voiceId && String(state.voiceId) !== String(payload.voice_id)) return;
+  if (state.currentTitle && state.voiceId && String(state.voiceId) !== String(payload.voice_id)) return;
   state.pinnedVoiceId = String(payload.voice_id);
-  state.voiceId = String(payload.voice_id);
-  await ensureConnection(guild, state.voiceId);
+  state.guildId = guild.id;
+  try {
+    await ensurePlayer(guild, state.pinnedVoiceId, payload.channel_id);
+  } catch (error) {
+    console.warn(`[music-worker ${WORKER_ID}] Pin waiting for Lavalink:`, error.message);
+  }
+  scheduleEmptyLeave(guild);
   await publishStatus(guild).catch(() => {});
 }
 
 async function handleUnpin(guild) {
   state.pinnedVoiceId = null;
-  await leaveVoice(guild, { clearPin: true });
+  await disconnectVoice(guild, 'UNPINNED').catch(() => {});
+  await publishStatus(guild).catch(() => {});
 }
 
 async function processRequest(message, parsed) {
@@ -545,7 +451,8 @@ async function processRequest(message, parsed) {
   if (seenRequests.size > 500) {
     for (const value of [...seenRequests].slice(0, 250)) seenRequests.delete(value);
   }
-  const guild = client.guilds.cache.get(payload.guild_id) || null;
+
+  const guild = client.guilds.cache.get(String(payload.guild_id)) || null;
   if (!guild) return;
   try {
     if (payload.action === 'play') await handlePlay(guild, payload);
@@ -553,7 +460,7 @@ async function processRequest(message, parsed) {
     else if (payload.action === 'stop') await handleStop(guild, payload);
     else if (payload.action === 'volume') await handleVolume(guild, payload);
     else if (payload.action === 'pin') await handlePin(guild, payload);
-    else if (payload.action === 'unpin') await handleUnpin(guild, payload);
+    else if (payload.action === 'unpin') await handleUnpin(guild);
   } catch (error) {
     console.warn(`[music-worker ${WORKER_ID}] Request failed:`, error.message);
     await emitEvent(guild, { ...payload, code: 'error', reason: safeText(error.message, 120) });
@@ -566,6 +473,7 @@ async function bootstrapGuild(guild) {
     console.warn(`[music-worker ${WORKER_ID}] neverless-data is not visible yet; waiting for controller permissions.`);
     return false;
   }
+
   state.guildId = guild.id;
   const batch = await channel.messages.fetch({ limit: 100 }).catch(() => null);
   if (batch) {
@@ -575,10 +483,12 @@ async function bootstrapGuild(guild) {
     });
     if (pin) {
       const parsed = parseRecord(pin.content);
-      if (parsed?.payload?.voice_id) {
-        state.pinnedVoiceId = String(parsed.payload.voice_id);
-        state.voiceId = state.pinnedVoiceId;
-        await ensureConnection(guild, state.pinnedVoiceId).catch(() => {});
+      const voiceId = parsed?.payload?.voice_id ? String(parsed.payload.voice_id) : null;
+      state.pinnedVoiceId = voiceId;
+      if (voiceId && backendUsable()) {
+        await ensurePlayer(guild, voiceId, null).catch((error) => {
+          console.warn(`[music-worker ${WORKER_ID}] Could not restore pin yet:`, error.message);
+        });
       }
     }
   }
@@ -588,12 +498,17 @@ async function bootstrapGuild(guild) {
 
 async function initialize() {
   console.log(`[music-worker ${WORKER_ID}] Logged in as ${client.user.tag}`);
-  try {
-    await withTimeout(youtube(), SOURCE_TIMEOUT_MS, 'YOUTUBE_INIT_TIMEOUT');
-    console.log(`[music-worker ${WORKER_ID}] YouTube.js source ready.`);
-  } catch (error) {
-    console.warn(`[music-worker ${WORKER_ID}] YouTube init failed; worker stays online:`, error.message);
+
+  if (lavalink) {
+    try {
+      await lavalink.init({ id: client.user.id, username: client.user.username });
+      console.log(`[music-worker ${WORKER_ID}] Lavalink manager initialized.`);
+    } catch (error) {
+      state.backendReady = false;
+      console.warn(`[music-worker ${WORKER_ID}] Lavalink init failed; worker stays online:`, error.message);
+    }
   }
+
   for (const guild of client.guilds.cache.values()) {
     let ready = await bootstrapGuild(guild).catch(() => false);
     if (!ready) {
@@ -604,6 +519,7 @@ async function initialize() {
       retry.unref?.();
     }
   }
+
   state.heartbeatTimer = setInterval(() => {
     for (const guild of client.guilds.cache.values()) publishStatus(guild).catch(() => {});
   }, HEARTBEAT_MS);
@@ -622,10 +538,12 @@ client.on('messageCreate', (message) => {
 });
 
 client.on('voiceStateUpdate', (oldState, newState) => {
-  const guild = newState.guild || oldState.guild;
-  if (!guild || !state.voiceId) return;
-  if (String(oldState.channelId || '') !== String(state.voiceId) && String(newState.channelId || '') !== String(state.voiceId)) return;
-  scheduleEmptyLeave(guild);
+  const activeVoiceId = state.voiceId;
+  if (!activeVoiceId) return;
+  if (String(oldState.channelId || '') !== String(activeVoiceId)
+      && String(newState.channelId || '') !== String(activeVoiceId)) return;
+  const guild = oldState.guild || newState.guild;
+  if (guild) scheduleEmptyLeave(guild);
 });
 
 client.on('guildCreate', (guild) => bootstrapGuild(guild).catch(() => {}));
