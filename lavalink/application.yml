@@ -45,17 +45,24 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # MUSIC is used for metadata/search. ANDROID_VR/WEB clients provide playback.
+    # Search/metadata clients are tried first. TV is OAuth-capable and is kept
+    # available as the authenticated playback fallback for datacenter IP blocks.
     clients:
       - MUSIC
-      - ANDROID_VR
       - WEB
-      - WEBEMBEDDED
       - MWEB
+      - WEBEMBEDDED
+      - ANDROID_VR
       - TVHTML5_SIMPLY
+      - TV
+    oauth:
+      enabled: ${YOUTUBE_OAUTH_ENABLED:false}
+      refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
+      skipInitialization: ${YOUTUBE_OAUTH_SKIP_INITIALIZATION:false}
 
 logging:
   level:
     root: INFO
     lavalink: INFO
     dev.lavalink.youtube: INFO
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
