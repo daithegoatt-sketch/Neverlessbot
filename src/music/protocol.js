@@ -3,7 +3,9 @@
 const CMD_CHANNEL_ID = '1538570405617598505';
 const DATA_CHANNEL_NAME = 'neverless-data';
 const PREFIX = 'NLMUSIC1';
-const HEARTBEAT_STALE_MS = 30_000;
+// Workers publish a durable health snapshot once per minute. Keep the controller
+// tolerant to Discord message-update cache misses while still expiring dead workers.
+const HEARTBEAT_STALE_MS = 120_000;
 
 function encode(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
