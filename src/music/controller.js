@@ -60,6 +60,24 @@ function rememberStatusMessage(message, parsed) {
   return true;
 }
 
+function reconcileStatusesWithDiscord(guild) {
+  for (const [workerId, status] of statuses) {
+    if (!status?.bot_id) continue;
+    const member = guild.members.cache.get(String(status.bot_id));
+    if (!member) continue;
+    const actualVoiceId = member.voice?.channelId || null;
+    if (String(status.voice_id || '') !== String(actualVoiceId || '')) {
+      statuses.set(workerId, {
+        ...status,
+        voice_id: actualVoiceId,
+        playing: actualVoiceId ? Boolean(status.playing) : false,
+        current_title: actualVoiceId ? status.current_title : null,
+        queue_length: actualVoiceId ? status.queue_length : 0,
+      });
+    }
+  }
+}
+
 async function loadState(guild) {
   const channel = await findDataChannel(guild);
   if (!channel) return;
@@ -86,9 +104,13 @@ async function loadState(guild) {
   }
   pins.clear();
   for (const [workerId, pin] of latestPins) {
-    if (pin.voice_id) pins.set(String(pin.voice_id), String(workerId));
+    if (pin.voice_id) {
+      const voice = guild.channels.cache.get(String(pin.voice_id));
+      if (voice?.isVoiceBased?.()) pins.set(String(pin.voice_id), String(workerId));
+    }
     pinRecordIds.set(String(workerId), pin.messageId);
   }
+  reconcileStatusesWithDiscord(guild);
   lastStatusRefreshAt = now();
 }
 
@@ -127,6 +149,7 @@ async function refreshWorkerStatuses(guild, force = false) {
       }
     }
   }
+  reconcileStatusesWithDiscord(guild);
   lastStatusRefreshAt = now();
 }
 
@@ -216,7 +239,8 @@ async function handlePinCommand(message) {
   const target = mentionedWorker(message);
   if (!target) return false;
 
-  await refreshWorkerStatuses(message.guild, true).catch(() => {});
+  if (!healthyWorkers().length) await refreshWorkerStatuses(message.guild, true).catch(() => {});
+  reconcileStatusesWithDiscord(message.guild);
 
   if (isUnpin) {
     await persistPin(message.guild, target.id, null);
@@ -227,7 +251,7 @@ async function handlePinCommand(message) {
       user_id: message.author.id,
       message_id: message.id,
     }).catch(() => {});
-    await reply(message, `تم إلغاء تثبيت <@${target.botId}> وخروجه من الروم.`);
+    await reply(message, `تم إلغاء تثبيت <@${target.botId}>. إذا الروم فاضي بيطلع، وإذا فيه أشخاص يبقى لين يفضى.`);
     return true;
   }
 
@@ -250,7 +274,7 @@ async function handlePinCommand(message) {
     user_id: message.author.id,
     message_id: message.id,
   }).catch(() => {});
-  await reply(message, `تم تثبيت <@${target.botId}> في <#${voiceId}>.`);
+  await reply(message, `تم تثبيت <@${target.botId}> في <#${voiceId}>. بيبقى في الروم حتى لو صار فاضي.`);
   return true;
 }
 
@@ -271,11 +295,22 @@ async function handleMusicCommand(message) {
     await reply(message, 'ادخل روم صوتي أول عشان أقدر أحدد Music Bot لك.');
     return true;
   }
-  await refreshWorkerStatuses(message.guild, true).catch(() => {});
+
+  // Live STATUS updates arrive through messageUpdate. Avoid three Discord fetches on every command.
+  reconcileStatusesWithDiscord(message.guild);
+  if (!healthyWorkers().length) {
+    await refreshWorkerStatuses(message.guild, true).catch(() => {});
+    reconcileStatusesWithDiscord(message.guild);
+  }
+
   const worker = command.action === 'play' ? freeWorkerForVoice(voiceId) : workerForVoice(voiceId);
   if (!worker) {
-    const online = healthyWorkers().length;
-    await reply(message, online ? 'كل Music Bots مستخدمين حاليًا في رومات ثانية.' : 'Music Bots مو متصلين حاليًا.');
+    const healthy = healthyWorkers();
+    const online = healthy.length;
+    const reserved = healthy.filter((row) => row.pinned_voice_id && String(row.pinned_voice_id) !== String(voiceId)).length;
+    await reply(message, online
+      ? (reserved === online ? 'كل Music Bots مثبتين حاليًا في رومات ثانية.' : 'كل Music Bots مستخدمين حاليًا في رومات ثانية.')
+      : 'Music Bots مو متصلين حاليًا.');
     return true;
   }
   await sendRequest(message.guild, worker.id, {
@@ -351,7 +386,10 @@ function installMusicController(client) {
       .catch((error) => console.warn('[music] Command failed:', error.message));
   });
   client.on('messageUpdate', (_oldMessage, newMessage) => {
-    if (newMessage?.channel?.name === DATA_CHANNEL_NAME) applyControlRecord(newMessage);
+    if (newMessage?.channel?.name === DATA_CHANNEL_NAME) {
+      applyControlRecord(newMessage);
+      if (newMessage.guild) reconcileStatusesWithDiscord(newMessage.guild);
+    }
   });
   const refreshTimer = setInterval(() => {
     for (const guild of client.guilds.cache.values()) refreshWorkerStatuses(guild, true).catch(() => {});
