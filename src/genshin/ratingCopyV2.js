@@ -3,6 +3,7 @@
 const { reviewArtifacts } = require('./artifactEvaluator');
 const { formatStat, formatTarget } = require('./statProfile');
 const { recommendedRv, setNeedsChange, rankArtifactPieces, effectiveRv, ltr } = require('./artifactDoctor');
+const { buildPriorityNote } = require('./buildLogic');
 
 function formatArtifactReview(snapshot, guide, lang = 'ar') {
   const ar = lang === 'ar';
@@ -92,6 +93,9 @@ function akashaImprovementAdvice(snapshot, guide, evaluation, akashaRanking, lan
   lines.push(ar
     ? `• الحالي: **${ltr(`Top ${formatTopPercent(topPercent)}%`)}**`
     : `• Current: **Top ${formatTopPercent(topPercent)}%**`);
+
+  const priorityNote = buildPriorityNote(guide, lang);
+  if (priorityNote) lines.push(`• ${priorityNote}`);
 
   if (targetProblems.length) targetProblems.slice(0, 2).forEach((row) => lines.push(targetAdviceLine(snapshot, row, lang)));
 
