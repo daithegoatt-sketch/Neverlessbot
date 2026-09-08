@@ -38,6 +38,10 @@ lavalink:
     useSeekGhosting: true
     youtubePlaylistLoadLimit: 6
     playerUpdateInterval: 5
+    timeouts:
+      connectTimeoutMs: 10000
+      connectionRequestTimeoutMs: 10000
+      socketTimeoutMs: 10000
 
 plugins:
   youtube:
@@ -45,8 +49,6 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # Search/metadata clients are tried first. TV is OAuth-capable and is kept
-    # available as the authenticated playback fallback for datacenter IP blocks.
     clients:
       - MUSIC
       - WEB
@@ -59,6 +61,12 @@ plugins:
       enabled: ${YOUTUBE_OAUTH_ENABLED:false}
       refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
       skipInitialization: ${YOUTUBE_OAUTH_SKIP_INITIALIZATION:false}
+    # YouTube changes its player signature scripts frequently. Delegate deciphering
+    # to the isolated yt-cipher service instead of relying on local extraction.
+    remoteCipher:
+      url: "${YOUTUBE_CIPHER_URL:https://cipher.kikkia.dev/}"
+      password: "${YOUTUBE_CIPHER_PASSWORD:}"
+      userAgent: "Neverless-Lavalink"
 
 logging:
   level:
