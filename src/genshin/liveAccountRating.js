@@ -8,6 +8,7 @@ const { evaluateBuild } = require('./buildEvaluator');
 const { applyCompetitiveCeiling } = require('./ratingCeiling');
 const { applyRatingFairness } = require('./ratingFairness');
 const { reviewArtifacts } = require('./artifactEvaluator');
+const { applySnapshotBuildLogic } = require('./buildLogic');
 
 const CACHE_TTL = 90 * 1000;
 const cache = new Map();
@@ -69,8 +70,12 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
   ]);
   if (!guide) return null;
 
-  const artifacts = reviewArtifacts(snapshot, guide);
-  const baseEvaluation = evaluateBuild(snapshot, guide, {
+  // Rating may know more than a generic character page because it can see the actual
+  // equipped build. Use that snapshot only to choose the correct build variant; the
+  // scoring pipeline itself remains unchanged.
+  const ratedGuide = applySnapshotBuildLogic(guide, snapshot);
+  const artifacts = reviewArtifacts(snapshot, ratedGuide);
+  const baseEvaluation = evaluateBuild(snapshot, ratedGuide, {
     akashaPercentile: akasha,
     weaponData,
   });
@@ -89,7 +94,7 @@ async function rateSnapshot(uid, character, snapshot, options = {}) {
     evaluation,
     artifactQuality: artifacts.averageUsefulRv,
     snapshot,
-    guide,
+    guide: ratedGuide,
     character,
   };
 }
