@@ -1,18 +1,21 @@
 'use strict';
 
-// Isolated runtime guard for BOT_MODE=music only.
-// Prevents lavalink-client Player.connect() from blocking the worker forever while
-// Discord has already moved the bot into the voice channel. The normal worker then
-// verifies the actual Discord voice state + Lavalink handshake before playing.
+// Isolated runtime guards for BOT_MODE=music only.
+// 1) Prevent lavalink-client Player.connect() from blocking the worker forever while
+//    Discord has already moved the bot into the voice channel.
+// 2) Prevent frequent STATUS message edits from clogging Discord REST and delaying
+//    the critical playback path after the worker has been online for many hours.
 const lavalinkClient = require('lavalink-client');
+const { Message } = require('discord.js');
 const Player = lavalinkClient.Player;
 
-const PATCH_KEY = Symbol.for('neverless.music.player-connect-guard');
+const CONNECT_PATCH_KEY = Symbol.for('neverless.music.player-connect-guard');
+const STATUS_EDIT_PATCH_KEY = Symbol.for('neverless.music.status-edit-guard');
 
-if (Player?.prototype && !Player.prototype[PATCH_KEY]) {
+if (Player?.prototype && !Player.prototype[CONNECT_PATCH_KEY]) {
   const originalConnect = Player.prototype.connect;
 
-  Object.defineProperty(Player.prototype, PATCH_KEY, { value: true });
+  Object.defineProperty(Player.prototype, CONNECT_PATCH_KEY, { value: true });
 
   Player.prototype.connect = function neverlessConnectGuard(...args) {
     if (this.__neverlessConnectGate) return this.__neverlessConnectGate;
@@ -40,6 +43,28 @@ if (Player?.prototype && !Player.prototype[PATCH_KEY]) {
 
     this.__neverlessConnectGate = gate;
     return gate;
+  };
+}
+
+if (Message?.prototype && !Message.prototype[STATUS_EDIT_PATCH_KEY]) {
+  const originalEdit = Message.prototype.edit;
+  Object.defineProperty(Message.prototype, STATUS_EDIT_PATCH_KEY, { value: true });
+
+  Message.prototype.edit = function neverlessStatusEditGuard(options, ...rest) {
+    if (String(process.env.BOT_MODE || '').trim().toLowerCase() !== 'music') {
+      return originalEdit.call(this, options, ...rest);
+    }
+
+    const nextContent = typeof options === 'string' ? options : options?.content;
+    const currentContent = this.content;
+    const isMusicStatus = String(nextContent || currentContent || '').startsWith('NLMUSIC1|STATUS|');
+
+    // workerHealthBridge already publishes a fresh STATUS snapshot every minute.
+    // Re-editing the same durable STATUS message every 5 seconds is redundant and can
+    // build a REST-rate-limit queue that blocks ensurePlayer() before search/play.
+    if (isMusicStatus) return Promise.resolve(this);
+
+    return originalEdit.call(this, options, ...rest);
   };
 }
 
