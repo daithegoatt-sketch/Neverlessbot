@@ -5,6 +5,7 @@ const { fetchGame8Guide } = require('./game8Client');
 const { fetchGame8TeamGroups, dedupeTeams } = require('./teamGroupClient');
 const { getBuildStatFallback } = require('./kqmClient');
 const { fetchGameWithStats } = require('./gameWithClient');
+const { applyDefaultBuildLogic } = require('./buildLogic');
 
 const CACHE_TTL = 12 * 60 * 60 * 1000;
 const cache = new Map();
@@ -185,6 +186,10 @@ async function getGuide(name) {
       value = validateGuide(addArtifactAlternatives({ ...value, stats }, name));
     }
   }
+
+  // Apply verified build-shape corrections only after all external sources merge.
+  // This touches stats/main-stat guidance only; teams, weapons and other systems stay intact.
+  value = validateGuide(applyDefaultBuildLogic(value));
 
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL });
   return value;
