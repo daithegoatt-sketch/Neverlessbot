@@ -68,7 +68,7 @@ function defaultRaidenGuide(guide) {
       'Goblet: Electro DMG Bonus / ATK%',
       'Circlet: CRIT Rate / CRIT DMG',
     ],
-    priority: 'Energy Recharge (until requirement) > CRIT Rate / CRIT DMG > ATK% > Elemental Mastery (Quicken/Quickbloom only)',
+    priority: 'Energy Recharge (until requirement) > CRIT Rate / CRIT DMG > ATK%',
     targets,
     buildVariant: 'on-field-dps',
     erContextual: true,
