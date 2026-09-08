@@ -34,6 +34,12 @@ function parseTarget(line) {
   return { key, min: Math.min(min, max), max: Math.max(min, max), text: line };
 }
 
+function expandPriorityText(text) {
+  return String(text || '')
+    .replace(/CRIT\s*Rate\s*\/\s*(?:DMG|Damage)/gi, 'CRIT Rate > CRIT DMG')
+    .replace(/\bCRIT\b(?!\s*(?:Rate|DMG|Damage))/gi, 'CRIT Rate > CRIT DMG');
+}
+
 function guideProfile(guide) {
   const targets = [];
   const seen = new Set();
@@ -45,7 +51,7 @@ function guideProfile(guide) {
   }
 
   const priority = [];
-  const priorityText = [guide?.stats?.priority, ...(guide?.stats?.main || [])].filter(Boolean).join(' > ');
+  const priorityText = expandPriorityText([guide?.stats?.priority, ...(guide?.stats?.main || [])].filter(Boolean).join(' > '));
   for (const chunk of priorityText.split(/>|=|,|\/|\bor\b/gi)) {
     const key = keyFromText(chunk);
     if (key && !priority.includes(key)) priority.push(key);
@@ -79,4 +85,4 @@ function formatTarget(target) {
   return `${target.min.toLocaleString('en-US')}–${target.max.toLocaleString('en-US')}${suffix}`;
 }
 
-module.exports = { STAT_KEYS, LABELS, keyFromText, parseTarget, guideProfile, formatStat, formatTarget };
+module.exports = { STAT_KEYS, LABELS, keyFromText, parseTarget, guideProfile, formatStat, formatTarget, expandPriorityText };
