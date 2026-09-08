@@ -20,17 +20,9 @@ let installed = false;
 let dataChannel = null;
 let lastStatusRefreshAt = 0;
 
-function now() {
-  return Date.now();
-}
-
-function clean(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function isAdmin(member) {
-  return Boolean(member?.permissions?.has(PermissionFlagsBits.Administrator));
-}
+function now() { return Date.now(); }
+function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+function isAdmin(member) { return Boolean(member?.permissions?.has(PermissionFlagsBits.Administrator)); }
 
 async function findDataChannel(guild) {
   if (dataChannel?.guildId === guild.id) return dataChannel;
@@ -62,7 +54,7 @@ function rememberStatusMessage(message, parsed) {
   const heartbeatAt = Number(parsed.payload.heartbeat_at) || message.editedTimestamp || message.createdTimestamp || 0;
   const previous = statuses.get(parsed.id);
   if (!previous || heartbeatAt >= Number(previous.heartbeat_at || 0)) {
-    statuses.set(parsed.id, { ...parsed.payload, heartbeat_at: heartbeatAt });
+    statuses.set(String(parsed.id), { ...parsed.payload, heartbeat_at: heartbeatAt });
   }
   if (message?.id) statusRecordIds.set(String(parsed.id), message.id);
   return true;
@@ -85,13 +77,14 @@ async function loadState(guild) {
       if (parsed.type === 'PIN') {
         const previous = latestPins.get(parsed.id);
         if (!previous || message.createdTimestamp > previous.createdTimestamp) {
-          latestPins.set(parsed.id, { ...parsed.payload, messageId: message.id, createdTimestamp: message.createdTimestamp });
+          latestPins.set(String(parsed.id), { ...parsed.payload, messageId: message.id, createdTimestamp: message.createdTimestamp });
         }
       }
     }
     before = batch.last()?.id;
     if (batch.size < 100) break;
   }
+  pins.clear();
   for (const [workerId, pin] of latestPins) {
     if (pin.voice_id) pins.set(String(pin.voice_id), String(workerId));
     pinRecordIds.set(String(workerId), pin.messageId);
@@ -110,7 +103,6 @@ async function refreshWorkerStatuses(guild, force = false) {
   if (!force && now() - lastStatusRefreshAt < 5_000) return;
   const channel = await findDataChannel(guild);
   if (!channel) return;
-
   let refreshed = 0;
   for (const workerId of ['1', '2', '3']) {
     const messageId = statusRecordIds.get(workerId);
@@ -126,7 +118,6 @@ async function refreshWorkerStatuses(guild, force = false) {
       refreshed += 1;
     }
   }
-
   if (refreshed < 3) {
     const batch = await channel.messages.fetch({ limit: 100 }).catch(() => null);
     if (batch) {
@@ -172,8 +163,11 @@ async function sendRequest(guild, workerId, payload) {
   const channel = await findDataChannel(guild);
   if (!channel) throw new Error('MUSIC_DATA_CHANNEL_MISSING');
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const expiresAt = Date.now() + 30_000;
-  const content = record('REQ', String(workerId), { ...payload, request_id: requestId, expires_at: expiresAt });
+  const content = record('REQ', String(workerId), {
+    ...payload,
+    request_id: requestId,
+    expires_at: Date.now() + 30_000,
+  });
   if (content.length > 1950) throw new Error('MUSIC_REQUEST_TOO_LONG');
   await channel.send({ content, allowedMentions: { parse: [] } });
   return requestId;
@@ -182,7 +176,10 @@ async function sendRequest(guild, workerId, payload) {
 async function persistPin(guild, workerId, voiceId) {
   const channel = await findDataChannel(guild);
   if (!channel) return;
-  const content = record('PIN', String(workerId), { voice_id: String(voiceId), updated_at: Date.now() });
+  const content = record('PIN', String(workerId), {
+    voice_id: voiceId ? String(voiceId) : null,
+    updated_at: Date.now(),
+  });
   const known = pinRecordIds.get(String(workerId));
   let message = known ? await channel.messages.fetch(known).catch(() => null) : null;
   if (message) await message.edit({ content }).catch(() => {});
@@ -191,14 +188,10 @@ async function persistPin(guild, workerId, voiceId) {
     if (message) pinRecordIds.set(String(workerId), message.id);
   }
   for (const [key, value] of pins) if (value === String(workerId)) pins.delete(key);
-  pins.set(String(voiceId), String(workerId));
+  if (voiceId) pins.set(String(voiceId), String(workerId));
 }
 
-function messageVoiceId(message) {
-  if (message.member?.voice?.channelId) return message.member.voice.channelId;
-  return null;
-}
-
+function messageVoiceId(message) { return message.member?.voice?.channelId || null; }
 async function reply(message, text) {
   return message.reply({ content: text, allowedMentions: { parse: [], repliedUser: false } }).catch(() => null);
 }
@@ -214,18 +207,35 @@ function mentionedWorker(message) {
   return null;
 }
 
-async function handlePin(message) {
+async function handlePinCommand(message) {
   if (!isAdmin(message.member)) return false;
   const content = clean(message.content).replace(/<@!?\d+>/g, ' ').trim();
-  if (!/^تثبيت$/u.test(content)) return false;
+  const isPin = /^تثبيت$/u.test(content);
+  const isUnpin = /^(?:إلغاء|الغاء)\s+تثبيت$/u.test(content) || /^فك\s+تثبيت$/u.test(content);
+  if (!isPin && !isUnpin) return false;
   const target = mentionedWorker(message);
   if (!target) return false;
+
+  await refreshWorkerStatuses(message.guild, true).catch(() => {});
+
+  if (isUnpin) {
+    await persistPin(message.guild, target.id, null);
+    await sendRequest(message.guild, target.id, {
+      action: 'unpin',
+      guild_id: message.guildId,
+      channel_id: message.channelId,
+      user_id: message.author.id,
+      message_id: message.id,
+    }).catch(() => {});
+    await reply(message, `تم إلغاء تثبيت <@${target.botId}> وخروجه من الروم.`);
+    return true;
+  }
+
   const voiceId = message.member?.voice?.channelId;
   if (!voiceId) {
     await reply(message, 'ادخل الروم الصوتي اللي تبي تثبت فيه البوت أول.');
     return true;
   }
-  await refreshWorkerStatuses(message.guild, true).catch(() => {});
   const status = statuses.get(String(target.id));
   if (status?.voice_id && String(status.voice_id) !== String(voiceId) && status.playing) {
     await reply(message, 'هذا Music Bot مشغول حاليًا في روم صوتي ثاني.');
@@ -248,7 +258,6 @@ async function handleMusicCommand(message) {
   if (!isAllowedCommandChannel(message)) return false;
   const command = parseMusicCommand(message.content);
   if (!command) return false;
-
   if (command.action === 'help') {
     await reply(message, helpText());
     return true;
@@ -257,21 +266,18 @@ async function handleMusicCommand(message) {
     await reply(message, 'الصوت لازم يكون من 0% إلى 200%. مثال: `ص 50`.');
     return true;
   }
-
   const voiceId = messageVoiceId(message);
   if (!voiceId) {
     await reply(message, 'ادخل روم صوتي أول عشان أقدر أحدد Music Bot لك.');
     return true;
   }
-
   await refreshWorkerStatuses(message.guild, true).catch(() => {});
-  let worker = command.action === 'play' ? freeWorkerForVoice(voiceId) : workerForVoice(voiceId);
+  const worker = command.action === 'play' ? freeWorkerForVoice(voiceId) : workerForVoice(voiceId);
   if (!worker) {
     const online = healthyWorkers().length;
     await reply(message, online ? 'كل Music Bots مستخدمين حاليًا في رومات ثانية.' : 'Music Bots مو متصلين حاليًا.');
     return true;
   }
-
   await sendRequest(message.guild, worker.id, {
     action: command.action,
     query: command.query || null,
@@ -303,7 +309,6 @@ async function handleWorkerEvent(client, message) {
     if (original) await original.reply({ content: text, allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
     else await channel.send({ content: text, allowedMentions: { parse: [] } }).catch(() => {});
   };
-
   if (payload.code === 'playing') await send(`تشغيل **${payload.title || 'الأغنية'}**`);
   else if (payload.code === 'queued') await send(`تم إضافة **${payload.title || 'الأغنية'}** إلى الانتظار.`);
   else if (payload.code === 'skipped') await send(payload.next_title ? `تم التخطي. تشغيل **${payload.next_title}**` : 'تم تخطي الأغنية.');
@@ -311,8 +316,10 @@ async function handleWorkerEvent(client, message) {
   else if (payload.code === 'volume') await send(`تم ضبط الصوت على **${payload.value}%**.`);
   else if (payload.code === 'not_playing') await send('ما فيه أغنية شغالة حاليًا.');
   else if (payload.code === 'not_found') await send('ما لقيت نتيجة مناسبة للأغنية.');
-  else if (payload.code === 'error') await send('صار خطأ أثناء تشغيل الأغنية. جرّب اسم ثاني أو رابط مباشر.');
-
+  else if (payload.code === 'error') {
+    console.warn(`[music] Worker ${payload.worker_id || '?'} playback error: ${payload.reason || 'unknown'}`);
+    await send('صار خطأ أثناء تشغيل الأغنية. جرّب اسم ثاني أو رابط مباشر.');
+  }
   await message.delete().catch(() => {});
   return true;
 }
@@ -320,7 +327,6 @@ async function handleWorkerEvent(client, message) {
 function installMusicController(client) {
   if (installed) return;
   installed = true;
-
   client.once('ready', async () => {
     for (const guild of client.guilds.cache.values()) {
       await grantWorkersDataAccess(guild).catch(() => {});
@@ -328,11 +334,9 @@ function installMusicController(client) {
     }
     console.log('[music] Controller ready.');
   });
-
   client.on('guildCreate', (guild) => {
     grantWorkersDataAccess(guild).then(() => loadState(guild)).catch(() => {});
   });
-
   client.on('messageCreate', (message) => {
     if (!message?.guildId) return;
     if (message.channel?.name === DATA_CHANNEL_NAME) {
@@ -342,15 +346,13 @@ function installMusicController(client) {
       return;
     }
     if (message.author?.bot) return;
-    Promise.resolve(handlePin(message))
+    Promise.resolve(handlePinCommand(message))
       .then((handled) => handled ? true : handleMusicCommand(message))
       .catch((error) => console.warn('[music] Command failed:', error.message));
   });
-
   client.on('messageUpdate', (_oldMessage, newMessage) => {
     if (newMessage?.channel?.name === DATA_CHANNEL_NAME) applyControlRecord(newMessage);
   });
-
   const refreshTimer = setInterval(() => {
     for (const guild of client.guilds.cache.values()) refreshWorkerStatuses(guild, true).catch(() => {});
   }, 20_000);
