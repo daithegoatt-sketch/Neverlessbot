@@ -1,5 +1,5 @@
 'use strict';
 
 // BOT_MODE=music starts only the isolated music worker process.
-// The main Neverless bot and its systems are not loaded in this mode.
-require('./directWorkerV3');
+// User commands are handled by the main Neverless bot; workers only consume the private music bus.
+require('./workerDirectBusV2');
