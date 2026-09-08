@@ -1,11 +1,9 @@
 'use strict';
 
-const { ChannelType } = require('discord.js');
-
 const CMD_CHANNEL_ID = '1538570405617598505';
 const DATA_CHANNEL_NAME = 'neverless-data';
 const PREFIX = 'NLMUSIC1';
-const HEARTBEAT_STALE_MS = 90_000;
+const HEARTBEAT_STALE_MS = 30_000;
 
 function encode(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -65,14 +63,17 @@ function parseMusicCommand(content) {
 }
 
 function isVoiceTextChannel(channel) {
-  return channel?.type === ChannelType.GuildVoice || channel?.type === ChannelType.GuildStageVoice;
+  return Boolean(channel?.isVoiceBased?.());
 }
 
 function isAllowedCommandChannel(message) {
   if (!message?.guildId) return false;
   if (message.channelId === CMD_CHANNEL_ID) return true;
-  if (!isVoiceTextChannel(message.channel)) return false;
-  return message.member?.voice?.channelId === message.channelId;
+  const activeVoiceId = message.member?.voice?.channelId || null;
+  if (!activeVoiceId) return false;
+  // Discord voice-channel chat uses the voice channel ID itself. Avoid relying on a
+  // specific ChannelType so normal, temporary and future voice-channel variants work.
+  return String(message.channelId) === String(activeVoiceId);
 }
 
 function helpText() {
