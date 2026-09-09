@@ -43,7 +43,7 @@ function parseUidCommand(message, client) {
   const text = normalizeCommand(raw);
   if (!text) return null;
 
-  const isUidWord = (token) => ['uid', 'id', 'ايدي', 'ايد'].includes(token);
+  const isUidWord = (token) => ['uid', 'id', 'ايدي', 'ايد', 'الايدي', 'الايد'].includes(token);
   const tokens = text.split(' ').filter(Boolean);
 
   const lockRequested = (
