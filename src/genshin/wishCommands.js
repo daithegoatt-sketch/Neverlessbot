@@ -4,7 +4,8 @@ const crypto = require('node:crypto');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const { whenWishStoreReady, getWishUser, mutateWishUser } = require('./wishStore');
 const { rollWishes, bannerInfo, BANNERS } = require('./wishEngine');
-const { renderWishAnimation, renderResultCard, renderSummary, renderInventory } = require('./wishRenderer');
+const { renderResultCard, renderSummary, renderInventory } = require('./wishRenderer');
+const { renderGameWishGif, animationColor, animationWaitMs } = require('./wishGameAnimation');
 
 const busyUsers = new Set();
 
@@ -38,20 +39,25 @@ async function showWish(message, count) {
 
     await message.channel.sendTyping().catch(() => {});
     try {
-      const animation = await renderWishAnimation(highest, capture);
+      const animation = await renderGameWishGif(highest, count, capture);
+      const animationEmbed = new EmbedBuilder()
+        .setColor(animationColor(highest, capture))
+        .setImage('attachment://wish-animation.gif');
       output = await message.reply({
-        files: [{ attachment: animation, name: `wish-${highest}star.mp4` }],
+        embeds: [animationEmbed],
+        files: [{ attachment: animation, name: 'wish-animation.gif' }],
         allowedMentions: { repliedUser: false },
       });
-      await new Promise((resolve) => setTimeout(resolve, 2250));
+      await new Promise((resolve) => setTimeout(resolve, animationWaitMs(capture)));
     } catch (error) {
-      console.warn(`[wish] animation fallback: ${error.message}`);
+      console.warn(`[wish] game animation fallback: ${error.message}`);
     }
 
     const firstCard = await renderResultCard(results[0]);
     const token = crypto.randomBytes(5).toString('hex');
     const payload = {
       content: count === 10 ? `**Wish x10** • ${endPity} pity` : `**Wish** • ${endPity} pity`,
+      embeds: [],
       files: [{ attachment: firstCard, name: 'wish-result-1.png' }],
       components: count === 10 ? wishButtons(token) : [],
       attachments: [],
@@ -78,6 +84,7 @@ async function showWish(message, count) {
         collector.stop('summary');
         await output.edit({
           content: `**Wish x10 • Summary** • ${endPity} pity`,
+          embeds: [],
           files: [{ attachment: summary, name: 'wish-summary.png' }],
           attachments: [], components: [],
         }).catch(() => {});
@@ -92,6 +99,7 @@ async function showWish(message, count) {
         collector.stop('done');
         await output.edit({
           content: `**Wish x10 • Summary** • ${endPity} pity`,
+          embeds: [],
           files: [{ attachment: summary, name: 'wish-summary.png' }],
           attachments: [], components: [],
         }).catch(() => {});
@@ -100,6 +108,7 @@ async function showWish(message, count) {
       const card = await renderResultCard(results[index]);
       await output.edit({
         content: `**${index + 1}/10** • ${results[index].name}`,
+        embeds: [],
         files: [{ attachment: card, name: `wish-result-${index + 1}.png` }],
         attachments: [], components: wishButtons(token),
       }).catch(() => {});
