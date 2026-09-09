@@ -20,6 +20,7 @@ const { installAchievementHall, isAchievementHallCommand } = require('./achievem
 const { installTheaterPlanner, isTheaterCommand } = require('./theaterPlanner');
 const { rewriteCharacterAliases } = require('./characterAliases');
 const { initDiscordPersistence, whenAccountStoreReady } = require('./accountStore');
+const { installUidLookup, isUidLookupCommand } = require('./uidLookup');
 const { installPublicGenshinCommands, isPublicGenshinCommand } = require('./publicCommands');
 const { installModeration } = require('../moderation');
 const { installDelegatedMessageDelete } = require('../delegatedMessageDelete');
@@ -29,6 +30,7 @@ const { installHiddenAchievements } = require('../hiddenAchievementsV3');
 const { installServerTools } = require('../serverTools');
 const { installTempVoicePersistence } = require('../tempVoicePersistence');
 const { installAutoMod } = require('../autoMod');
+const { installInteractionAckGuard } = require('../interactionAckGuard');
 const { installAntiRaid } = require('../antiRaid');
 const { installGameLobby } = require('../gameLobby');
 const { installNicknameCommand } = require('../nicknameCommand');
@@ -124,6 +126,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installNicknameCommand(this);
     installGeneralChatGreetings(this);
     installTempVoicePersistence(this);
+    installInteractionAckGuard(this);
     installAutoMod(this);
     installAntiRaid(this);
     installGameLobby(this);
@@ -133,11 +136,12 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     installTheaterPlanner(this);
     installPublicFunV2(this);
     installPublicGenshinCommands(this, ALLOWED_CHANNELS);
+    installUidLookup(this);
 
     this.on('messageCreate', (message) => {
       if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
-      // Public prefix tools, Theater and Hall commands have their own handlers and do not need this router.
-      if (isPublicGenshinCommand(message.content) || isPublicFunCommand(message.content) || isTheaterCommand(message.content) || isAchievementHallCommand(message, this)) return;
+      // Public prefix tools, Theater, Hall and global UID commands have their own handlers.
+      if (isPublicGenshinCommand(message.content) || isPublicFunCommand(message.content) || isTheaterCommand(message.content) || isAchievementHallCommand(message, this) || isUidLookupCommand(message, this)) return;
       if (!hasBotMention(message, this)) return;
 
       const wrapped = wrappedMessage(message, this);
