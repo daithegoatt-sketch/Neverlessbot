@@ -41,17 +41,18 @@ function writeLocal() {
 function parseRecord(content) {
   const value = String(content || '').trim();
   if (!value.startsWith(RECORD_PREFIX)) return null;
-  const [, discordUserId, uid, updatedAt] = value.split('|');
+  const [, discordUserId, uid, updatedAt, rawLocked] = value.split('|');
   if (!/^\d{15,22}$/.test(discordUserId || '') || !/^\d{9,10}$/.test(uid || '')) return null;
   return {
     discordUserId,
     uid,
     updatedAt: updatedAt || null,
+    uidLocked: rawLocked === '1' || rawLocked === 'true' || rawLocked === 'locked',
   };
 }
 
-function recordContent(discordUserId, uid, updatedAt) {
-  return `${RECORD_PREFIX}${discordUserId}|${uid}|${updatedAt || new Date().toISOString()}`;
+function recordContent(discordUserId, uid, updatedAt, uidLocked = false) {
+  return `${RECORD_PREFIX}${discordUserId}|${uid}|${updatedAt || new Date().toISOString()}|${uidLocked ? '1' : '0'}`;
 }
 
 async function fetchAllMessages(channel) {
@@ -100,6 +101,22 @@ async function ensureDataChannel(client, genshinChannelId) {
   return channel;
 }
 
+async function persistUserRecord(discordUserId) {
+  const id = String(discordUserId);
+  const value = state.users[id];
+  if (!discordChannel || !value?.uid) return false;
+
+  const content = recordContent(id, value.uid, value.updatedAt, Boolean(value.uidLocked));
+  const existingId = recordMessageIds.get(id);
+  let message = existingId ? await discordChannel.messages.fetch(existingId).catch(() => null) : null;
+  if (message) await message.edit(content);
+  else {
+    message = await discordChannel.send(content);
+    recordMessageIds.set(id, message.id);
+  }
+  return true;
+}
+
 async function initDiscordPersistence(client, genshinChannelId) {
   readyPromise = (async () => {
     try {
@@ -118,6 +135,7 @@ async function initDiscordPersistence(client, genshinChannelId) {
         if (!previous || currentTime >= previousTime) {
           remote[parsed.discordUserId] = {
             uid: parsed.uid,
+            uidLocked: Boolean(parsed.uidLocked),
             updatedAt: parsed.updatedAt || new Date(message.createdTimestamp).toISOString(),
             createdTimestamp: Number(message.createdTimestamp) || 0,
           };
@@ -129,13 +147,22 @@ async function initDiscordPersistence(client, genshinChannelId) {
       // kept only for users that have not been migrated to the Discord-backed store yet.
       state.users = {
         ...state.users,
-        ...Object.fromEntries(Object.entries(remote).map(([id, value]) => [id, { uid: value.uid, updatedAt: value.updatedAt }])),
+        ...Object.fromEntries(Object.entries(remote).map(([id, value]) => [id, {
+          uid: value.uid,
+          uidLocked: Boolean(value.uidLocked),
+          updatedAt: value.updatedAt,
+        }])),
       };
 
       // Migrate any local-only UID links into the private Discord data channel once.
       for (const [discordUserId, value] of Object.entries(state.users)) {
         if (!value?.uid || recordMessageIds.has(discordUserId)) continue;
-        const message = await discordChannel.send(recordContent(discordUserId, value.uid, value.updatedAt));
+        const message = await discordChannel.send(recordContent(
+          discordUserId,
+          value.uid,
+          value.updatedAt,
+          Boolean(value.uidLocked),
+        ));
         recordMessageIds.set(discordUserId, message.id);
       }
 
@@ -157,12 +184,17 @@ function getLinkedUid(discordUserId) {
   return state.users[String(discordUserId)]?.uid || null;
 }
 
+function isUidLocked(discordUserId) {
+  return Boolean(state.users[String(discordUserId)]?.uidLocked);
+}
+
 function getAllLinkedUsers() {
   return Object.entries(state.users)
     .filter(([, value]) => /^\d{9,10}$/.test(String(value?.uid || '')))
     .map(([discordUserId, value]) => ({
       discordUserId,
       uid: String(value.uid),
+      uidLocked: Boolean(value.uidLocked),
       updatedAt: value.updatedAt || null,
     }));
 }
@@ -171,19 +203,26 @@ async function linkUid(discordUserId, uid) {
   const id = String(discordUserId);
   const cleanUid = String(uid);
   const updatedAt = new Date().toISOString();
-  state.users[id] = { uid: cleanUid, updatedAt };
+  const uidLocked = Boolean(state.users[id]?.uidLocked);
+  state.users[id] = { uid: cleanUid, uidLocked, updatedAt };
   await writeLocal();
+  await persistUserRecord(id);
+  return state.users[id];
+}
 
-  if (discordChannel) {
-    const content = recordContent(id, cleanUid, updatedAt);
-    const existingId = recordMessageIds.get(id);
-    let message = existingId ? await discordChannel.messages.fetch(existingId).catch(() => null) : null;
-    if (message) await message.edit(content);
-    else {
-      message = await discordChannel.send(content);
-      recordMessageIds.set(id, message.id);
-    }
-  }
+async function setUidLocked(discordUserId, locked) {
+  const id = String(discordUserId);
+  const current = state.users[id];
+  if (!current?.uid) return null;
+
+  const updatedAt = new Date().toISOString();
+  state.users[id] = {
+    ...current,
+    uidLocked: Boolean(locked),
+    updatedAt,
+  };
+  await writeLocal();
+  await persistUserRecord(id);
   return state.users[id];
 }
 
@@ -202,8 +241,10 @@ async function unlinkUid(discordUserId) {
 
 module.exports = {
   getLinkedUid,
+  isUidLocked,
   getAllLinkedUsers,
   linkUid,
+  setUidLocked,
   unlinkUid,
   initDiscordPersistence,
   whenAccountStoreReady,
