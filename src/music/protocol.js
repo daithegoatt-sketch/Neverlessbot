@@ -70,11 +70,17 @@ function isVoiceTextChannel(channel) {
 
 function isAllowedCommandChannel(message) {
   if (!message?.guildId) return false;
-  if (message.channelId === CMD_CHANNEL_ID) return true;
+
+  // Dedicated public command room is always allowed.
+  if (String(message.channelId) === CMD_CHANNEL_ID) return true;
+
+  // Everywhere else, music commands are accepted only from the built-in chat
+  // of the exact voice channel the member is currently connected to. Temporary
+  // voice channels are normal voice-based channels too, so they are covered here
+  // without depending on any TempVoice implementation details.
   const activeVoiceId = message.member?.voice?.channelId || null;
   if (!activeVoiceId) return false;
-  // Discord voice-channel chat uses the voice channel ID itself. Avoid relying on a
-  // specific ChannelType so normal, temporary and future voice-channel variants work.
+  if (!isVoiceTextChannel(message.channel)) return false;
   return String(message.channelId) === String(activeVoiceId);
 }
 
