@@ -36,6 +36,7 @@ const { installGameLobby } = require('../gameLobby');
 const { installNicknameCommand } = require('../nicknameCommand');
 const { installGeneralChatGreetings } = require('../generalChatGreetings');
 const { installNeverlessAI } = require('../neverlessAI');
+const { installBankSystem } = require('../bankSystem');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
 const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
@@ -117,6 +118,7 @@ Client.prototype.login = function neverlessGenshinLogin(token) {
     });
 
     installServerTools(this);
+    installBankSystem(this);
     installModeration(this);
     installDelegatedMessageDelete(this);
     installActivity(this);
