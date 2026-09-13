@@ -143,13 +143,9 @@ const commands = [
     .addRoleOption((o) => o.setName('role').setDescription('الرتبة التي يسمح لها بإرسال الروابط').setRequired(true)),
   new SlashCommandBuilder()
     .setName('broadcast')
-    .setDescription('Admin: إرسال إعلان خاص لكل أعضاء السيرفر')
+    .setDescription('Admin: إرسال رسالة عادية بالخاص لكل أعضاء السيرفر')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption((o) => o.setName('message').setDescription('نص الرسالة').setMaxLength(4000).setRequired(true))
-    .addStringOption((o) => o.setName('title').setDescription('عنوان الرسالة').setMaxLength(256).setRequired(false))
-    .addStringOption((o) => o.setName('image_url').setDescription('رابط صورة اختياري').setRequired(false))
-    .addStringOption((o) => o.setName('link_url').setDescription('رابط اختياري يظهر كزر').setRequired(false))
-    .addStringOption((o) => o.setName('button_text').setDescription('اسم زر الرابط').setMaxLength(80).setRequired(false)),
+    .addStringOption((o) => o.setName('message').setDescription('نص الرسالة العادية').setMaxLength(4000).setRequired(true)),
   new SlashCommandBuilder()
     .setName('embed')
     .setDescription('Admin: إنشاء رسالة Embed في روم محدد')
