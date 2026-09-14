@@ -10,6 +10,8 @@ const {
   SALARY_CD,
   TIP_CD,
   MARKET_STEP,
+  LOAN_CD,
+  LOAN_AMOUNT,
   MAX_BET,
   PROTECTION_DURATION,
   clamp,
@@ -59,6 +61,14 @@ const BANK_EXTRA_CHANNEL_ID = '1548983198120419418';
 const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID, BANK_EXTRA_CHANNEL_ID]);
 const DATA_CHANNEL_NAME = 'neverless-data';
 const ADMIN_PERMISSION = 'Administrator';
+const STOCK_COMPANIES = Object.freeze({
+  NVRS: { code: 'NVRS', name: 'Neverless Tech', aliases: ['neverless','nvrs','نفرلس','نيفرلس'] },
+  ASTRA: { code: 'ASTRA', name: 'Astra Labs', aliases: ['astra','استرا','أسترا'] },
+  ARCANE: { code: 'ARCANE', name: 'Arcane Media', aliases: ['arcane','اركين','أركين'] },
+  SALV: { code: 'SALV', name: 'Salvation Energy', aliases: ['salvation','سلفيشن','سالفاشن'] },
+  VIRO: { code: 'VIRO', name: 'Viro Systems', aliases: ['viro','فايرو','فيرو'] },
+});
+
 
 const users = new Map();
 const userMessageIds = new Map();
@@ -221,21 +231,61 @@ async function withLocks(lockKeys, fn) {
   return take(0);
 }
 
+function normalizeMarketShape(market) {
+  if (!market.companies || typeof market.companies !== 'object') market.companies = {};
+  const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42 };
+  for (const company of Object.values(STOCK_COMPANIES)) {
+    if (!market.companies[company.code]) {
+      const seed = company.code === 'NVRS' && Number(market.price) > 0 ? Number(market.price) : seeds[company.code];
+      const oldHistory = company.code === 'NVRS' && Array.isArray(market.history) ? market.history : [seed];
+      market.companies[company.code] = { price: Math.max(5, Math.round(seed)), history: oldHistory.slice(-24) };
+    }
+  }
+  market.updatedAt = Math.max(0, Number(market.updatedAt) || Date.now());
+  market.price = market.companies.NVRS.price;
+  market.history = market.companies.NVRS.history;
+  return market;
+}
+
 function updateMarket(guildId) {
-  const market = markets.get(guildId) || newMarket();
-  const steps = Math.min(18, Math.floor(Math.max(0, Date.now() - market.updatedAt) / MARKET_STEP));
+  const market = normalizeMarketShape(markets.get(guildId) || newMarket());
+  const steps = Math.min(24, Math.floor(Math.max(0, Date.now() - market.updatedAt) / MARKET_STEP));
   for (let i = 0; i < steps; i += 1) {
-    const momentum = market.history.length > 1
-      ? (market.history.at(-1) - market.history.at(-2)) / Math.max(1, market.history.at(-2))
-      : 0;
-    const move = clamp((Math.random() * 0.15) - 0.065 + momentum * 0.12, -0.10, 0.11);
-    market.price = clamp(Math.round(market.price * (1 + move)), 25, 1200);
-    market.history.push(market.price);
-    market.history = market.history.slice(-24);
+    for (const company of Object.values(STOCK_COMPANIES)) {
+      const data = market.companies[company.code];
+      const history = data.history || [data.price];
+      const momentum = history.length > 1 ? (history.at(-1) - history.at(-2)) / Math.max(1, history.at(-2)) : 0;
+      const volatility = company.code === 'VIRO' ? 0.11 : company.code === 'ASTRA' ? 0.075 : 0.09;
+      const move = clamp((Math.random() * volatility * 2) - volatility + momentum * 0.14, -0.14, 0.16);
+      data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), 5, 500000);
+      data.history = [...history, data.price].slice(-24);
+    }
     market.updatedAt += MARKET_STEP;
   }
+  market.price = market.companies.NVRS.price;
+  market.history = market.companies.NVRS.history;
   markets.set(guildId, market);
   return { market, changed: steps > 0 };
+}
+
+function companyFrom(raw) {
+  const q = String(raw || '').trim().toLowerCase();
+  return Object.values(STOCK_COMPANIES).find(c => c.code.toLowerCase() === q || c.name.toLowerCase() === q || c.aliases.includes(q)) || null;
+}
+
+function holdingUnits(state, code) {
+  return Math.max(0, Number(state.stocks?.[code] || (code === 'NVRS' ? state.shares : 0)) || 0);
+}
+
+function setHoldingUnits(state, code, units) {
+  if (!state.stocks || typeof state.stocks !== 'object') state.stocks = {};
+  state.stocks[code] = Math.max(0, Number(units) || 0);
+  if (state.stocks[code] < 0.000001) delete state.stocks[code];
+  if (code === 'NVRS') state.shares = state.stocks[code] || 0;
+}
+
+function portfolioValue(state, market) {
+  return Object.values(STOCK_COMPANIES).reduce((sum, company) => sum + holdingUnits(state, company.code) * market.companies[company.code].price, 0);
 }
 
 function helpEmbed() {
@@ -245,10 +295,10 @@ function helpEmbed() {
     .setDescription('جميع الأموال داخل النظام افتراضية.')
     .addFields(
       { name: 'الحساب', value: 'رصيد\nتحويل\nايداع\nسحب', inline: true },
-      { name: 'الدخل', value: 'راتب\nبخشيش\nوقت', inline: true },
+      { name: 'الدخل', value: 'راتب\nبخشيش\nقرض\nوقت', inline: true },
       { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
       { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق', inline: true },
-      { name: 'السوق', value: 'سهم\nشراء سهم\nبيع سهم', inline: true },
+      { name: 'السوق', value: 'سهم\nأسهم\nبيع أسهم', inline: true },
       { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
     )
     .setFooter({ text: 'Neverless Bank' });
@@ -259,6 +309,7 @@ function cooldownEmbed(user, state) {
   const rows = [
     ['راتب', Math.max(0, state.salaryAt + SALARY_CD - now)],
     ['بخشيش', Math.max(0, state.tipAt + TIP_CD - now)],
+    ['قرض', Math.max(0, Number(state.loanAt || 0) + LOAN_CD - now)],
     ['رهان', commandCooldownLeft(state, 'bet', now)],
     ['استثمار', commandCooldownLeft(state, 'invest', now)],
     ['نرد', commandCooldownLeft(state, 'dice', now)],
@@ -313,7 +364,7 @@ async function balance(message) {
   await commitCard(
     message,
     persistPromise,
-    balanceCard(target, state, market.price),
+    balanceCard(target, { ...state, portfolioValue: portfolioValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
     `neverless-balance-${target.id}.png`,
     `<@${target.id}> — حساب Neverless Bank`,
   );
@@ -343,6 +394,27 @@ async function income(message, type) {
       rewardCard(message.author, isSalary ? 'راتب Neverless' : 'بخشيش Neverless', amount, state.balance, type),
       `${type}-${message.author.id}.png`,
       `<@${message.author.id}> — ${isSalary ? 'تم إيداع راتبك' : 'وصلتك مكافأة'}`,
+    );
+  });
+}
+
+async function loan(message) {
+  await withLock(accountLockKey(message.guildId, message.author.id), async () => {
+    const state = getUser(message.guildId, message.author.id);
+    const left = Math.max(0, Number(state.loanAt || 0) + LOAN_CD - Date.now());
+    if (left > 0) {
+      await replyInfo(message, 'القرض غير متاح', `الوقت الباقي ${formatDuration(left)}`);
+      return;
+    }
+    state.balance += LOAN_AMOUNT;
+    state.earned += LOAN_AMOUNT;
+    state.loanAt = Date.now();
+    await commitCard(
+      message,
+      persistUser(message.guild, message.author.id),
+      rewardCard(message.author, 'قرض Neverless', LOAN_AMOUNT, state.balance, 'loan'),
+      `loan-${message.author.id}.png`,
+      `<@${message.author.id}> — تم إيداع قرض ${money(LOAN_AMOUNT)}`,
     );
   });
 }
@@ -425,7 +497,8 @@ function randomOutcome(type, wager) {
     return { payout: won ? Math.floor(wager * multiplier) : 0, multiplier };
   }
   if (type === 'invest') {
-    const percent = scaledPercent(wager, -28, 38);
+    const won = Math.random() < 0.58;
+    const percent = won ? 10 + Math.floor(Math.random() * 26) : -(6 + Math.floor(Math.random() * 15));
     return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
   }
   if (type === 'dice') {
@@ -434,11 +507,12 @@ function randomOutcome(type, wager) {
     return { payout: player > bank ? wager * 2 : player === bank ? wager : 0, player, bank };
   }
   if (type === 'gamble') {
-    const roll = Math.random();
-    const multiplier = roll < 0.52 ? 0 : roll < 0.78 ? 1.5 : roll < 0.94 ? 2 : 5;
-    return { payout: Math.floor(wager * multiplier), multiplier };
+    const won = Math.random() < 0.48;
+    const multiplier = won ? 2 : 0;
+    return { payout: won ? wager * 2 : 0, multiplier };
   }
-  const percent = scaledPercent(wager, -20, 26);
+  const won = Math.random() < 0.55;
+  const percent = won ? 8 + Math.floor(Math.random() * 21) : -(7 + Math.floor(Math.random() * 16));
   return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
 }
 
@@ -900,55 +974,55 @@ async function stock(message) {
       await replyInfo(message, 'تعذر تحديث السوق', 'جرّب مرة ثانية');
       return;
     }
-    await replyImage(message, marketCard(market), `market-${message.guildId}.png`, '📈 سوق Neverless الحالي');
+    const next = Math.max(0, market.updatedAt + MARKET_STEP - Date.now());
+    await replyImage(message, marketCard(market, STOCK_COMPANIES, next), `market-${message.guildId}.png`, '📈 سوق Neverless الحالي');
   });
 }
 
-async function tradeStock(message, action, raw) {
-  await withLocks([
-    marketLockKey(message.guildId),
-    accountLockKey(message.guildId, message.author.id),
-  ], async () => {
+async function tradeStockByValue(message, action, companyRaw, amountRaw) {
+  const company = companyFrom(companyRaw);
+  if (!company) {
+    await replyInfo(message, 'شركة غير موجودة', 'اكتب سهم لعرض الشركات المتاحة');
+    return;
+  }
+  await withLocks([marketLockKey(message.guildId), accountLockKey(message.guildId, message.author.id)], async () => {
     const { market, changed } = updateMarket(message.guildId);
     const state = getUser(message.guildId, message.author.id);
-    const maxShares = action === 'buy' ? Math.floor(state.balance / market.price) : state.shares;
-    const count = parseShareAmount(raw, maxShares);
-    if (!Number.isFinite(count)) {
-      await replyInfo(
-        message,
-        'طريقة الاستخدام',
-        `${action === 'buy' ? 'شراء سهم' : 'بيع سهم'} 5 / كامل / نص / ربع • المتاح ${maxShares} سهم`,
-      );
-      return;
-    }
-
-    const total = count * market.price;
+    const price = market.companies[company.code].price;
+    const owned = holdingUnits(state, company.code);
+    let total;
+    let units;
     if (action === 'buy') {
-      if (state.balance < total) {
-        await replyInfo(message, 'رصيد غير كافٍ', `تحتاج ${money(total)} • رصيدك ${money(state.balance)}`);
+      total = parseAmount(amountRaw, state.balance);
+      if (!Number.isFinite(total)) {
+        await replyInfo(message, 'مبلغ غير صالح', `رصيدك المتاح ${money(state.balance)}`);
         return;
       }
+      units = total / price;
       state.balance -= total;
-      state.shares += count;
+      setHoldingUnits(state, company.code, owned + units);
     } else {
-      if (state.shares < count) {
-        await replyInfo(message, 'أسهم غير كافية', `لديك ${state.shares} سهم`);
+      const ownedValue = owned * price;
+      total = parseAmount(amountRaw, ownedValue);
+      if (!Number.isFinite(total)) {
+        await replyInfo(message, 'قيمة غير صالحة', `قيمة ملكيتك في ${company.name}: ${money(ownedValue)}`);
         return;
       }
-      state.shares -= count;
+      units = total / price;
+      setHoldingUnits(state, company.code, Math.max(0, owned - units));
       state.balance += total;
     }
 
-    const persistPromise = Promise.all([
+    const saved = Promise.all([
       persistUser(message.guild, message.author.id),
       changed ? persistMarket(message.guild) : Promise.resolve(true),
-    ]).then((results) => results.every(Boolean));
+    ]).then(x => x.every(Boolean));
     await commitCard(
       message,
-      persistPromise,
-      stockTradeCard(message.author, action, count, total, market.price, state),
-      `stock-${action}-${message.author.id}.png`,
-      `<@${message.author.id}> — ${action === 'buy' ? 'شراء' : 'بيع'} ${count} سهم • ${money(total)}`,
+      saved,
+      stockTradeCard(message.author, action, company, units, total, price, state, portfolioValue(state, market)),
+      `stock-${action}-${company.code}-${message.author.id}.png`,
+      `<@${message.author.id}> — ${action === 'buy' ? 'شراء' : 'بيع'} ${company.name} • ${money(total)}`,
     );
   });
 }
@@ -960,7 +1034,7 @@ async function top(message, client) {
     for (const [accountKey, state] of users) {
       if (!accountKey.startsWith(`${message.guildId}:`)) continue;
       const userId = accountKey.slice(message.guildId.length + 1);
-      rows.push({ userId, state, net: state.balance + state.vault + state.shares * market.price });
+      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: state.balance + state.vault + portfolioValue(state, market) });
     }
     rows.sort((a, b) => b.net - a.net);
 
@@ -985,7 +1059,8 @@ async function richestId(guildId, marketPrice = 100) {
   for (const [accountKey, state] of users) {
     if (!accountKey.startsWith(`${guildId}:`)) continue;
     const userId = accountKey.slice(guildId.length + 1);
-    const net = state.balance + state.vault + state.shares * marketPrice;
+    const market = normalizeMarketShape(markets.get(guildId) || newMarket());
+    const net = state.balance + state.vault + portfolioValue(state, market);
     if (!best || net > best.net) best = { userId, net };
   }
   return best?.userId || null;
@@ -1071,7 +1146,7 @@ async function handleBankMessage(message, client) {
   const text = normalized(message.content);
   if (!text) return false;
 
-  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);
+  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|قرض|loan|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);
   if (!known) return false;
 
   try {
@@ -1103,6 +1178,10 @@ async function handleBankMessage(message, client) {
       await income(message, 'tip');
       return true;
     }
+    if (/^(?:قرض|loan)$/u.test(text)) {
+      await loan(message);
+      return true;
+    }
     if (/^(?:حماية)$/u.test(text)) { await protect(message, false); return true; }
     if (/^(?:الغاء حماية|إلغاء حماية)$/u.test(text)) { await protect(message, true); return true; }
     if (/^(?:سرقة)\s+<@!?\d{15,22}>$/u.test(text)) { await rob(message); return true; }
@@ -1114,6 +1193,17 @@ async function handleBankMessage(message, client) {
       await top(message, client);
       return true;
     }
+    let stockMatch = text.match(/^(?:أسهم|اسهم|stocks?)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch) {
+      await tradeStockByValue(message, 'buy', stockMatch[1], stockMatch[2]);
+      return true;
+    }
+    stockMatch = text.match(/^(?:بيع أسهم|بيع اسهم|sell stocks?)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch) {
+      await tradeStockByValue(message, 'sell', stockMatch[1], stockMatch[2]);
+      return true;
+    }
+
     if (/^(?:سهم|اسهم|أسهم|stock)$/u.test(text)) {
       await stock(message);
       return true;
@@ -1178,13 +1268,13 @@ async function handleBankMessage(message, client) {
 
     match = text.match(/^(?:شراء سهم|شراء اسهم|شراء أسهم|buy)\s+(.+)$/u);
     if (match) {
-      await tradeStock(message, 'buy', match[1]);
+      await tradeStockByValue(message, 'buy', 'NVRS', match[1]);
       return true;
     }
 
-    match = text.match(/^(?:بيع سهم|بيع اسهم|بيع أسهم|sell)\s+(.+)$/u);
+    match = text.match(/^(?:بيع سهم|sell)\s+(.+)$/u);
     if (match) {
-      await tradeStock(message, 'sell', match[1]);
+      await tradeStockByValue(message, 'sell', 'NVRS', match[1]);
       return true;
     }
 
