@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { handleMessage: handleFriendshipMessage } = require('./friendshipSystem');
 
 const BANK_CHANNEL_ID = '1548665575247581184';
 const BANK_TEST_CHANNEL_ID = '1548665662556217384';
@@ -416,7 +417,10 @@ async function handleBankMessage(message,client) {
   } catch(e){console.error('[bank] command failed:',e);await message.reply({content:'صار خطأ مؤقت في البنك. جرّب مرة ثانية.',allowedMentions:{repliedUser:false}}).catch(()=>{});return true;}
 }
 function installBankSystem(client) {
-  if(client.__neverlessBankInstalled)return;client.__neverlessBankInstalled=true;client.on('messageCreate',(m)=>handleBankMessage(m,client).catch((e)=>console.error('[bank] unhandled:',e)));console.log(`[bank] installed for ${[...BANK_CHANNELS].join(', ')}`);
+  if(client.__neverlessBankInstalled)return;client.__neverlessBankInstalled=true;client.on('messageCreate',(m)=>{
+    handleFriendshipMessage(m).catch((e)=>console.error('[friendship] unhandled:',e));
+    handleBankMessage(m,client).catch((e)=>console.error('[bank] unhandled:',e));
+  });console.log(`[bank] installed for ${[...BANK_CHANNELS].join(', ')}`);
 }
 
 module.exports={installBankSystem,handleBankMessage,parseAmount,parseShares,parseRecord,unpackUser,commandCooldownLeft,cooldownStatus,BANK_CHANNEL_ID,BANK_TEST_CHANNEL_ID,BANK_EXTRA_CHANNEL_ID,COMMAND_CD};
