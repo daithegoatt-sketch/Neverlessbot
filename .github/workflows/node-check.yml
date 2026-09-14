@@ -28,3 +28,10 @@ jobs:
 
       - name: Syntax checks
         run: npm run check
+
+      - name: Bank and friendship checks
+        run: |
+          node --check src/bankSystem.js
+          node --check src/friendshipSystem.js
+          node src/bankSystem.test.js
+          node src/friendshipSystem.test.js
