@@ -1,6 +1,18 @@
 'use strict';
 
-const { createCanvas, loadImage } = require('@napi-rs/canvas');
+const path = require('node:path');
+const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
+
+const BANK_FONT_FAMILY = 'Noto Sans Arabic';
+for (const weight of [400, 700, 900]) {
+  try {
+    const fontPath = require.resolve(`@fontsource/noto-sans-arabic/files/noto-sans-arabic-arabic-${weight}-normal.woff2`);
+    GlobalFonts.registerFromPath(path.resolve(fontPath), BANK_FONT_FAMILY);
+  } catch (error) {
+    console.warn(`[bank] Arabic font ${weight} could not be registered: ${error.message}`);
+  }
+}
+const BANK_FONT = `'${BANK_FONT_FAMILY}', sans-serif`;
 
 const THEME = Object.freeze({
   bg0: '#040913',
@@ -86,16 +98,16 @@ function baseCard(title, subtitle, width = 1000, height = 520, accent = THEME.bl
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
   ctx.fillStyle = THEME.text;
-  ctx.font = '800 31px sans-serif';
+  ctx.font = '800 31px ${BANK_FONT}';
   ctx.fillText(title, 54, 64);
   ctx.fillStyle = THEME.muted;
-  ctx.font = '500 16px sans-serif';
+  ctx.font = '500 16px ${BANK_FONT}';
   ctx.fillText(subtitle, 55, 91);
 
   fillRoundRect(ctx, width - 188, 40, 130, 36, 18, 'rgba(90,168,255,.10)', 'rgba(90,168,255,.38)');
   ctx.textAlign = 'center';
   ctx.fillStyle = THEME.silver;
-  ctx.font = '700 13px sans-serif';
+  ctx.font = '700 13px ${BANK_FONT}';
   ctx.fillText('NEVERLESS', width - 123, 63);
   ctx.textAlign = 'left';
 
@@ -111,14 +123,14 @@ function baseCard(title, subtitle, width = 1000, height = 520, accent = THEME.bl
 function fitText(ctx, text, maxWidth, startSize, minSize = 14, weight = 700) {
   let size = startSize;
   while (size > minSize) {
-    ctx.font = `${weight} ${size}px sans-serif`;
+    ctx.font = `${weight} ${size}px ${BANK_FONT}`;
     if (ctx.measureText(String(text)).width <= maxWidth) return size;
     size -= 1;
   }
   return minSize;
 }
 
-function rtlText(ctx, text, x, y, font = '700 20px sans-serif', color = THEME.text) {
+function rtlText(ctx, text, x, y, font = '700 20px ${BANK_FONT}', color = THEME.text) {
   ctx.save();
   ctx.textAlign = 'right';
   ctx.font = font;
@@ -127,7 +139,7 @@ function rtlText(ctx, text, x, y, font = '700 20px sans-serif', color = THEME.te
   ctx.restore();
 }
 
-function centerText(ctx, text, x, y, font = '700 20px sans-serif', color = THEME.text) {
+function centerText(ctx, text, x, y, font = '700 20px ${BANK_FONT}', color = THEME.text) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.font = font;
@@ -138,8 +150,8 @@ function centerText(ctx, text, x, y, font = '700 20px sans-serif', color = THEME
 
 function metric(ctx, x, y, w, h, label, value, color = THEME.text) {
   fillRoundRect(ctx, x, y, w, h, 16, 'rgba(12,24,39,.90)', THEME.strokeSoft, 1.5);
-  rtlText(ctx, label, x + w - 18, y + 26, '600 14px sans-serif', THEME.muted);
-  rtlText(ctx, value, x + w - 18, y + 60, '800 25px sans-serif', color);
+  rtlText(ctx, label, x + w - 18, y + 26, '600 14px ${BANK_FONT}', THEME.muted);
+  rtlText(ctx, value, x + w - 18, y + 60, '800 25px ${BANK_FONT}', color);
 }
 
 async function loadAvatarImage(user) {
@@ -188,7 +200,7 @@ function drawAvatarImage(ctx, image, x, y, size, ring = THEME.blue) {
     ctx.fillRect(x, y, size, size);
     ctx.textAlign = 'center';
     ctx.fillStyle = THEME.silver;
-    ctx.font = `800 ${Math.round(size * 0.36)}px sans-serif`;
+    ctx.font = `800 ${Math.round(size * 0.36)}px ${BANK_FONT}`;
     ctx.fillText('N', x + size / 2, y + size * 0.64);
   }
   ctx.restore();
@@ -212,7 +224,7 @@ function drawStatusPill(ctx, x, y, text, good) {
   ctx.arc(x + 22, y + 18, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.textAlign = 'center';
-  ctx.font = '700 14px sans-serif';
+  ctx.font = '700 14px ${BANK_FONT}';
   ctx.fillText(text, x + 87, y + 23);
   ctx.textAlign = 'left';
 }
