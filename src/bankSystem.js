@@ -11,8 +11,6 @@ const {
   TIP_CD,
   MARKET_STEP,
   MAX_BET,
-  START_BALANCE,
-  ROB_CD,
   PROTECTION_DURATION,
   clamp,
   newUser,
@@ -34,7 +32,6 @@ const {
   cooldownStatus,
 } = require('./bankUtils');
 const {
-  helpCard,
   balanceCard,
   rewardCard,
   vaultCard,
@@ -42,7 +39,6 @@ const {
   marketCard,
   stockTradeCard,
   topCard,
-  statusCard,
   infoCard,
   economyEventCard,
 } = require('./bankVisualCore');
@@ -969,11 +965,11 @@ async function handleBankMessage(message, client) {
     }
     if (/^(?:حماية)$/u.test(text)) { await protect(message, false); return true; }
     if (/^(?:الغاء حماية|إلغاء حماية)$/u.test(text)) { await protect(message, true); return true; }
-    if (/^(?:سرقة)\\s+<@!?\\d{15,22}>$/u.test(text)) { await rob(message); return true; }
-    let adminMatch = text.match(/^زيده\\s+([^ ]+)\\s+<@!?\\d{15,22}>$/u);
+    if (/^(?:سرقة)\s+<@!?\d{15,22}>$/u.test(text)) { await rob(message); return true; }
+    let adminMatch = text.match(/^زيده\s+([^ ]+)\s+<@!?\d{15,22}>$/u);
     if (adminMatch) { await adminMoney(message, 'add', adminMatch[1]); return true; }
     if (/^تصفير كامل السيرفر$/u.test(text)) { await adminMoney(message, 'reset-server', ''); return true; }
-    if (/^تصفير كامل\\s+<@!?\\d{15,22}>$/u.test(text)) { await adminMoney(message, 'reset-user', ''); return true; }
+    if (/^تصفير كامل\s+<@!?\d{15,22}>$/u.test(text)) { await adminMoney(message, 'reset-user', ''); return true; }
     if (/^(?:توب|top)$/u.test(text)) {
       await top(message, client);
       return true;
