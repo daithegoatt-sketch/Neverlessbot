@@ -409,31 +409,33 @@ async function applyManualWarning(interaction, member, reason) {
   const key = warningKey(interaction.guildId, member.id, 'manual');
   const previousCount = warningCounts.get(key) || 0;
   const next = offenseAction(previousCount);
-  const actorMention = `<@${interaction.user.id}>`;
   const memberMention = `<@${member.id}>`;
-  const allowedMentions = { users: [member.id, interaction.user.id], roles: [] };
+  const publicMentions = { users: [member.id], roles: [] };
 
   if (next.action === 'warning1' || next.action === 'warning2') {
     warningCounts.set(key, next.nextCount);
     await persistWarning(interaction.guild, member.id, 'manual', next.nextCount).catch(() => false);
-    await interaction.reply({
+
+    await interaction.channel?.send({
       content: [
         `${memberMention} ${next.action === 'warning1' ? 'إنذار أول' : 'إنذار ثاني'}`,
         `**السبب:** ${reason}`,
-        `**بواسطة:** ${actorMention}`,
       ].join('\n'),
-      allowedMentions,
-    });
+      allowedMentions: publicMentions,
+    }).catch(() => {});
+
+    await interaction.editReply({
+      content: `تم إرسال ${next.action === 'warning1' ? 'الإنذار الأول' : 'الإنذار الثاني'} إلى ${member.user.tag}.`,
+    }).catch(() => {});
     return true;
   }
 
   if (!member.moderatable) {
     warningCounts.set(key, 2);
     await persistWarning(interaction.guild, member.id, 'manual', 2).catch(() => false);
-    await interaction.reply({
+    await interaction.editReply({
       content: 'العضو وصل لمرحلة الميوت، لكن البوت لا يستطيع عمل Timeout له بسبب ترتيب الرتب. بقي لديه إنذاران مسجلان.',
-      ephemeral: true,
-    });
+    }).catch(() => {});
     return true;
   }
 
@@ -441,21 +443,23 @@ async function applyManualWarning(interaction, member, reason) {
     await member.timeout(MUTE_MS, `Neverless manual warning by ${interaction.user.tag}: ${reason}`);
     warningCounts.delete(key);
     await persistWarning(interaction.guild, member.id, 'manual', 0).catch(() => false);
-    await interaction.reply({
+
+    await interaction.channel?.send({
       content: [
         `${memberMention} mute 5min`,
         `**السبب:** ${reason}`,
-        `**بواسطة:** ${actorMention}`,
       ].join('\n'),
-      allowedMentions,
-    });
+      allowedMentions: publicMentions,
+    }).catch(() => {});
+
+    await interaction.editReply({
+      content: `تم تطبيق الميوت لمدة 5 دقائق على ${member.user.tag} بعد الإنذار الثالث.`,
+    }).catch(() => {});
   } catch (error) {
     warningCounts.set(key, 2);
     await persistWarning(interaction.guild, member.id, 'manual', 2).catch(() => false);
     console.warn(`[automod] Manual warning timeout failed for ${member.user?.tag || member.id}: ${error.message}`);
-    if (!interaction.replied) {
-      await interaction.reply({ content: 'تعذر تطبيق الميوت، وبقي للعضو إنذاران مسجلان.', ephemeral: true });
-    }
+    await interaction.editReply({ content: 'تعذر تطبيق الميوت، وبقي للعضو إنذاران مسجلان.' }).catch(() => {});
   }
   return true;
 }
@@ -491,6 +495,7 @@ async function handleManualWarn(interaction) {
   }
 
   const reason = interaction.options.getString('reason', true).trim();
+  await interaction.deferReply({ ephemeral: true });
   return queueManualWarning(interaction, member, reason);
 }
 
@@ -499,6 +504,23 @@ async function handleInteraction(interaction) {
 
   if (interaction.commandName === 'warn') {
     return handleManualWarn(interaction);
+  }
+
+  if (interaction.commandName === 'removewarn') {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'هذا الأمر للـAdministrator فقط.', ephemeral: true });
+      return true;
+    }
+    const target = interaction.options.getUser('member', true);
+    const removed = await clearWarnings(interaction.guild, target.id, 'all');
+    const total = removed.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    await interaction.reply({
+      content: total > 0
+        ? `تم حذف جميع إنذارات ${target.tag} اليدوية والتلقائية بالكامل.`
+        : `لا توجد إنذارات نشطة على ${target.tag}.`,
+      ephemeral: true,
+    });
+    return true;
   }
 
   if (interaction.commandName !== 'automod') return false;
@@ -561,7 +583,7 @@ async function handleInteraction(interaction) {
     const labels = active.map((row) => `${warningTypeLabel(row.type)}: ${row.count}`).join(' • ');
     await interaction.reply({
       content: `تمت إزالة إنذارات <@${target.id}> — ${labels}.`,
-      ephemeral: false,
+      ephemeral: true,
       allowedMentions: { users: [] },
     });
     return true;
