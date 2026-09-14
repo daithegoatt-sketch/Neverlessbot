@@ -7,7 +7,9 @@ const COMMAND_CD = 5 * 60 * 1000;
 const SALARY_CD = COMMAND_CD;
 const TIP_CD = COMMAND_CD;
 const MARKET_STEP = 5 * 60 * 1000;
-const MAX_BET = 100000;
+const MAX_BET = 1000000000;
+const ROB_CD = 5 * 60 * 1000;
+const PROTECTION_DURATION = 60 * 60 * 1000;
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
@@ -23,6 +25,8 @@ function newUser() {
     games: 0,
     wins: 0,
     cooldowns: {},
+    protectionUntil: 0,
+    protectionAt: 0,
   };
 }
 
@@ -38,6 +42,8 @@ function packUser(s) {
     g: s.games,
     w: s.wins,
     c: s.cooldowns || {},
+    pu: s.protectionUntil || 0,
+    pa: s.protectionAt || 0,
   };
 }
 
@@ -52,6 +58,8 @@ function unpackUser(x = {}) {
     lost: Math.max(0, Math.floor(Number(x.l ?? 0) || 0)),
     games: Math.max(0, Math.floor(Number(x.g ?? 0) || 0)),
     wins: Math.max(0, Math.floor(Number(x.w ?? 0) || 0)),
+    protectionUntil: Math.max(0, Number(x.pu ?? 0) || 0),
+    protectionAt: Math.max(0, Number(x.pa ?? 0) || 0),
     cooldowns: x.c && typeof x.c === 'object' && !Array.isArray(x.c)
       ? Object.fromEntries(
         Object.entries(x.c)
@@ -192,6 +200,8 @@ module.exports = {
   TIP_CD,
   MARKET_STEP,
   MAX_BET,
+  ROB_CD,
+  PROTECTION_DURATION,
   clamp,
   newUser,
   packUser,
