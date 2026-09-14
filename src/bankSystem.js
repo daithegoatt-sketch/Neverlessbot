@@ -473,7 +473,7 @@ async function moneyGame(message, type, raw) {
     let cardPromise;
     if (type === 'invest') cardPromise = investmentCard(message.author, wager, out, net, state.balance);
     else if (type === 'bet') cardPromise = betCard(message.author, wager, out, net, state.balance);
-    else if (type === 'dice') cardPromise = diceCard(message.author, wager, out, net, state.balance);
+    else if (type === 'dice') cardPromise = diceCard(message.author, message.client.user, wager, out.player, out.bank, net > 0 ? 'win' : net < 0 ? 'loss' : 'draw', state.balance);
     else if (type === 'gamble') cardPromise = gambleCard(message.author, wager, out, net, state.balance);
     else cardPromise = tradeGameCard(message.author, wager, out, net, state.balance);
 
@@ -485,6 +485,146 @@ async function moneyGame(message, type, raw) {
       `${type}-${message.author.id}-${Date.now()}.png`,
       `<@${message.author.id}> — ${names[type]} • ${resultText}`,
     );
+  });
+}
+
+function diceChallengeButtons(nonce, disabled = false) {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`nlbank:dice:${nonce}:accept`)
+      .setLabel('قبول')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`nlbank:dice:${nonce}:reject`)
+      .setLabel('رفض')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+  )];
+}
+
+async function diceChallenge(message, raw) {
+  const target = message.mentions.users.first();
+  if (!target || target.bot || target.id === message.author.id) {
+    await replyInfo(message, 'تحدي غير صالح', 'اختر عضو مختلف للتحدي');
+    return;
+  }
+
+  const amountRaw = String(raw).replace(/<@!?\d{15,22}>/g, '').trim();
+  const challengerState = getUser(message.guildId, message.author.id);
+  const wager = parseAmount(amountRaw, Math.min(challengerState.balance, MAX_BET));
+  if (!Number.isFinite(wager)) {
+    await replyInfo(message, 'مبلغ غير صالح', `رصيدك المتاح ${money(challengerState.balance)}`);
+    return;
+  }
+
+  const nonce = crypto.randomBytes(5).toString('hex');
+  const sent = await message.reply({
+    content: `🎲 <@${target.id}> لديك تحدي نرد من <@${message.author.id}> بقيمة **${money(wager)}**`,
+    components: diceChallengeButtons(nonce),
+    allowedMentions: { repliedUser: false, users: [target.id, message.author.id] },
+  });
+
+  const collector = sent.createMessageComponentCollector({ time: 45_000 });
+
+  collector.on('collect', async (interaction) => {
+    if (interaction.user.id !== target.id) {
+      await interaction.reply({ content: 'فقط العضو المطلوب يستطيع قبول أو رفض التحدي.', ephemeral: true }).catch(() => {});
+      return;
+    }
+
+    collector.stop('done');
+    const accepted = interaction.customId.endsWith(':accept');
+    await interaction.deferUpdate().catch(() => {});
+
+    if (!accepted) {
+      await sent.edit({
+        content: `❌ <@${target.id}> رفض تحدي النرد من <@${message.author.id}>.`,
+        components: diceChallengeButtons(nonce, true),
+        allowedMentions: { users: [target.id, message.author.id] },
+      }).catch(() => {});
+      return;
+    }
+
+    let result;
+    await withLocks([
+      accountLockKey(message.guildId, message.author.id),
+      accountLockKey(message.guildId, target.id),
+    ], async () => {
+      const a = getUser(message.guildId, message.author.id);
+      const b = getUser(message.guildId, target.id);
+      const aCd = commandCooldownLeft(a, 'dice');
+      const bCd = commandCooldownLeft(b, 'dice');
+      if (aCd > 0 || bCd > 0) {
+        result = { error: `أمر النرد غير متاح حالياً • ${aCd > 0 ? formatDuration(aCd) : formatDuration(bCd)}` };
+        return;
+      }
+      if (a.balance < wager || b.balance < wager) {
+        result = { error: 'أحد الطرفين لا يملك المبلغ المطلوب حالياً.' };
+        return;
+      }
+
+      let aRoll = 1 + Math.floor(Math.random() * 6);
+      let bRoll = 1 + Math.floor(Math.random() * 6);
+      while (aRoll === bRoll) {
+        aRoll = 1 + Math.floor(Math.random() * 6);
+        bRoll = 1 + Math.floor(Math.random() * 6);
+      }
+
+      const aWon = aRoll > bRoll;
+      a.balance += aWon ? wager : -wager;
+      b.balance += aWon ? -wager : wager;
+      a.games += 1; b.games += 1;
+      if (aWon) {
+        a.wins += 1; a.earned += wager; b.lost += wager;
+      } else {
+        b.wins += 1; b.earned += wager; a.lost += wager;
+      }
+      setCommandCooldown(a, 'dice');
+      setCommandCooldown(b, 'dice');
+
+      const saved = await Promise.all([
+        persistUser(message.guild, message.author.id),
+        persistUser(message.guild, target.id),
+      ]);
+
+      result = saved.every(Boolean)
+        ? { aRoll, bRoll, aWon, aBalance: a.balance, bBalance: b.balance }
+        : { error: 'تعذر حفظ نتيجة التحدي.' };
+    });
+
+    if (result.error) {
+      await sent.edit({ content: result.error, components: diceChallengeButtons(nonce, true) }).catch(() => {});
+      return;
+    }
+
+    const winner = result.aWon ? message.author : target;
+    const image = await diceCard(
+      message.author,
+      target,
+      wager,
+      result.aRoll,
+      result.bRoll,
+      result.aWon ? 'win' : 'loss',
+      result.aBalance,
+    );
+
+    await sent.edit({
+      content: `🎲 الفائز <@${winner.id}> • ربح **${money(wager)}**`,
+      files: [{ attachment: image, name: `dice-duel-${nonce}.png` }],
+      attachments: [],
+      components: diceChallengeButtons(nonce, true),
+      allowedMentions: { users: [winner.id] },
+    }).catch((error) => console.error('[bank] dice duel edit failed:', error));
+  });
+
+  collector.on('end', async (_, reason) => {
+    if (reason !== 'done') {
+      await sent.edit({
+        content: 'انتهى وقت قبول تحدي النرد.',
+        components: diceChallengeButtons(nonce, true),
+      }).catch(() => {});
+    }
   });
 }
 
@@ -997,10 +1137,16 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
+    match = text.match(/^(?:نرد|dice)\s+(.+)$/u);
+    if (match) {
+      if (message.mentions.users.size) await diceChallenge(message, match[1]);
+      else await moneyGame(message, 'dice', match[1]);
+      return true;
+    }
+
     const moneyGames = [
       [/^(?:رهان|bet)\s+(.+)$/u, 'bet'],
       [/^(?:استثمار|invest)\s+(.+)$/u, 'invest'],
-      [/^(?:نرد|dice)\s+(.+)$/u, 'dice'],
       [/^(?:قمار|gamble)\s+(.+)$/u, 'gamble'],
       [/^(?:تداول|تدوال|trade)\s+(.+)$/u, 'trade'],
     ];
