@@ -60,7 +60,8 @@ async function balanceCard(user, state, price) {
   const { canvas, ctx } = baseCard('NEVERLESS BANK', 'بطاقة الحساب', 1100, 585, THEME.blue);
   drawAvatarImage(ctx, await loadAvatarImage(user), 64, 154, 158, THEME.cyan);
 
-  const portfolio = state.shares * price;
+  const portfolio = Number(state.portfolioValue ?? (state.shares * price)) || 0;
+  const positions = Math.max(0, Number(state.stockPositions ?? (state.shares > 0 ? 1 : 0)) || 0);
   const net = state.balance + state.vault + portfolio;
   const rate = state.games ? Math.round((state.wins / state.games) * 100) : 0;
 
@@ -82,12 +83,12 @@ async function balanceCard(user, state, price) {
 
   metric(ctx, 360, 150, 315, 92, 'الرصيد المتاح', money(state.balance), THEME.green);
   metric(ctx, 710, 150, 315, 92, 'الخزنة', money(state.vault), THEME.cyan);
-  metric(ctx, 360, 265, 315, 92, 'الأسهم', `${state.shares} • ${money(portfolio)}`, THEME.gold);
+  metric(ctx, 360, 265, 315, 92, 'محفظة الأسهم', `${positions} شركات • ${money(portfolio)}`, THEME.gold);
   metric(ctx, 710, 265, 315, 92, 'نسبة الفوز', `${rate}% • ${state.wins}/${state.games}`, THEME.silver);
   metric(ctx, 360, 380, 315, 92, 'إجمالي الأرباح', money(state.earned), THEME.green);
   metric(ctx, 710, 380, 315, 92, 'إجمالي الخسائر', money(state.lost), THEME.red);
 
-  rtlText(ctx, `سعر سهم Neverless: ${money(price)}`, 1025, 530, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  rtlText(ctx, `سعر NVRS الحالي: ${money(price)}`, 1025, 530, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
@@ -243,7 +244,7 @@ async function topCard(rows, price) {
     ctx.fillText(playerName(row.user), 238, y + 43);
     ctx.fillStyle = THEME.muted;
     ctx.font = '500 14px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`${row.state.shares} shares • vault ${money(row.state.vault)}`, 238, y + 71);
+    ctx.fillText(`${row.positions || 0} stocks • portfolio ${money(row.portfolio || 0)}`, 238, y + 71);
     ctx.textAlign = 'right';
     ctx.fillStyle = i === 0 ? THEME.gold : THEME.green;
     ctx.font = '900 25px "Noto Sans Arabic", "Neverless Latin"';
