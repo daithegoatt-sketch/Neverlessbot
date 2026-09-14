@@ -87,7 +87,16 @@ function newMarket() {
 }
 
 function packMarket(m) {
-  return { p: m.price, h: m.history.slice(-24), u: m.updatedAt };
+  const companies = {};
+  if (m.companies && typeof m.companies === 'object') {
+    for (const [code, data] of Object.entries(m.companies)) {
+      companies[code] = {
+        p: Math.max(1, Math.round(Number(data.price) || 1)),
+        h: Array.isArray(data.history) ? data.history.slice(-24).map((n) => Math.max(1, Math.round(Number(n) || 1))) : [],
+      };
+    }
+  }
+  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies };
 }
 
 function unpackMarket(x = {}) {
@@ -95,7 +104,19 @@ function unpackMarket(x = {}) {
   const history = Array.isArray(x.h) && x.h.length
     ? x.h.map((n) => clamp(Math.round(Number(n) || price), 25, 1200)).slice(-24)
     : [price];
-  return { price, history, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
+  const companies = {};
+  if (x.c && typeof x.c === 'object' && !Array.isArray(x.c)) {
+    for (const [code, data] of Object.entries(x.c)) {
+      const p = Math.max(1, Math.round(Number(data?.p) || 1));
+      companies[String(code).toUpperCase()] = {
+        price: p,
+        history: Array.isArray(data?.h) && data.h.length
+          ? data.h.map((n) => Math.max(1, Math.round(Number(n) || p))).slice(-24)
+          : [p],
+      };
+    }
+  }
+  return { price, history, companies, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
 }
 
 function enc(value) {
