@@ -1439,7 +1439,12 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
     let total;
     let units;
     if (action === 'buy') {
-      total = parseAmount(amountRaw, state.balance);
+      const available = Math.max(0, Math.floor(Number(state.balance) || 0));
+      if (available <= 0) {
+        await replyInfo(message, 'رصيد غير كافٍ', 'رصيدك المتاح للشراء هو $0');
+        return;
+      }
+      total = parseAmount(amountRaw, available);
       if (!Number.isFinite(total)) {
         await replyUsage(message, `شراء ${company.code}`, [`شراء ${company.code} كامل`, `شراء ${company.code} نص`, `شراء ${company.code} ربع`, `شراء ${company.code} 5000`]);
         return;
@@ -1658,6 +1663,17 @@ async function handleBankMessage(message, client) {
     if (explicitStock) { await tradeStockByValue(message,'buy',explicitStock[1],explicitStock[2]); return true; }
     explicitStock = text.match(/^(?:بيع سهم|بيع اسهم|بيع أسهم)\s+([^\s]+)\s+(.+)$/u);
     if (explicitStock) { await tradeStockByValue(message,'sell',explicitStock[1],explicitStock[2]); return true; }
+
+    let reverseStock = text.match(/^(?:شراء|buy)\s+(كامل|الكل|كل|نص|نصف|ربع|full|all|half|quarter|[0-9٠-٩۰-۹.,]+)\s+([^\s]+)$/u);
+    if (reverseStock && companyFrom(reverseStock[2])) {
+      await tradeStockByValue(message, 'buy', reverseStock[2], reverseStock[1]);
+      return true;
+    }
+    reverseStock = text.match(/^(?:بيع|sell)\s+(كامل|الكل|كل|نص|نصف|ربع|full|all|half|quarter|[0-9٠-٩۰-۹.,]+)\s+([^\s]+)$/u);
+    if (reverseStock && companyFrom(reverseStock[2])) {
+      await tradeStockByValue(message, 'sell', reverseStock[2], reverseStock[1]);
+      return true;
+    }
 
     let stockMatch = text.match(/^(?:شراء|buy)\s+([^\s]+)\s+(.+)$/u);
     if (stockMatch && companyFrom(stockMatch[1])) {

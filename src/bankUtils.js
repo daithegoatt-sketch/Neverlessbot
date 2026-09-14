@@ -197,7 +197,12 @@ function digits(value) {
 }
 
 function parseAmount(raw, max = Infinity) {
-  let text = digits(raw).trim().toLowerCase().replace(/[$,]/g, '');
+  let text = digits(raw)
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[$,،]/g, '')
+    .replace(/\s+/g, ' ');
   const available = Number.isFinite(Number(max)) ? Math.max(0, Math.floor(Number(max))) : Infinity;
   if (available <= 0) return NaN;
 
