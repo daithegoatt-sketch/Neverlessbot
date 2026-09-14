@@ -255,53 +255,88 @@ function usageCard(command, lines) {
 }
 
 function propertiesCard(state, market, companies, catalog, stockValue, assetValue) {
-  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ملخص ممتلكاتك', 1100, 1120, THEME.gold);
-
   const sections = [
-    { key:'STOCK', title:'الأسهم', accent:THEME.cyan, rows:Object.values(companies)
+    { title:'الأسهم', accent:THEME.cyan, rows:Object.values(companies)
       .filter((company)=>Number(state.stocks?.[company.code]||0)>0)
       .map((company)=>({
         name:company.code,
         qty:`${Number(state.stocks[company.code]).toFixed(2)} سهم`,
+        price:money(market.companies[company.code].price),
         value:money(Number(state.stocks[company.code]) * market.companies[company.code].price),
       })) },
-    { key:'PROPERTY', title:'العقارات', accent:THEME.green, rows:Object.values(catalog)
+    { title:'العقارات', accent:THEME.green, rows:Object.values(catalog)
       .filter((asset)=>asset.category==='PROPERTY' && Number(state.assets?.[asset.code]||0)>0)
-      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
-    { key:'CAR', title:'السيارات', accent:THEME.blue, rows:Object.values(catalog)
+      .map((asset)=>({
+        name:asset.name,
+        qty:`x${Math.round(Number(state.assets[asset.code]))}`,
+        price:money(market.assets[asset.code].price),
+        value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price),
+      })) },
+    { title:'السيارات', accent:THEME.blue, rows:Object.values(catalog)
       .filter((asset)=>asset.category==='CAR' && Number(state.assets?.[asset.code]||0)>0)
-      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
-    { key:'PLANE', title:'الطائرات', accent:THEME.silver, rows:Object.values(catalog)
+      .map((asset)=>({
+        name:asset.name,
+        qty:`x${Math.round(Number(state.assets[asset.code]))}`,
+        price:money(market.assets[asset.code].price),
+        value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price),
+      })) },
+    { title:'الطائرات', accent:THEME.silver, rows:Object.values(catalog)
       .filter((asset)=>asset.category==='PLANE' && Number(state.assets?.[asset.code]||0)>0)
-      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
-    { key:'GOLD', title:'الذهب', accent:THEME.gold, rows:Number(state.assets?.GOLD||0)>0 ? [{
+      .map((asset)=>({
+        name:asset.name,
+        qty:`x${Math.round(Number(state.assets[asset.code]))}`,
+        price:money(market.assets[asset.code].price),
+        value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price),
+      })) },
+    { title:'الذهب', accent:THEME.gold, rows:Number(state.assets?.GOLD||0)>0 ? [{
       name:'ذهب',
       qty:`${Number(state.assets.GOLD).toFixed(3)} oz`,
+      price:money(market.assets.GOLD.price),
       value:money(Number(state.assets.GOLD) * market.assets.GOLD.price),
     }] : [] },
   ];
 
+  const normalized = sections.map((section)=>({
+    ...section,
+    rows: section.rows.length ? section.rows : [{name:'لا يوجد',qty:'-',price:'-',value:'-'}],
+  }));
+  const sectionHeights = normalized.map((section)=>60 + section.rows.length * 54);
+  const height = 175 + sectionHeights.reduce((sum,h)=>sum+h,0) + (normalized.length-1)*18 + 105;
+  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'محفظة ممتلكاتك', 1100, height, THEME.gold);
+
   let y = 145;
-  for (const section of sections) {
-    const rows = section.rows.length ? section.rows : [{name:'لا يوجد',qty:'-',value:'-'}];
-    const boxH = 60 + rows.length * 54;
+  for (let sIndex=0; sIndex<normalized.length; sIndex+=1) {
+    const section = normalized[sIndex];
+    const boxH = sectionHeights[sIndex];
     fillRoundRect(ctx, 55, y, 990, boxH, 20, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
 
     ctx.fillStyle = section.accent;
     ctx.font = '900 23px "Noto Sans Arabic", "Neverless Latin"';
     ctx.fillText(section.title, 82, y + 36);
 
-    let yy = y + 74;
-    for (const row of rows) {
+    ctx.fillStyle = THEME.muted;
+    ctx.font = '600 12px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText('النوع', 90, y + 57);
+    ctx.fillText('الكمية', 380, y + 57);
+    ctx.fillText('السعر الحالي', 580, y + 57);
+    ctx.textAlign = 'right';
+    ctx.fillText('القيمة', 985, y + 57);
+    ctx.textAlign = 'left';
+
+    let yy = y + 88;
+    for (const row of section.rows) {
       ctx.fillStyle = THEME.text;
-      ctx.font = '700 17px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.font = '700 16px "Noto Sans Arabic", "Neverless Latin"';
       ctx.fillText(row.name, 90, yy);
-      ctx.fillStyle = THEME.muted;
+      ctx.fillStyle = THEME.silver;
       ctx.font = '600 14px "Noto Sans Arabic", "Neverless Latin"';
-      ctx.fillText(row.qty, 420, yy);
+      ctx.fillText(row.qty, 380, yy);
+      ctx.fillStyle = THEME.cyan;
+      ctx.font = '700 14px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.fillText(row.price, 580, yy);
       ctx.textAlign = 'right';
       ctx.fillStyle = row.value === '-' ? THEME.muted : THEME.green;
-      ctx.font = '800 18px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.font = '800 17px "Noto Sans Arabic", "Neverless Latin"';
       ctx.fillText(row.value, 985, yy);
       ctx.textAlign = 'left';
       yy += 54;
@@ -310,8 +345,8 @@ function propertiesCard(state, market, companies, catalog, stockValue, assetValu
   }
 
   const total = stockValue + assetValue;
-  fillRoundRect(ctx, 230, 1030, 640, 62, 20, 'rgba(21,70,53,.26)', THEME.green, 1.5);
-  centerText(ctx, `إجمالي قيمة ممتلكاتك ${money(total)}`, 550, 1070, '900 23px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
+  fillRoundRect(ctx, 225, height - 88, 650, 60, 20, 'rgba(21,70,53,.26)', THEME.green, 1.5);
+  centerText(ctx, `إجمالي قيمة ممتلكاتك ${money(total)}`, 550, height - 50, '900 23px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
   return canvas.toBuffer('image/png');
 }
 
