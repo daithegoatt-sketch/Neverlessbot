@@ -255,6 +255,8 @@ async function withLocks(lockKeys, fn) {
 
 function normalizeMarketShape(market) {
   if (!market.companies || typeof market.companies !== 'object') market.companies = {};
+  delete market.companies.VVIP;
+  delete market.vvipLeaderId;
   const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42 };
   for (const company of Object.values(STOCK_COMPANIES)) {
     if (!market.companies[company.code]) {
@@ -303,7 +305,9 @@ function updateMarket(guildId) {
     }
     for (const asset of Object.values(ASSET_CATALOG)) {
       const data = market.assets[asset.code];
-      const move = marketMove() * (asset.code === 'GOLD' ? 0.55 : 0.8);
+      const move = asset.code === 'GOLD'
+        ? ((Math.random() < 0.95 ? 0.0015 + Math.random() * 0.0065 : 0.008 + Math.random() * 0.012) * (Math.random() < 0.5 ? -1 : 1))
+        : marketMove() * 0.8;
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
       data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
@@ -380,7 +384,7 @@ async function tradeAsset(message, action, raw) {
   let asset = assetFrom(text);
 
   if (!asset) {
-    const m = text.match(/^(.*?)(?:\s+([0-9٠-٩۰-۹.,]+))$/u);
+    const m = text.match(/^(.*?)(?:\s+([0-9٠-٩۰-۹.,]+|كامل|الكل|نص|نصف|ربع|full|all|half|quarter))$/u);
     if (m) {
       asset = assetFrom(m[1]);
       amountRaw = m[2];
@@ -488,7 +492,7 @@ function cooldownEmbed(user, state) {
 
 async function replyImage(message, buffer, name, content = null, components = []) {
   return message.reply({
-    content: content || undefined,
+    content: content || `<@${message.author.id}>`,
     files: [{ attachment: buffer, name }],
     components,
     allowedMentions: { repliedUser: true, users: [message.author.id] },
@@ -1560,6 +1564,7 @@ async function handleBankMessage(message, client) {
 
     if (/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)) {
       await message.reply({
+        content: `<@${message.author.id}>`,
         embeds: [helpEmbed()],
         allowedMentions: { repliedUser: true, users: [message.author.id] },
       });
@@ -1571,6 +1576,7 @@ async function handleBankMessage(message, client) {
     }
     if (/^(?:وقت|cooldowns?)$/u.test(text)) {
       await message.reply({
+        content: `<@${message.author.id}>`,
         embeds: [cooldownEmbed(message.author, getUser(message.guildId, message.author.id))],
         allowedMentions: { repliedUser: true, users: [message.author.id] },
       });
