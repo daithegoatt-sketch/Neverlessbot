@@ -11,14 +11,16 @@ try {
   console.warn(`[bank] Arabic font package could not be resolved: ${error.message}`);
 }
 if (bankFontRoot) {
-  for (const weight of [400, 700, 900]) {
-    try {
-      GlobalFonts.registerFromPath(
-        path.join(bankFontRoot, 'files', `noto-sans-arabic-arabic-${weight}-normal.woff2`),
-        BANK_FONT_FAMILY,
-      );
-    } catch (error) {
-      console.warn(`[bank] Arabic font ${weight} could not be registered: ${error.message}`);
+  for (const weight of [400, 500, 600, 700, 800, 900]) {
+    for (const subset of ['arabic', 'latin']) {
+      try {
+        GlobalFonts.registerFromPath(
+          path.join(bankFontRoot, 'files', `noto-sans-arabic-${subset}-${weight}-normal.woff2`),
+          subset === 'arabic' ? BANK_FONT_FAMILY : 'Neverless Latin',
+        );
+      } catch (error) {
+        console.warn(`[bank] font ${subset}/${weight} could not be registered: ${error.message}`);
+      }
     }
   }
 }
@@ -107,16 +109,16 @@ function baseCard(title, subtitle, width = 1000, height = 520, accent = THEME.bl
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
   ctx.fillStyle = THEME.text;
-  ctx.font = '800 31px Noto Sans Arabic';
+  ctx.font = '800 31px "Noto Sans Arabic", "Neverless Latin"';
   ctx.fillText(title, 54, 64);
   ctx.fillStyle = THEME.muted;
-  ctx.font = '500 16px Noto Sans Arabic';
+  ctx.font = '500 16px "Noto Sans Arabic", "Neverless Latin"';
   ctx.fillText(subtitle, 55, 91);
 
   fillRoundRect(ctx, width - 188, 40, 130, 36, 18, 'rgba(90,168,255,.10)', 'rgba(90,168,255,.38)');
   ctx.textAlign = 'center';
   ctx.fillStyle = THEME.silver;
-  ctx.font = '700 13px Noto Sans Arabic';
+  ctx.font = '700 13px "Noto Sans Arabic", "Neverless Latin"';
   ctx.fillText('NEVERLESS', width - 123, 63);
   ctx.textAlign = 'left';
 
@@ -132,14 +134,14 @@ function baseCard(title, subtitle, width = 1000, height = 520, accent = THEME.bl
 function fitText(ctx, text, maxWidth, startSize, minSize = 14, weight = 700) {
   let size = startSize;
   while (size > minSize) {
-    ctx.font = `${weight} ${size}px Noto Sans Arabic`;
+    ctx.font = `${weight} ${size}px "Noto Sans Arabic", "Neverless Latin"`;
     if (ctx.measureText(String(text)).width <= maxWidth) return size;
     size -= 1;
   }
   return minSize;
 }
 
-function rtlText(ctx, text, x, y, font = '700 20px Noto Sans Arabic', color = THEME.text) {
+function rtlText(ctx, text, x, y, font = '700 20px "Noto Sans Arabic", "Neverless Latin"', color = THEME.text) {
   ctx.save();
   ctx.textAlign = 'right';
   ctx.font = font;
@@ -148,7 +150,7 @@ function rtlText(ctx, text, x, y, font = '700 20px Noto Sans Arabic', color = TH
   ctx.restore();
 }
 
-function centerText(ctx, text, x, y, font = '700 20px Noto Sans Arabic', color = THEME.text) {
+function centerText(ctx, text, x, y, font = '700 20px "Noto Sans Arabic", "Neverless Latin"', color = THEME.text) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.font = font;
@@ -159,8 +161,8 @@ function centerText(ctx, text, x, y, font = '700 20px Noto Sans Arabic', color =
 
 function metric(ctx, x, y, w, h, label, value, color = THEME.text) {
   fillRoundRect(ctx, x, y, w, h, 16, 'rgba(12,24,39,.90)', THEME.strokeSoft, 1.5);
-  rtlText(ctx, label, x + w - 18, y + 26, '600 14px Noto Sans Arabic', THEME.muted);
-  rtlText(ctx, value, x + w - 18, y + 60, '800 25px Noto Sans Arabic', color);
+  rtlText(ctx, label, x + w - 18, y + 26, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  rtlText(ctx, value, x + w - 18, y + 60, '800 25px "Noto Sans Arabic", "Neverless Latin"', color);
 }
 
 async function loadAvatarImage(user) {
@@ -209,7 +211,7 @@ function drawAvatarImage(ctx, image, x, y, size, ring = THEME.blue) {
     ctx.fillRect(x, y, size, size);
     ctx.textAlign = 'center';
     ctx.fillStyle = THEME.silver;
-    ctx.font = `800 ${Math.round(size * 0.36)}px Noto Sans Arabic`;
+    ctx.font = `800 ${Math.round(size * 0.36)}px "Noto Sans Arabic", "Neverless Latin"`;
     ctx.fillText('N', x + size / 2, y + size * 0.64);
   }
   ctx.restore();
@@ -233,7 +235,7 @@ function drawStatusPill(ctx, x, y, text, good) {
   ctx.arc(x + 22, y + 18, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.textAlign = 'center';
-  ctx.font = '700 14px Noto Sans Arabic';
+  ctx.font = '700 14px "Noto Sans Arabic", "Neverless Latin"';
   ctx.fillText(text, x + 87, y + 23);
   ctx.textAlign = 'left';
 }
