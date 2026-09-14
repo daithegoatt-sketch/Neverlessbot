@@ -255,41 +255,138 @@ function usageCard(command, lines) {
 }
 
 function propertiesCard(state, market, companies, catalog, stockValue, assetValue) {
-  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ممتلكاتك الحالية', 1050, 900, THEME.gold);
+  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ملخص ممتلكاتك', 1100, 1120, THEME.gold);
 
-  const stockLines = Object.values(companies)
-    .filter((company) => Number(state.stocks?.[company.code] || 0) > 0)
-    .map((company) => `${company.code}  ${Number(state.stocks[company.code]).toFixed(2)}  ${money(Number(state.stocks[company.code]) * market.companies[company.code].price)}`);
-  const byCategory = (cat) => Object.values(catalog)
-    .filter((asset) => asset.category === cat && Number(state.assets?.[asset.code] || 0) > 0)
-    .map((asset) => `${asset.name} x${Number(state.assets[asset.code]).toFixed(asset.fractional ? 3 : 0)}`);
-
-  const groups = [
-    ['الأسهم', stockLines.length ? stockLines.join('   ') : 'لا يوجد', THEME.cyan],
-    ['العقارات', byCategory('PROPERTY').join('   ') || 'لا يوجد', THEME.green],
-    ['السيارات', byCategory('CAR').join('   ') || 'لا يوجد', THEME.blue],
-    ['الطائرات', byCategory('PLANE').join('   ') || 'لا يوجد', THEME.silver],
-    ['الذهب', Number(state.assets?.GOLD || 0) > 0 ? `${Number(state.assets.GOLD).toFixed(3)} oz   ${money(Number(state.assets.GOLD) * market.assets.GOLD.price)}` : 'لا يوجد', THEME.gold],
+  const sections = [
+    { key:'STOCK', title:'الأسهم', accent:THEME.cyan, rows:Object.values(companies)
+      .filter((company)=>Number(state.stocks?.[company.code]||0)>0)
+      .map((company)=>({
+        name:company.code,
+        qty:`${Number(state.stocks[company.code]).toFixed(2)} سهم`,
+        value:money(Number(state.stocks[company.code]) * market.companies[company.code].price),
+      })) },
+    { key:'PROPERTY', title:'العقارات', accent:THEME.green, rows:Object.values(catalog)
+      .filter((asset)=>asset.category==='PROPERTY' && Number(state.assets?.[asset.code]||0)>0)
+      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
+    { key:'CAR', title:'السيارات', accent:THEME.blue, rows:Object.values(catalog)
+      .filter((asset)=>asset.category==='CAR' && Number(state.assets?.[asset.code]||0)>0)
+      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
+    { key:'PLANE', title:'الطائرات', accent:THEME.silver, rows:Object.values(catalog)
+      .filter((asset)=>asset.category==='PLANE' && Number(state.assets?.[asset.code]||0)>0)
+      .map((asset)=>({name:asset.name,qty:`x${Math.round(Number(state.assets[asset.code]))}`,value:money(Number(state.assets[asset.code]) * market.assets[asset.code].price)})) },
+    { key:'GOLD', title:'الذهب', accent:THEME.gold, rows:Number(state.assets?.GOLD||0)>0 ? [{
+      name:'ذهب',
+      qty:`${Number(state.assets.GOLD).toFixed(3)} oz`,
+      value:money(Number(state.assets.GOLD) * market.assets.GOLD.price),
+    }] : [] },
   ];
 
-  let y = 150;
-  for (const [name, detail, color] of groups) {
-    fillRoundRect(ctx, 60, y, 930, 112, 18, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
-    ctx.fillStyle = color;
+  let y = 145;
+  for (const section of sections) {
+    const rows = section.rows.length ? section.rows : [{name:'لا يوجد',qty:'-',value:'-'}];
+    const boxH = 60 + rows.length * 54;
+    fillRoundRect(ctx, 55, y, 990, boxH, 20, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
+
+    ctx.fillStyle = section.accent;
     ctx.font = '900 23px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(name, 88, y + 39);
-    ctx.fillStyle = THEME.text;
-    const size = fitText(ctx, detail, 810, 18, 12, 600);
-    ctx.font = `600 ${size}px "Noto Sans Arabic", "Neverless Latin"`;
-    ctx.fillText(detail, 88, y + 78);
-    y += 130;
+    ctx.fillText(section.title, 82, y + 36);
+
+    let yy = y + 74;
+    for (const row of rows) {
+      ctx.fillStyle = THEME.text;
+      ctx.font = '700 17px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.fillText(row.name, 90, yy);
+      ctx.fillStyle = THEME.muted;
+      ctx.font = '600 14px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.fillText(row.qty, 420, yy);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = row.value === '-' ? THEME.muted : THEME.green;
+      ctx.font = '800 18px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.fillText(row.value, 985, yy);
+      ctx.textAlign = 'left';
+      yy += 54;
+    }
+    y += boxH + 18;
   }
 
   const total = stockValue + assetValue;
-  fillRoundRect(ctx, 250, 810, 550, 58, 18, 'rgba(21,70,53,.26)', THEME.green, 1.5);
-  centerText(ctx, `قيمة ممتلكاتك ${money(total)}`, 525, 847, '900 22px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
+  fillRoundRect(ctx, 230, 1030, 640, 62, 20, 'rgba(21,70,53,.26)', THEME.green, 1.5);
+  centerText(ctx, `إجمالي قيمة ممتلكاتك ${money(total)}`, 550, 1070, '900 23px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
   return canvas.toBuffer('image/png');
 }
+
+function assetCatalogCard(category, market, catalog, nextUpdateMs) {
+  const titles = {
+    PROPERTY: ['NEVERLESS REAL ESTATE', 'العقارات المتوفرة', THEME.green],
+    CAR: ['NEVERLESS CARS', 'السيارات المتوفرة', THEME.blue],
+    PLANE: ['NEVERLESS AVIATION', 'الطائرات المتوفرة', THEME.silver],
+  };
+  const [title, subtitle, accent] = titles[category] || ['NEVERLESS ASSETS', 'الممتلكات المتوفرة', THEME.cyan];
+  const entries = Object.values(catalog).filter((asset) => asset.category === category);
+  const height = 235 + entries.length * 112;
+  const { canvas, ctx } = baseCard(title, subtitle, 1050, height, accent);
+
+  let y = 145;
+  entries.forEach((asset, index) => {
+    const data = market.assets[asset.code] || { price: asset.seed, history: [asset.seed] };
+    const history = Array.isArray(data.history) && data.history.length ? data.history : [data.price];
+    const previous = history.length > 1 ? history.at(-2) : history[0];
+    const pct = previous ? ((data.price - previous) / previous) * 100 : 0;
+    const moveColor = pct > 0 ? THEME.green : pct < 0 ? THEME.red : THEME.silver;
+
+    fillRoundRect(ctx, 55, y, 940, 96, 18, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
+    ctx.fillStyle = accent;
+    ctx.font = '900 22px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(asset.name, 82, y + 38);
+
+    ctx.fillStyle = THEME.muted;
+    ctx.font = '600 13px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(`#${String(index + 1).padStart(2,'0')}  ${asset.code}`, 82, y + 67);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = THEME.text;
+    ctx.font = '900 25px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(money(data.price), 835, y + 40);
+    ctx.fillStyle = moveColor;
+    ctx.font = '800 16px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(`${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`, 950, y + 40);
+    ctx.textAlign = 'left';
+    y += 112;
+  });
+
+  centerText(ctx, `تحديث الأسعار كل ساعة - التحديث القادم بعد ${formatDuration(nextUpdateMs)}`, 525, height - 42, '700 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  return canvas.toBuffer('image/png');
+}
+
+function goldMarketCard(market, state, nextUpdateMs) {
+  const data = market.assets.GOLD || { price: 2500, history: [2500] };
+  const history = Array.isArray(data.history) && data.history.length ? data.history : [data.price];
+  const previous = history.length > 1 ? history.at(-2) : history[0];
+  const pct = previous ? ((data.price - previous) / previous) * 100 : 0;
+  const color = pct > 0 ? THEME.green : pct < 0 ? THEME.red : THEME.gold;
+  const owned = Number(state?.assets?.GOLD || 0);
+  const { canvas, ctx } = baseCard('NEVERLESS GOLD', 'سوق الذهب', 1000, 600, THEME.gold);
+
+  fillRoundRect(ctx, 60, 150, 880, 120, 22, 'rgba(10,23,38,.94)', THEME.strokeSoft, 1.5);
+  rtlText(ctx, 'سعر الأونصة الحالي', 900, 185, '700 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = THEME.gold;
+  ctx.font = '900 44px "Noto Sans Arabic", "Neverless Latin"';
+  ctx.fillText(money(data.price), 900, 235);
+  ctx.textAlign = 'left';
+  centerText(ctx, `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`, 170, 215, '900 26px "Noto Sans Arabic", "Neverless Latin"', color);
+
+  fillRoundRect(ctx, 60, 300, 880, 170, 22, 'rgba(8,18,31,.94)', THEME.strokeSoft, 1.5);
+  const series = history.length >= 2 ? history.slice(-12) : [data.price, data.price];
+  drawLineChart(ctx, series, 95, 330, 810, 105, color, { lineWidth: 4 });
+
+  metric(ctx, 60, 495, 270, 72, 'ما تملكه', `${owned.toFixed(3)} oz`, THEME.gold);
+  metric(ctx, 365, 495, 270, 72, 'قيمة ذهبك', money(owned * data.price), THEME.green);
+  metric(ctx, 670, 495, 270, 72, 'التحديث', formatDuration(nextUpdateMs), THEME.silver);
+  centerText(ctx, 'شراء ذهب 50000   -   بيع ذهب 50000   -   بيع ذهب كامل', 500, 585, '700 15px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  return canvas.toBuffer('image/png');
+}
+
 
 async function assetTradeCard(user, action, asset, quantity, total, unitPrice, state, totalAssetsValue) {
   const buy = action === 'buy';
@@ -416,5 +513,7 @@ module.exports = {
   economyEventCard,
   usageCard,
   propertiesCard,
+  assetCatalogCard,
+  goldMarketCard,
   assetTradeCard,
 };
