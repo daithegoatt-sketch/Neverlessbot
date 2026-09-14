@@ -45,6 +45,8 @@ const {
   economyEventCard,
   usageCard,
   propertiesCard,
+  assetCatalogCard,
+  goldMarketCard,
   assetTradeCard,
 } = require('./bankVisualCore');
 const {
@@ -69,6 +71,7 @@ const BANK_EXTRA_CHANNEL_ID = '1548983198120419418';
 const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID, BANK_EXTRA_CHANNEL_ID]);
 const DATA_CHANNEL_NAME = 'neverless-data';
 const ADMIN_PERMISSION = 'Administrator';
+const ASSET_MARKET_STEP = 60 * 60 * 1000;
 const STOCK_COMPANIES = Object.freeze({
   NVRS: { code: 'NVRS', name: 'Neverless Tech', aliases: ['neverless','nvrs','نفرلس','نيفرلس'] },
   ASTRA: { code: 'ASTRA', name: 'Astra Labs', aliases: ['astra','استرا','أسترا'] },
@@ -270,6 +273,7 @@ function normalizeMarketShape(market) {
     if (!market.assets[asset.code]) market.assets[asset.code] = { price: asset.seed, history: [asset.seed] };
   }
   market.updatedAt = Math.max(0, Number(market.updatedAt) || Date.now());
+  market.assetUpdatedAt = Math.max(0, Number(market.assetUpdatedAt) || market.updatedAt || Date.now());
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   return market;
@@ -295,14 +299,21 @@ function baseNetWorth(state, market) {
 
 function updateMarket(guildId) {
   const market = normalizeMarketShape(markets.get(guildId) || newMarket());
-  const steps = Math.min(24, Math.floor(Math.max(0, Date.now() - market.updatedAt) / MARKET_STEP));
-  for (let i = 0; i < steps; i += 1) {
+  const now = Date.now();
+  const stockSteps = Math.min(24, Math.floor(Math.max(0, now - market.updatedAt) / MARKET_STEP));
+  const assetSteps = Math.min(24, Math.floor(Math.max(0, now - market.assetUpdatedAt) / ASSET_MARKET_STEP));
+
+  for (let i = 0; i < stockSteps; i += 1) {
     for (const company of Object.values(STOCK_COMPANIES)) {
       const data = market.companies[company.code];
       const move = marketMove();
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), 2, 5000000);
       data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
+    market.updatedAt += MARKET_STEP;
+  }
+
+  for (let i = 0; i < assetSteps; i += 1) {
     for (const asset of Object.values(ASSET_CATALOG)) {
       const data = market.assets[asset.code];
       const move = asset.code === 'GOLD'
@@ -311,12 +322,13 @@ function updateMarket(guildId) {
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
       data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
-    market.updatedAt += MARKET_STEP;
+    market.assetUpdatedAt += ASSET_MARKET_STEP;
   }
+
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   markets.set(guildId, market);
-  return { market, changed: steps > 0 };
+  return { market, changed: stockSteps > 0 || assetSteps > 0, stockChanged: stockSteps > 0, assetChanged: assetSteps > 0 };
 }
 
 function companyFrom(raw) {
@@ -352,6 +364,43 @@ function assetFrom(raw) {
 
 function assetCategoryLabel(category) {
   return category === 'PROPERTY' ? 'العقارات' : category === 'CAR' ? 'السيارات' : category === 'PLANE' ? 'الطائرات' : 'الذهب';
+}
+function categoryFromText(raw) {
+  const q = String(raw || '').trim().toLowerCase();
+  if (/^(?:عقار|عقارات|ارض|أرض|اراضي|أراضي)$/u.test(q)) return 'PROPERTY';
+  if (/^(?:سيارة|سياره|سيارات)$/u.test(q)) return 'CAR';
+  if (/^(?:طائرة|طائره|طيارة|طياره|طائرات)$/u.test(q)) return 'PLANE';
+  return null;
+}
+
+async function assetCatalog(message, category) {
+  await withLock(marketLockKey(message.guildId), async () => {
+    const { market, changed } = updateMarket(message.guildId);
+    if (changed && !await persistMarket(message.guild)) return replyInfo(message, 'تعذر تحديث الأسعار', 'جرّب مرة ثانية');
+    const next = Math.max(0, market.assetUpdatedAt + ASSET_MARKET_STEP - Date.now());
+    const label = assetCategoryLabel(category);
+    await replyImage(
+      message,
+      assetCatalogCard(category, market, ASSET_CATALOG, next),
+      `asset-catalog-${category.toLowerCase()}-${message.guildId}.png`,
+      `<@${message.author.id}> — ${label} المتوفرة`,
+    );
+  });
+}
+
+async function goldMarket(message) {
+  await withLock(marketLockKey(message.guildId), async () => {
+    const { market, changed } = updateMarket(message.guildId);
+    if (changed && !await persistMarket(message.guild)) return replyInfo(message, 'تعذر تحديث سعر الذهب', 'جرّب مرة ثانية');
+    const next = Math.max(0, market.assetUpdatedAt + ASSET_MARKET_STEP - Date.now());
+    const state = getUser(message.guildId, message.author.id);
+    await replyImage(
+      message,
+      goldMarketCard(market, state, next),
+      `gold-market-${message.guildId}.png`,
+      `<@${message.author.id}> — سعر الذهب الحالي ${money(market.assets.GOLD.price)} للأونصة`,
+    );
+  });
 }
 
 function rankForUser(guildId, userId, market) {
@@ -453,7 +502,7 @@ function helpEmbed() {
       { name: 'الدخل', value: 'راتب\nبخشيش\nقرض\nوقت', inline: true },
       { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
       { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق\nالغام\nفواكه\nالوان\nعملة\nرقم', inline: true },
-      { name: 'السوق', value: 'سهم\nشراء سهم\nبيع سهم\nممتلكات\nشراء عقار/سيارة/طائرة/ذهب', inline: true },
+      { name: 'السوق', value: 'سهم\nعقار / سيارة / طائرة\nذهب\nشراء اسم الممتلك\nبيع اسم الممتلك\nممتلكات', inline: true },
       { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
     )
     .setFooter({ text: 'Neverless Bank' });
@@ -1556,7 +1605,7 @@ async function handleBankMessage(message, client) {
   const text = normalized(message.content);
   if (!text) return false;
 
-  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|تصفير|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|قرض|loan|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell|ممتلكات|شراء|بيع|الغام|ألغام|mines|فواكه|fruits|الوان|ألوان|colors|عملة|coin|رقم|number)(?:\s|$)/u.test(text);
+  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|تصفير|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|قرض|loan|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell|ممتلكات|عقار|عقارات|سيارة|سياره|سيارات|طائرة|طائره|طيارة|طياره|طائرات|ذهب|gold|شراء|بيع|الغام|ألغام|mines|فواكه|fruits|الوان|ألوان|colors|عملة|coin|رقم|number)(?:\s|$)/u.test(text);
   if (!known) return false;
 
   try {
@@ -1632,6 +1681,17 @@ async function handleBankMessage(message, client) {
     }
 
     if (/^(?:ممتلكات|properties)$/u.test(text)) { await properties(message); return true; }
+
+    if (/^(?:ذهب|gold)$/u.test(text)) { await goldMarket(message); return true; }
+    if (/^(?:عقار|عقارات|ارض|أرض|اراضي|أراضي)$/u.test(text)) { await assetCatalog(message,'PROPERTY'); return true; }
+    if (/^(?:سيارة|سياره|سيارات)$/u.test(text)) { await assetCatalog(message,'CAR'); return true; }
+    if (/^(?:طائرة|طائره|طيارة|طياره|طائرات)$/u.test(text)) { await assetCatalog(message,'PLANE'); return true; }
+
+    const categoryBuy = text.match(/^(?:شراء|buy)\s+(عقار|عقارات|ارض|أرض|اراضي|أراضي|سيارة|سياره|سيارات|طائرة|طائره|طيارة|طياره|طائرات)$/u);
+    if (categoryBuy) { await assetCatalog(message, categoryFromText(categoryBuy[1])); return true; }
+    const categorySell = text.match(/^(?:بيع|sell)\s+(عقار|عقارات|ارض|أرض|اراضي|أراضي|سيارة|سياره|سيارات|طائرة|طائره|طيارة|طياره|طائرات)$/u);
+    if (categorySell) { await assetCatalog(message, categoryFromText(categorySell[1])); return true; }
+    if (/^(?:شراء|buy)\s+(?:ذهب|gold)$/u.test(text) || /^(?:بيع|sell)\s+(?:ذهب|gold)$/u.test(text)) { await goldMarket(message); return true; }
 
     let assetMatch = text.match(/^(?:شراء|buy)\s+(.+)$/u);
     if (assetMatch && (assetFrom(assetMatch[1]) || assetMatch[1].includes('ذهب'))) { await tradeAsset(message,'buy',assetMatch[1]); return true; }
