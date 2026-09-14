@@ -6,7 +6,9 @@ const START_BALANCE = 1000;
 const COMMAND_CD = 5 * 60 * 1000;
 const SALARY_CD = COMMAND_CD;
 const TIP_CD = COMMAND_CD;
-const MARKET_STEP = 5 * 60 * 1000;
+const MARKET_STEP = 3 * 60 * 1000;
+const LOAN_CD = 60 * 60 * 1000;
+const LOAN_AMOUNT = 10000;
 const MAX_BET = 1000000000;
 const ROB_CD = 5 * 60 * 1000;
 const PROTECTION_DURATION = 60 * 60 * 1000;
@@ -18,8 +20,10 @@ function newUser() {
     balance: START_BALANCE,
     vault: 0,
     shares: 0,
+    stocks: {},
     salaryAt: 0,
     tipAt: 0,
+    loanAt: 0,
     earned: 0,
     lost: 0,
     games: 0,
@@ -35,8 +39,10 @@ function packUser(s) {
     b: s.balance,
     v: s.vault,
     sh: s.shares,
+    st: s.stocks || {},
     sa: s.salaryAt,
     ta: s.tipAt,
+    la: s.loanAt || 0,
     e: s.earned,
     l: s.lost,
     g: s.games,
@@ -48,12 +54,18 @@ function packUser(s) {
 }
 
 function unpackUser(x = {}) {
+  const legacyShares = Math.max(0, Number(x.sh ?? 0) || 0);
+  const stocks = x.st && typeof x.st === 'object' && !Array.isArray(x.st)
+    ? Object.fromEntries(Object.entries(x.st).filter(([, q]) => Number(q) > 0).map(([k, q]) => [String(k).toUpperCase(), Number(q)]))
+    : (legacyShares > 0 ? { NVRS: legacyShares } : {});
   return {
     balance: Math.max(0, Math.floor(Number(x.b ?? START_BALANCE) || 0)),
     vault: Math.max(0, Math.floor(Number(x.v ?? 0) || 0)),
-    shares: Math.max(0, Math.floor(Number(x.sh ?? 0) || 0)),
+    shares: Math.max(0, Number(stocks.NVRS || legacyShares) || 0),
+    stocks,
     salaryAt: Math.max(0, Number(x.sa ?? 0) || 0),
     tipAt: Math.max(0, Number(x.ta ?? 0) || 0),
+    loanAt: Math.max(0, Number(x.la ?? 0) || 0),
     earned: Math.max(0, Math.floor(Number(x.e ?? 0) || 0)),
     lost: Math.max(0, Math.floor(Number(x.l ?? 0) || 0)),
     games: Math.max(0, Math.floor(Number(x.g ?? 0) || 0)),
@@ -199,6 +211,8 @@ module.exports = {
   SALARY_CD,
   TIP_CD,
   MARKET_STEP,
+  LOAN_CD,
+  LOAN_AMOUNT,
   MAX_BET,
   ROB_CD,
   PROTECTION_DURATION,
