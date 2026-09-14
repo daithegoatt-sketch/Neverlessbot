@@ -75,13 +75,20 @@ const STOCK_COMPANIES = Object.freeze({
   ARCANE: { code: 'ARCANE', name: 'Arcane Media', aliases: ['arcane','اركين','أركين'] },
   SALV: { code: 'SALV', name: 'Salvation Energy', aliases: ['salvation','سلفيشن','سالفاشن'] },
   VIRO: { code: 'VIRO', name: 'Viro Systems', aliases: ['viro','فايرو','فيرو'] },
-  VVIP: { code: 'VVIP', name: 'VVIP Index', aliases: ['vvip','في اي بي','فياب'] },
 });
 const ASSET_CATALOG = Object.freeze({
-  LAND: { code: 'LAND', name: 'أرض', aliases: ['ارض','أرض','اراضي','أراضي'], seed: 50000, fractional: false },
-  CAR: { code: 'CAR', name: 'سيارة', aliases: ['سيارة','سياره','سيارات'], seed: 25000, fractional: false },
-  PLANE: { code: 'PLANE', name: 'طائرة', aliases: ['طيارة','طائرة','طياره','طائرات'], seed: 500000, fractional: false },
-  GOLD: { code: 'GOLD', name: 'ذهب', aliases: ['ذهب','gold'], seed: 2500, fractional: true },
+  HOUSE: { code:'HOUSE', category:'PROPERTY', name:'بيت', aliases:['بيت'], seed:75000, fractional:false },
+  APARTMENT: { code:'APARTMENT', category:'PROPERTY', name:'شقة', aliases:['شقة','شقه'], seed:125000, fractional:false },
+  VILLA: { code:'VILLA', category:'PROPERTY', name:'فيلا', aliases:['فيلا','فلة','فله'], seed:350000, fractional:false },
+  PALACE: { code:'PALACE', category:'PROPERTY', name:'قصر', aliases:['قصر'], seed:1000000, fractional:false },
+  SEDAN: { code:'SEDAN', category:'CAR', name:'سيدان', aliases:['سيدان','سيارة عادية','سياره عاديه'], seed:30000, fractional:false },
+  SUV: { code:'SUV', category:'CAR', name:'SUV', aliases:['suv','جيب','دفع رباعي'], seed:70000, fractional:false },
+  SPORT: { code:'SPORT', category:'CAR', name:'سيارة رياضية', aliases:['سيارة رياضية','سياره رياضيه','رياضية','رياضيه'], seed:120000, fractional:false },
+  LUXURY: { code:'LUXURY', category:'CAR', name:'سيارة فخمة', aliases:['سيارة فخمة','سياره فخمه','فخمة','فخمه'], seed:250000, fractional:false },
+  HELI: { code:'HELI', category:'PLANE', name:'هليكوبتر', aliases:['هليكوبتر','هيلكوبتر'], seed:450000, fractional:false },
+  JET: { code:'JET', category:'PLANE', name:'طائرة خاصة', aliases:['طائرة خاصة','طيارة خاصة','طياره خاصه','طائره خاصه'], seed:900000, fractional:false },
+  BIZJET: { code:'BIZJET', category:'PLANE', name:'طائرة رجال أعمال', aliases:['طائرة رجال أعمال','طيارة رجال اعمال','طائره رجال اعمال'], seed:1800000, fractional:false },
+  GOLD: { code:'GOLD', category:'GOLD', name:'ذهب', aliases:['ذهب','gold'], seed:2500, fractional:true },
 });
 
 
@@ -183,12 +190,12 @@ async function persistUser(guild, userId) {
   if (id) {
     const edited = await channel.messages.edit(id, {
       content,
-      allowedMentions: { parse: [] },
+      allowedMentions: { users: [message.author.id], repliedUser: true },
     }).catch(() => null);
     if (edited) return true;
   }
 
-  const message = await channel.send({ content, allowedMentions: { parse: [] } }).catch((error) => {
+  const message = await channel.send({ content, allowedMentions: { users: [message.author.id], repliedUser: true } }).catch((error) => {
     console.error(`[bank] failed to persist user ${userId}:`, error);
     return null;
   });
@@ -208,12 +215,12 @@ async function persistMarket(guild) {
   if (id) {
     const edited = await channel.messages.edit(id, {
       content,
-      allowedMentions: { parse: [] },
+      allowedMentions: { users: [message.author.id], repliedUser: true },
     }).catch(() => null);
     if (edited) return true;
   }
 
-  const message = await channel.send({ content, allowedMentions: { parse: [] } }).catch((error) => {
+  const message = await channel.send({ content, allowedMentions: { users: [message.author.id], repliedUser: true } }).catch((error) => {
     console.error('[bank] failed to persist market:', error);
     return null;
   });
@@ -276,47 +283,12 @@ function marketMove() {
   return magnitude * (Math.random() < 0.5 ? -1 : 1);
 }
 
-function nonVvipPortfolioValue(state, market) {
-  return Object.values(STOCK_COMPANIES)
-    .filter((company) => company.code !== 'VVIP')
-    .reduce((sum, company) => sum + holdingUnits(state, company.code) * market.companies[company.code].price, 0);
-}
-
 function assetsValue(state, market) {
   return Object.values(ASSET_CATALOG).reduce((sum, asset) => sum + Math.max(0, Number(state.assets?.[asset.code] || 0)) * market.assets[asset.code].price, 0);
 }
 
 function baseNetWorth(state, market) {
-  return state.balance + state.vault + nonVvipPortfolioValue(state, market) + assetsValue(state, market);
-}
-
-function richestBaseUser(guildId, market) {
-  let best = null;
-  for (const [accountKey, state] of users) {
-    if (!accountKey.startsWith(`${guildId}:`)) continue;
-    const userId = accountKey.slice(guildId.length + 1);
-    const net = baseNetWorth(state, market);
-    if (!best || net > best.net) best = { userId, net };
-  }
-  return best;
-}
-
-function syncVvipIndex(guildId, market) {
-  const richest = richestBaseUser(guildId, market);
-  if (!richest) {
-    market.companies.VVIP.price = 100;
-    return;
-  }
-  if (!market.vvipLeaderId) market.vvipLeaderId = richest.userId;
-  const leaderState = users.get(key(guildId, market.vvipLeaderId));
-  const leaderNet = leaderState ? baseNetWorth(leaderState, market) : 0;
-  const target = Math.max(1, Math.round(leaderNet / 1000));
-  const data = market.companies.VVIP;
-  data.price = target;
-  data.history = [...(data.history || []), target].slice(-24);
-  if (leaderNet <= 0 || (richest.userId !== market.vvipLeaderId && richest.net > Math.max(leaderNet * 1.20, leaderNet + 50000))) {
-    market.vvipLeaderId = richest.userId;
-  }
+  return state.balance + state.vault + portfolioValue(state, market) + assetsValue(state, market);
 }
 
 function updateMarket(guildId) {
@@ -324,7 +296,6 @@ function updateMarket(guildId) {
   const steps = Math.min(24, Math.floor(Math.max(0, Date.now() - market.updatedAt) / MARKET_STEP));
   for (let i = 0; i < steps; i += 1) {
     for (const company of Object.values(STOCK_COMPANIES)) {
-      if (company.code === 'VVIP') continue;
       const data = market.companies[company.code];
       const move = marketMove();
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), 2, 5000000);
@@ -336,10 +307,8 @@ function updateMarket(guildId) {
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
       data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
-    syncVvipIndex(guildId, market);
     market.updatedAt += MARKET_STEP;
   }
-  syncVvipIndex(guildId, market);
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   markets.set(guildId, market);
@@ -366,9 +335,30 @@ function portfolioValue(state, market) {
   return Object.values(STOCK_COMPANIES).reduce((sum, company) => sum + holdingUnits(state, company.code) * market.companies[company.code].price, 0);
 }
 
+function cleanAssetQuery(raw) {
+  return String(raw || '').trim().toLowerCase()
+    .replace(/^(?:سيارة|سياره|عقار|عقارات|طيارة|طياره|طائرة|طائره)\s+/u, '')
+    .trim();
+}
+
 function assetFrom(raw) {
-  const q = String(raw || '').trim().toLowerCase();
-  return Object.values(ASSET_CATALOG).find((a) => a.code.toLowerCase() === q || a.aliases.includes(q)) || null;
+  const q = cleanAssetQuery(raw);
+  return Object.values(ASSET_CATALOG).find((a) => a.code.toLowerCase() === q || a.name.toLowerCase() === q || a.aliases.includes(q)) || null;
+}
+
+function assetCategoryLabel(category) {
+  return category === 'PROPERTY' ? 'العقارات' : category === 'CAR' ? 'السيارات' : category === 'PLANE' ? 'الطائرات' : 'الذهب';
+}
+
+function rankForUser(guildId, userId, market) {
+  const rows = [];
+  for (const [accountKey, state] of users) {
+    if (!accountKey.startsWith(`${guildId}:`)) continue;
+    rows.push({ id: accountKey.slice(guildId.length + 1), net: baseNetWorth(state, market) });
+  }
+  rows.sort((a,b)=>b.net-a.net);
+  const i = rows.findIndex((row)=>row.id===userId);
+  return i >= 0 ? i + 1 : rows.length + 1;
 }
 
 async function properties(message) {
@@ -378,58 +368,75 @@ async function properties(message) {
   await commitCard(
     message,
     save,
-    Promise.resolve(propertiesCard(state, market, portfolioValue(state, market), assetsValue(state, market))),
+    Promise.resolve(propertiesCard(state, market, STOCK_COMPANIES, ASSET_CATALOG, portfolioValue(state, market), assetsValue(state, market))),
     `properties-${message.author.id}.png`,
     `<@${message.author.id}> — ممتلكات Neverless`,
   );
 }
 
-async function tradeAsset(message, action, assetRaw, amountRaw = '') {
-  const asset = assetFrom(assetRaw);
-  if (!asset) return replyUsage(message, action === 'buy' ? 'شراء' : 'بيع', ['شراء سيارة', 'شراء أرض', 'شراء طيارة', 'شراء ذهب 5000']);
+async function tradeAsset(message, action, raw) {
+  let text = String(raw || '').trim();
+  let amountRaw = '';
+  let asset = assetFrom(text);
+
+  if (!asset) {
+    const m = text.match(/^(.*?)(?:\s+([0-9٠-٩۰-۹.,]+))$/u);
+    if (m) {
+      asset = assetFrom(m[1]);
+      amountRaw = m[2];
+    }
+  }
+  if (!asset) {
+    return replyUsage(message, action === 'buy' ? 'شراء' : 'بيع', [
+      `${action === 'buy' ? 'شراء' : 'بيع'} فيلا`,
+      `${action === 'buy' ? 'شراء' : 'بيع'} سيارة رياضية`,
+      `${action === 'buy' ? 'شراء' : 'بيع'} طائرة خاصة`,
+      `${action === 'buy' ? 'شراء' : 'بيع'} ذهب 50000`,
+    ]);
+  }
+
   await withLocks([marketLockKey(message.guildId), accountLockKey(message.guildId, message.author.id)], async () => {
     const { market, changed } = updateMarket(message.guildId);
     const state = getUser(message.guildId, message.author.id);
     const price = market.assets[asset.code].price;
     const owned = Math.max(0, Number(state.assets?.[asset.code] || 0));
-    let quantity;
-    let total;
-    if (asset.fractional) {
-      if (action === 'buy') {
-        if (!amountRaw) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
-        const raw = amountRaw;
-        total = parseAmount(raw, state.balance);
-        if (!Number.isFinite(total)) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
-        quantity = total / price;
-        state.balance -= total;
-        state.assets.GOLD = owned + quantity;
-      } else {
-        const ownedValue = owned * price;
-        if (!amountRaw) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
-        const raw = amountRaw;
-        total = parseAmount(raw, ownedValue);
-        if (!Number.isFinite(total)) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
-        quantity = total / price;
-        state.assets.GOLD = Math.max(0, owned - quantity);
-        state.balance += total;
+    let quantity, total;
+
+    if (asset.code === 'GOLD') {
+      if (!amountRaw) {
+        const parts = text.split(/\s+/u);
+        amountRaw = parts.length > 1 ? parts.at(-1) : '';
       }
+      const maxValue = action === 'buy' ? state.balance : owned * price;
+      total = parseAmount(amountRaw, maxValue);
+      if (!Number.isFinite(total)) return replyUsage(message, action === 'buy' ? 'شراء ذهب' : 'بيع ذهب', [
+        `${action === 'buy' ? 'شراء' : 'بيع'} ذهب 50000`,
+        `${action === 'buy' ? 'شراء' : 'بيع'} ذهب نص`,
+        `${action === 'buy' ? 'شراء' : 'بيع'} ذهب كامل`,
+      ]);
+      quantity = total / price;
+      if (action === 'buy') { state.balance -= total; state.assets.GOLD = owned + quantity; }
+      else { state.assets.GOLD = Math.max(0, owned - quantity); state.balance += total; }
     } else {
-      const count = amountRaw ? Number(digits(amountRaw).trim()) : 1;
-      if (!Number.isInteger(count) || count <= 0 || count > 100) return replyUsage(message, action === 'buy' ? `شراء ${asset.name}` : `بيع ${asset.name}`, [`${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name}`, `${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name} 2`]);
+      let count = 1;
+      if (amountRaw) count = Number(digits(amountRaw).replace(/,/g,''));
+      if (!Number.isInteger(count) || count <= 0 || count > 100) return replyInfo(message,'كمية غير صالحة','استخدم اسم الممتلك فقط أو أضف عدداً صحيحاً');
       quantity = count;
       total = price * count;
       if (action === 'buy') {
-        if (state.balance < total) return replyInfo(message, 'رصيد غير كافٍ', `تحتاج ${money(total)}`);
+        if (state.balance < total) return replyInfo(message,'رصيد غير كافٍ',`تحتاج ${money(total)}`);
         state.balance -= total;
         state.assets[asset.code] = owned + count;
       } else {
-        if (owned < count) return replyInfo(message, 'ممتلكات غير كافية', `لديك ${owned} من ${asset.name}`);
+        if (owned < count) return replyInfo(message,'لا تملك هذا الممتلك',`لديك ${owned} من ${asset.name}`);
         state.assets[asset.code] = owned - count;
+        if (state.assets[asset.code] <= 0) delete state.assets[asset.code];
         state.balance += total;
       }
     }
-    const persisted = Promise.all([persistUser(message.guild, message.author.id), changed ? persistMarket(message.guild) : Promise.resolve(true)]).then(x=>x.every(Boolean));
-    await commitCard(message, persisted, assetTradeCard(message.author, action, asset, quantity, total, price, state, assetsValue(state, market)), `asset-${action}-${asset.code}-${message.author.id}.png`, `<@${message.author.id}> — ${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name} • ${money(total)}`);
+
+    const persisted = Promise.all([persistUser(message.guild,message.author.id), changed ? persistMarket(message.guild) : Promise.resolve(true)]).then(x=>x.every(Boolean));
+    await commitCard(message,persisted,assetTradeCard(message.author,action,asset,quantity,total,price,state,assetsValue(state,market)),`asset-${action}-${asset.code}-${message.author.id}.png`,`<@${message.author.id}> — ${action==='buy'?'شراء':'بيع'} ${asset.name} • ${money(total)}`);
   });
 }
 
@@ -437,13 +444,12 @@ function helpEmbed() {
   return new EmbedBuilder()
     .setColor(0x173a5e)
     .setTitle('🏦 أوامر Neverless Bank')
-    .setDescription('جميع الأموال داخل النظام افتراضية.')
-    .addFields(
+        .addFields(
       { name: 'الحساب', value: 'رصيد\nتحويل\nايداع\nسحب', inline: true },
       { name: 'الدخل', value: 'راتب\nبخشيش\nقرض\nوقت', inline: true },
       { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
       { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق\nالغام\nفواكه\nالوان\nعملة\nرقم', inline: true },
-      { name: 'السوق', value: 'سهم\nشراء\nبيع\nممتلكات', inline: true },
+      { name: 'السوق', value: 'سهم\nشراء سهم\nبيع سهم\nممتلكات\nشراء عقار/سيارة/طائرة/ذهب', inline: true },
       { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
     )
     .setFooter({ text: 'Neverless Bank' });
@@ -485,7 +491,7 @@ async function replyImage(message, buffer, name, content = null, components = []
     content: content || undefined,
     files: [{ attachment: buffer, name }],
     components,
-    allowedMentions: { repliedUser: false, parse: [] },
+    allowedMentions: { repliedUser: true, users: [message.author.id] },
   });
 }
 
@@ -518,7 +524,7 @@ async function balance(message) {
   await commitCard(
     message,
     persistPromise,
-    balanceCard(target, { ...state, portfolioValue: portfolioValue(state, market), assetValue: assetsValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
+    balanceCard(target, { ...state, rank: rankForUser(message.guildId,target.id,market), portfolioValue: portfolioValue(state, market), assetValue: assetsValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
     `neverless-balance-${target.id}.png`,
     `<@${target.id}> — حساب Neverless Bank`,
   );
@@ -996,7 +1002,7 @@ async function hilo(message, raw) {
       files: [{ attachment: hiloCard(current, output.next, output.won, wager, output.balance), name: `hilo-result-${nonce}.png` }],
       attachments: [],
       components: hiloButtons(nonce, true),
-      allowedMentions: { parse: [] },
+      allowedMentions: { users: [message.author.id], repliedUser: true },
     }).catch((error) => console.error('[bank] hilo result edit failed:', error));
   });
 
@@ -1112,7 +1118,7 @@ async function boxes(message, raw) {
       files: [{ attachment: boxesCard(wager, list, pickedIndex, output.balance), name: `boxes-result-${nonce}.png` }],
       attachments: [],
       components: boxButtons(nonce, true),
-      allowedMentions: { parse: [] },
+      allowedMentions: { users: [message.author.id], repliedUser: true },
     }).catch((error) => console.error('[bank] boxes result edit failed:', error));
   });
 
@@ -1319,8 +1325,12 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
         return;
       }
       units = total / price;
+      const oldBasis = Number(state.stockBasis?.[company.code] || price);
+      const newOwned = owned + units;
+      if (!state.stockBasis) state.stockBasis = {};
+      state.stockBasis[company.code] = newOwned > 0 ? ((oldBasis * owned) + total) / newOwned : price;
       state.balance -= total;
-      setHoldingUnits(state, company.code, owned + units);
+      setHoldingUnits(state, company.code, newOwned);
     } else {
       const ownedValue = owned * price;
       total = parseAmount(amountRaw, ownedValue);
@@ -1333,8 +1343,12 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
         return;
       }
       units = total / price;
+      const basis = Number(state.stockBasis?.[company.code] || price);
+      const profit = total - (basis * units);
       setHoldingUnits(state, company.code, Math.max(0, owned - units));
+      if (holdingUnits(state,company.code) <= 0 && state.stockBasis) delete state.stockBasis[company.code];
       state.balance += total;
+      state.__lastStockProfit = profit;
     }
 
     const saved = Promise.all([
@@ -1344,10 +1358,11 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
     await commitCard(
       message,
       saved,
-      stockTradeCard(message.author, action, company, units, total, price, state, portfolioValue(state, market)),
+      stockTradeCard(message.author, action, company, units, total, price, state, portfolioValue(state, market), action === 'sell' ? Number(state.__lastStockProfit || 0) : null),
       `stock-${action}-${company.code}-${message.author.id}.png`,
       `<@${message.author.id}> — ${action === 'buy' ? 'شراء' : 'بيع'} ${company.name} • ${money(total)}`,
     );
+    delete state.__lastStockProfit;
   });
 }
 
@@ -1358,7 +1373,7 @@ async function top(message, client) {
     for (const [accountKey, state] of users) {
       if (!accountKey.startsWith(`${message.guildId}:`)) continue;
       const userId = accountKey.slice(message.guildId.length + 1);
-      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: state.balance + state.vault + portfolioValue(state, market) + assetsValue(state, market) });
+      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: baseNetWorth(state, market) });
     }
     rows.sort((a, b) => b.net - a.net);
 
@@ -1374,13 +1389,20 @@ async function top(message, client) {
       await replyInfo(message, 'تعذر تحديث الترتيب', 'جرّب مرة ثانية');
       return;
     }
-    await replyImage(message, await topCard(enriched, market.price), `top-${message.guildId}.png`, '🏆 أغنى 10 أعضاء في Neverless Bank • المركز الأول VVIP 👑');
+    await replyImage(message, await topCard(enriched, market.price), `top-${message.guildId}.png`, '🏆 أغنى 10 أعضاء في Neverless Bank');
   });
 }
 
 async function richestId(guildId) {
   const market = normalizeMarketShape(markets.get(guildId) || newMarket());
-  return richestBaseUser(guildId, market)?.userId || null;
+  let best = null;
+  for (const [accountKey,state] of users) {
+    if (!accountKey.startsWith(`${guildId}:`)) continue;
+    const id = accountKey.slice(guildId.length + 1);
+    const net = baseNetWorth(state,market);
+    if (!best || net > best.net) best = {id,net};
+  }
+  return best?.id || null;
 }
 
 async function protect(message, cancel = false) {
@@ -1415,7 +1437,7 @@ async function rob(message) {
     const left = commandCooldownLeft(thief, 'rob');
     if (left > 0) return replyInfo(message, 'السرقة غير متاحة', `الوقت الباقي ${formatDuration(left)}`);
     const { market } = updateMarket(message.guildId);
-    if (await richestId(message.guildId, market.price) === target.id) return replyInfo(message, 'VVIP 👑', 'أغنى شخص في السيرفر محمي من السرقة');
+    if (await richestId(message.guildId) === target.id) return replyInfo(message, 'المركز الأول 👑', 'أغنى شخص في السيرفر محمي من السرقة');
     if (victim.protectionUntil > Date.now()) return replyInfo(message, 'العميل محمي', `العميل <@${target.id}> لديه حماية لمدة ${formatDuration(victim.protectionUntil - Date.now())}`, `<@${target.id}>`);
     setCommandCooldown(thief, 'rob');
     const available = Math.max(0, victim.balance);
@@ -1533,10 +1555,10 @@ async function handleBankMessage(message, client) {
 
     if (/^(?:ممتلكات|properties)$/u.test(text)) { await properties(message); return true; }
 
-    let assetMatch = text.match(/^(شراء|buy)\s+([^\s]+)(?:\s+(.+))?$/u);
-    if (assetMatch && assetFrom(assetMatch[2])) { await tradeAsset(message, 'buy', assetMatch[2], assetMatch[3] || ''); return true; }
-    assetMatch = text.match(/^(بيع|sell)\s+([^\s]+)(?:\s+(.+))?$/u);
-    if (assetMatch && assetFrom(assetMatch[2])) { await tradeAsset(message, 'sell', assetMatch[2], assetMatch[3] || ''); return true; }
+    let assetMatch = text.match(/^(?:شراء|buy)\s+(.+)$/u);
+    if (assetMatch && (assetFrom(assetMatch[1]) || assetMatch[1].includes('ذهب'))) { await tradeAsset(message,'buy',assetMatch[1]); return true; }
+    assetMatch = text.match(/^(?:بيع|sell)\s+(.+)$/u);
+    if (assetMatch && (assetFrom(assetMatch[1]) || assetMatch[1].includes('ذهب'))) { await tradeAsset(message,'sell',assetMatch[1]); return true; }
 
     if (/^(?:سهم|اسهم|أسهم|stock)$/u.test(text)) {
       await stock(message);
@@ -1640,8 +1662,8 @@ async function handleBankMessage(message, client) {
     if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
     const stockInfo = text.match(/^(?:سهم|stock)\s+([^\s]+)$/u);
     if (stockInfo && companyFrom(stockInfo[1])) return replyUsage(message, stockInfo[1].toUpperCase(), [`شراء ${stockInfo[1].toUpperCase()} كامل`, `شراء ${stockInfo[1].toUpperCase()} 5000`, `بيع ${stockInfo[1].toUpperCase()} كامل`, `بيع ${stockInfo[1].toUpperCase()} 5000`]);
-    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء ARCANE كامل', 'شراء NVRS نص', 'شراء ASTRA ربع', 'شراء VVIP 5000']);
-    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع ARCANE كامل', 'بيع NVRS نص', 'بيع ASTRA ربع', 'بيع VVIP 5000']);
+    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء ARCANE كامل', 'شراء NVRS نص', 'شراء ASTRA ربع']);
+    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع ARCANE كامل', 'بيع NVRS نص', 'بيع ASTRA ربع']);
     const incompleteBuy = text.match(/^(?:شراء|buy)\s+([^\s]+)$/u);
     if (incompleteBuy && companyFrom(incompleteBuy[1])) return replyUsage(message, `شراء ${incompleteBuy[1].toUpperCase()}`, [`شراء ${incompleteBuy[1].toUpperCase()} كامل`, `شراء ${incompleteBuy[1].toUpperCase()} نص`, `شراء ${incompleteBuy[1].toUpperCase()} ربع`, `شراء ${incompleteBuy[1].toUpperCase()} 5000`]);
     const incompleteSell = text.match(/^(?:بيع|sell)\s+([^\s]+)$/u);
