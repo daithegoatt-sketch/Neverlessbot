@@ -396,7 +396,8 @@ async function tradeAsset(message, action, assetRaw, amountRaw = '') {
     let total;
     if (asset.fractional) {
       if (action === 'buy') {
-        const raw = amountRaw || 'كامل';
+        if (!amountRaw) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
+        const raw = amountRaw;
         total = parseAmount(raw, state.balance);
         if (!Number.isFinite(total)) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
         quantity = total / price;
@@ -404,7 +405,8 @@ async function tradeAsset(message, action, assetRaw, amountRaw = '') {
         state.assets.GOLD = owned + quantity;
       } else {
         const ownedValue = owned * price;
-        const raw = amountRaw || 'كامل';
+        if (!amountRaw) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
+        const raw = amountRaw;
         total = parseAmount(raw, ownedValue);
         if (!Number.isFinite(total)) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
         quantity = total / price;
@@ -1212,6 +1214,7 @@ async function fruits(message, raw) {
     if(output.error) return sent.edit({content:output.error,components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});
     await sent.edit({content:`<@${message.author.id}> — ${output.net>0?`ربحت ${money(output.net)}`:output.net===0?'تعادل':`خسرت ${money(-output.net)}`}`,files:[{attachment:fruitGameCard(wager,output.fruits,output.won,output.payout,output.balance),name:`fruits-${nonce}.png`}],attachments:[],components:singleButton('fruit',nonce,'سحب',true),allowedMentions:{parse:[]}}).catch(()=>{});
   });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});});
 }
 
 function colorButtons(nonce, disabled=false) {
@@ -1243,6 +1246,7 @@ async function colors(message, raw) {
     if(output.error)return sent.edit({content:output.error,components:colorButtons(nonce,true)}).catch(()=>{});
     await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(output.net)}`:`خسرت ${money(wager)}`}`,files:[{attachment:colorsCard(wager,target,picked,output.won,output.balance),name:`colors-result-${nonce}.png`}],attachments:[],components:colorButtons(nonce,true),allowedMentions:{parse:[]}}).catch(()=>{});
   });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:colorButtons(nonce,true)}).catch(()=>{});});
 }
 
 function choiceButtons(prefix, nonce, labels, disabled=false) {
@@ -1263,6 +1267,7 @@ async function coin(message, raw) {
     if(output.error)return sent.edit({content:output.error,components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});
     await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(wager)}`:`خسرت ${money(wager)}`}`,files:[{attachment:coinCard(wager,side,result,output.won,output.balance),name:`coin-${nonce}.png`}],attachments:[],components:choiceButtons('coin',nonce,labels,true),allowedMentions:{parse:[]}}).catch(()=>{});
   });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});});
 }
 
 async function numberGuess(message, raw) {
@@ -1279,6 +1284,7 @@ async function numberGuess(message, raw) {
     if(output.error)return sent.edit({content:output.error,components:choiceButtons('number',nonce,labels,true)}).catch(()=>{});
     await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(wager*3)}`:`خسرت ${money(wager)}`}`,files:[{attachment:numberGuessCard(wager,picked,result,output.won,output.balance),name:`number-${nonce}.png`}],attachments:[],components:choiceButtons('number',nonce,labels,true),allowedMentions:{parse:[]}}).catch(()=>{});
   });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:choiceButtons('number',nonce,labels,true)}).catch(()=>{});});
 }
 
 async function stock(message) {
@@ -1632,6 +1638,10 @@ async function handleBankMessage(message, client) {
     if (/^(?:رقم|number)$/u.test(text)) return replyUsage(message, 'رقم', ['رقم كامل', 'رقم نص', 'رقم ربع', 'رقم 5000']);
     if (/^(?:ايداع|إيداع|deposit)$/u.test(text)) return replyUsage(message, 'ايداع', ['ايداع كامل', 'ايداع نص', 'ايداع ربع', 'ايداع 5000']);
     if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
+    const stockInfo = text.match(/^(?:سهم|stock)\s+([^\s]+)$/u);
+    if (stockInfo && companyFrom(stockInfo[1])) return replyUsage(message, stockInfo[1].toUpperCase(), [`شراء ${stockInfo[1].toUpperCase()} كامل`, `شراء ${stockInfo[1].toUpperCase()} 5000`, `بيع ${stockInfo[1].toUpperCase()} كامل`, `بيع ${stockInfo[1].toUpperCase()} 5000`]);
+    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء ARCANE كامل', 'شراء NVRS نص', 'شراء ASTRA ربع', 'شراء VVIP 5000']);
+    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع ARCANE كامل', 'بيع NVRS نص', 'بيع ASTRA ربع', 'بيع VVIP 5000']);
     const incompleteBuy = text.match(/^(?:شراء|buy)\s+([^\s]+)$/u);
     if (incompleteBuy && companyFrom(incompleteBuy[1])) return replyUsage(message, `شراء ${incompleteBuy[1].toUpperCase()}`, [`شراء ${incompleteBuy[1].toUpperCase()} كامل`, `شراء ${incompleteBuy[1].toUpperCase()} نص`, `شراء ${incompleteBuy[1].toUpperCase()} ربع`, `شراء ${incompleteBuy[1].toUpperCase()} 5000`]);
     const incompleteSell = text.match(/^(?:بيع|sell)\s+([^\s]+)$/u);
