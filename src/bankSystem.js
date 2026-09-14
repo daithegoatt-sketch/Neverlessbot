@@ -255,7 +255,7 @@ async function withLocks(lockKeys, fn) {
 
 function normalizeMarketShape(market) {
   if (!market.companies || typeof market.companies !== 'object') market.companies = {};
-  const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42, VVIP: 100 };
+  const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42 };
   for (const company of Object.values(STOCK_COMPANIES)) {
     if (!market.companies[company.code]) {
       const seed = company.code === 'NVRS' && Number(market.price) > 0 ? Number(market.price) : seeds[company.code];
@@ -1127,12 +1127,17 @@ async function boxes(message, raw) {
   });
 }
 
-function gridButtons(prefix, nonce, count, disabled = false) {
+function gridButtons(prefix, nonce, count, disabled = false, revealed = new Set()) {
   const rows = [];
   for (let start = 0; start < count; start += 3) {
     const row = new ActionRowBuilder();
     for (let i = start; i < Math.min(start + 3, count); i += 1) {
-      row.addComponents(new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}:${i}`).setLabel(String(i + 1)).setStyle(ButtonStyle.Secondary).setDisabled(disabled));
+      const opened = revealed.has(i);
+      row.addComponents(new ButtonBuilder()
+        .setCustomId(`nlbank:${prefix}:${nonce}:${i}`)
+        .setLabel(opened ? 'SAFE' : String(i + 1))
+        .setStyle(opened ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(disabled || opened));
     }
     rows.push(row);
   }
@@ -1143,6 +1148,7 @@ async function mines(message, raw) {
   const state = getUser(message.guildId, message.author.id);
   const wager = parseAmount(raw, Math.min(state.balance, MAX_BET));
   if (!Number.isFinite(wager)) return replyUsage(message, 'الغام', ['الغام كامل', 'الغام نص', 'الغام ربع', 'الغام 5000']);
+
   let started = false;
   await withLock(accountLockKey(message.guildId, message.author.id), async () => {
     const fresh = getUser(message.guildId, message.author.id);
@@ -1153,74 +1159,139 @@ async function mines(message, raw) {
     started = await persistUser(message.guild, message.author.id);
   });
   if (!started) return;
+
   const cells = Array(9).fill('safe');
   const mineIndexes = new Set();
-  while (mineIndexes.size < 3) mineIndexes.add(Math.floor(Math.random() * 9));
+  while (mineIndexes.size < 2) mineIndexes.add(Math.floor(Math.random() * 9));
   for (const i of mineIndexes) cells[i] = 'mine';
+
   const nonce = crypto.randomBytes(4).toString('hex');
-  const sent = await replyImage(message, minesCard(wager, cells, []), `mines-${nonce}.png`, `<@${message.author.id}> — اختر مربعاً`, gridButtons('mine', nonce, 9));
-  const collector = sent.createMessageComponentCollector({ time: 45_000 });
+  const revealed = new Set();
+  const sent = await replyImage(message, minesCard(wager, cells, [], null, null, 0), `mines-${nonce}.png`, `<@${message.author.id}> — افتح 3 خانات آمنة`, gridButtons('mine', nonce, 9, false, revealed));
+  const collector = sent.createMessageComponentCollector({ time: 60_000 });
+
   collector.on('collect', async (interaction) => {
     if (interaction.user.id !== message.author.id) return interaction.reply({ content:'هذه الجولة ليست لك.', ephemeral:true }).catch(()=>{});
-    collector.stop('done'); await interaction.deferUpdate().catch(()=>{});
     const picked = Number(interaction.customId.split(':')[3]);
-    const lost = cells[picked] === 'mine';
-    let result;
-    await withLock(accountLockKey(message.guildId, message.author.id), async () => {
-      const fresh = getUser(message.guildId, message.author.id);
-      if (fresh.balance < wager) { result={error:'رصيدك أصبح أقل من مبلغ الجولة.'}; return; }
-      const payout = lost ? 0 : Math.floor(wager * 1.5);
-      const net = payout - wager;
-      fresh.balance = fresh.balance - wager + payout;
-      fresh.games += 1;
-      if (net > 0) { fresh.wins += 1; fresh.earned += net; } else { fresh.lost += -net; }
-      result = await persistUser(message.guild, message.author.id) ? { balance:fresh.balance, net } : { error:'تعذر حفظ الجولة.' };
-    });
-    if (result.error) return sent.edit({content:result.error,components:gridButtons('mine',nonce,9,true)}).catch(()=>{});
+    if (revealed.has(picked)) return interaction.deferUpdate().catch(()=>{});
+    await interaction.deferUpdate().catch(()=>{});
+
+    if (cells[picked] === 'mine') {
+      collector.stop('done');
+      let result;
+      await withLock(accountLockKey(message.guildId, message.author.id), async () => {
+        const fresh = getUser(message.guildId, message.author.id);
+        if (fresh.balance < wager) { result={error:'رصيدك أصبح أقل من مبلغ الجولة.'}; return; }
+        fresh.balance -= wager; fresh.games += 1; fresh.lost += wager;
+        result = await persistUser(message.guild,message.author.id) ? {balance:fresh.balance} : {error:'تعذر حفظ الجولة.'};
+      });
+      if (result.error) return sent.edit({content:result.error,components:gridButtons('mine',nonce,9,true,revealed)}).catch(()=>{});
+      await sent.edit({
+        content:`<@${message.author.id}> — لغم! خسرت ${money(wager)}`,
+        files:[{attachment:minesCard(wager,cells,[...revealed,picked],'loss',result.balance,revealed.size),name:`mines-result-${nonce}.png`}],
+        attachments:[],components:gridButtons('mine',nonce,9,true,revealed),allowedMentions:{users:[message.author.id],repliedUser:true}
+      }).catch(()=>{});
+      return;
+    }
+
+    revealed.add(picked);
+    if (revealed.size >= 3) {
+      collector.stop('done');
+      let result;
+      await withLock(accountLockKey(message.guildId,message.author.id), async()=>{
+        const fresh=getUser(message.guildId,message.author.id);
+        if(fresh.balance<wager){result={error:'رصيدك أصبح أقل من مبلغ الجولة.'};return;}
+        const payout=Math.floor(wager*2.2),net=payout-wager;
+        fresh.balance=fresh.balance-wager+payout;fresh.games+=1;fresh.wins+=1;fresh.earned+=net;
+        result=await persistUser(message.guild,message.author.id)?{balance:fresh.balance,net}:{error:'تعذر حفظ الجولة.'};
+      });
+      if(result.error)return sent.edit({content:result.error,components:gridButtons('mine',nonce,9,true,revealed)}).catch(()=>{});
+      await sent.edit({
+        content:`<@${message.author.id}> — نجوت من 3 خانات وربحت ${money(result.net)}`,
+        files:[{attachment:minesCard(wager,cells,[...revealed],'win',result.balance,3),name:`mines-win-${nonce}.png`}],
+        attachments:[],components:gridButtons('mine',nonce,9,true,revealed),allowedMentions:{users:[message.author.id],repliedUser:true}
+      }).catch(()=>{});
+      return;
+    }
+
     await sent.edit({
-      content: `<@${message.author.id}> — ${lost ? `خسرت ${money(wager)}` : `ربحت ${money(result.net)}`}`,
-      files:[{attachment:minesCard(wager,cells,[picked],lost?'loss':'win',result.balance),name:`mines-result-${nonce}.png`}],
-      attachments:[],components:gridButtons('mine',nonce,9,true),allowedMentions:{parse:[]}
+      files:[{attachment:minesCard(wager,cells,[...revealed],null,null,revealed.size),name:`mines-progress-${nonce}.png`}],
+      attachments:[],components:gridButtons('mine',nonce,9,false,revealed)
     }).catch(()=>{});
   });
-  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:gridButtons('mine',nonce,9,true)}).catch(()=>{});});
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:gridButtons('mine',nonce,9,true,revealed)}).catch(()=>{});});
 }
 
-function singleButton(prefix, nonce, label, disabled=false) {
-  return [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}`).setLabel(label).setStyle(ButtonStyle.Primary).setDisabled(disabled))];
+function fruitButtons(nonce, board, revealed, disabled=false) {
+  const rows=[];
+  for(let start=0;start<14;start+=5){
+    const row=new ActionRowBuilder();
+    for(let i=start;i<Math.min(start+5,14);i+=1){
+      const open=revealed.has(i);
+      row.addComponents(new ButtonBuilder()
+        .setCustomId(`nlbank:fruit:${nonce}:${i}`)
+        .setLabel(open ? board[i] : '?')
+        .setStyle(open ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(disabled || open));
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
-async function fruits(message, raw) {
-  const state=getUser(message.guildId,message.author.id);
-  const wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
-  if(!Number.isFinite(wager)) return replyUsage(message,'فواكه',['فواكه كامل','فواكه نص','فواكه ربع','فواكه 5000']);
-  const nonce=crypto.randomBytes(4).toString('hex');
-  const sent=await message.reply({content:`🍒 <@${message.author.id}> — اضغط سحب`,components:singleButton('fruit',nonce,'سحب'),allowedMentions:{parse:[]}});
-  const collector=sent.createMessageComponentCollector({time:45000});
-  collector.on('collect',async interaction=>{
-    if(interaction.user.id!==message.author.id) return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
-    collector.stop('done'); await interaction.deferUpdate().catch(()=>{});
-    let output;
-    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
-      const fresh=getUser(message.guildId,message.author.id);
-      const left=commandCooldownLeft(fresh,'fruits');
-      if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;}
-      if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}
-      const pool=['cherry','lemon','grape','melon'];
-      const fruits=[0,1,2].map(()=>pool[Math.floor(Math.random()*pool.length)]);
-      const triple=fruits[0]===fruits[1]&&fruits[1]===fruits[2];
-      const pair=!triple&&(fruits[0]===fruits[1]||fruits[1]===fruits[2]||fruits[0]===fruits[2]);
-      const mult=triple?4:pair?1.5:0;
-      const payout=Math.floor(wager*mult), net=payout-wager;
-      fresh.balance=fresh.balance-wager+payout; fresh.games+=1;
-      if(net>0){fresh.wins+=1;fresh.earned+=net;}else if(net<0)fresh.lost+=-net;
-      setCommandCooldown(fresh,'fruits');
-      output=await persistUser(message.guild,message.author.id)?{fruits,payout,net,balance:fresh.balance,won:net>0}:{error:'تعذر الحفظ'};
-    });
-    if(output.error) return sent.edit({content:output.error,components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});
-    await sent.edit({content:`<@${message.author.id}> — ${output.net>0?`ربحت ${money(output.net)}`:output.net===0?'تعادل':`خسرت ${money(-output.net)}`}`,files:[{attachment:fruitGameCard(wager,output.fruits,output.won,output.payout,output.balance),name:`fruits-${nonce}.png`}],attachments:[],components:singleButton('fruit',nonce,'سحب',true),allowedMentions:{parse:[]}}).catch(()=>{});
+async function fruits(message) {
+  let started=false;
+  await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
+    const fresh=getUser(message.guildId,message.author.id);
+    const left=commandCooldownLeft(fresh,'fruits');
+    if(left>0)return replyInfo(message,'الفواكه غير متاحة',`الوقت الباقي ${formatDuration(left)}`);
+    setCommandCooldown(fresh,'fruits');
+    started=await persistUser(message.guild,message.author.id);
   });
-  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});});
+  if(!started)return;
+
+  const symbols=['🍒','🍑','🍎','🍓','🍋','🍇','🍉'];
+  const board=[...symbols,...symbols];
+  for(let i=board.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[board[i],board[j]]=[board[j],board[i]];}
+  const revealed=new Set();
+  const nonce=crypto.randomBytes(4).toString('hex');
+  const maxPicks=10;
+  const sent=await replyImage(message,fruitGameCard(0,0,maxPicks,null,null),`fruits-${nonce}.png`,`<@${message.author.id}> — اجمع 3 أزواج قبل انتهاء المحاولات`,fruitButtons(nonce,board,revealed));
+  const collector=sent.createMessageComponentCollector({time:90_000});
+
+  collector.on('collect',async interaction=>{
+    if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
+    const picked=Number(interaction.customId.split(':')[3]);
+    if(revealed.has(picked))return interaction.deferUpdate().catch(()=>{});
+    revealed.add(picked);await interaction.deferUpdate().catch(()=>{});
+    const counts={};for(const i of revealed)counts[board[i]]=(counts[board[i]]||0)+1;
+    const pairs=Object.values(counts).filter(n=>n>=2).length;
+    const picks=revealed.size;
+    const won=pairs>=3;
+    const over=won||picks>=maxPicks;
+
+    if(over){
+      collector.stop('done');
+      let reward=0,balance;
+      await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
+        const fresh=getUser(message.guildId,message.author.id);fresh.games+=1;
+        if(won){reward=25000+Math.floor(Math.random()*25001);fresh.balance+=reward;fresh.earned+=reward;fresh.wins+=1;}
+        balance=fresh.balance;await persistUser(message.guild,message.author.id);
+      });
+      await sent.edit({
+        content:won?`<@${message.author.id}> — اكتملت 3 أزواج وربحت ${money(reward)}`:`<@${message.author.id}> — انتهت المحاولات`,
+        files:[{attachment:fruitGameCard(picks,pairs,maxPicks,reward,balance,won),name:`fruits-result-${nonce}.png`}],
+        attachments:[],components:fruitButtons(nonce,board,revealed,true),allowedMentions:{users:[message.author.id],repliedUser:true}
+      }).catch(()=>{});
+      return;
+    }
+
+    await sent.edit({
+      files:[{attachment:fruitGameCard(picks,pairs,maxPicks,null,null),name:`fruits-progress-${nonce}.png`}],
+      attachments:[],components:fruitButtons(nonce,board,revealed,false)
+    }).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done')await sent.edit({components:fruitButtons(nonce,board,revealed,true)}).catch(()=>{});});
 }
 
 function colorButtons(nonce, disabled=false) {
@@ -1229,51 +1300,47 @@ function colorButtons(nonce, disabled=false) {
   )];
 }
 
-async function colors(message, raw) {
-  const state=getUser(message.guildId,message.author.id);
-  const wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
-  if(!Number.isFinite(wager)) return replyUsage(message,'الوان',['الوان كامل','الوان نص','الوان ربع','الوان 5000']);
+async function colors(message) {
+  let started=false;
+  await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
+    const fresh=getUser(message.guildId,message.author.id);const left=commandCooldownLeft(fresh,'colors');
+    if(left>0)return replyInfo(message,'الألوان غير متاحة',`الوقت الباقي ${formatDuration(left)}`);
+    setCommandCooldown(fresh,'colors');started=await persistUser(message.guild,message.author.id);
+  });
+  if(!started)return;
   const nonce=crypto.randomBytes(4).toString('hex'), names=['red','blue','green','gold'];
   const target=names[Math.floor(Math.random()*names.length)];
-  const sent=await replyImage(message,colorsCard(wager,target),`colors-${nonce}.png`,`<@${message.author.id}> — اختر اللون`,colorButtons(nonce));
+  const sent=await replyImage(message,colorsCard(0,target),`colors-${nonce}.png`,`<@${message.author.id}> — اختر اللون`,colorButtons(nonce));
   const collector=sent.createMessageComponentCollector({time:45000});
   collector.on('collect',async interaction=>{
     if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
     collector.stop('done');await interaction.deferUpdate().catch(()=>{});
-    const picked=names[Number(interaction.customId.split(':')[3])];
-    let output;
-    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
-      const fresh=getUser(message.guildId,message.author.id); const left=commandCooldownLeft(fresh,'colors');
-      if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;} if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}
-      const won=picked===target,payout=won?wager*3:0,net=payout-wager;
-      fresh.balance=fresh.balance-wager+payout;fresh.games+=1;if(won){fresh.wins+=1;fresh.earned+=net;}else fresh.lost+=wager;setCommandCooldown(fresh,'colors');
-      output=await persistUser(message.guild,message.author.id)?{won,balance:fresh.balance,net}:{error:'تعذر الحفظ'};
-    });
-    if(output.error)return sent.edit({content:output.error,components:colorButtons(nonce,true)}).catch(()=>{});
-    await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(output.net)}`:`خسرت ${money(wager)}`}`,files:[{attachment:colorsCard(wager,target,picked,output.won,output.balance),name:`colors-result-${nonce}.png`}],attachments:[],components:colorButtons(nonce,true),allowedMentions:{parse:[]}}).catch(()=>{});
+    const picked=names[Number(interaction.customId.split(':')[3])],won=picked===target;let balance,reward=0;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);fresh.games+=1;if(won){reward=7500;fresh.balance+=reward;fresh.earned+=reward;fresh.wins+=1;}balance=fresh.balance;await persistUser(message.guild,message.author.id);});
+    await sent.edit({content:won?`<@${message.author.id}> — اختيار صحيح +${money(reward)}`:`<@${message.author.id}> — اختيار خاطئ`,files:[{attachment:colorsCard(0,target,picked,won,balance,reward),name:`colors-result-${nonce}.png`}],attachments:[],components:colorButtons(nonce,true),allowedMentions:{users:[message.author.id],repliedUser:true}}).catch(()=>{});
   });
-  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:colorButtons(nonce,true)}).catch(()=>{});});
+  collector.on('end',async(_,reason)=>{if(reason!=='done')await sent.edit({components:colorButtons(nonce,true)}).catch(()=>{});});
 }
 
 function choiceButtons(prefix, nonce, labels, disabled=false) {
   return [new ActionRowBuilder().addComponents(...labels.map((label,i)=>new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}:${i}`).setLabel(label).setStyle(ButtonStyle.Secondary).setDisabled(disabled)))];
 }
 
-async function coin(message, raw) {
-  const state=getUser(message.guildId,message.author.id), wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
-  if(!Number.isFinite(wager))return replyUsage(message,'عملة',['عملة كامل','عملة نص','عملة ربع','عملة 5000']);
-  const nonce=crypto.randomBytes(4).toString('hex'), labels=['وجه','كتابة'];
-  const sent=await message.reply({content:`🪙 <@${message.author.id}> — اختر وجه أو كتابة`,components:choiceButtons('coin',nonce,labels),allowedMentions:{parse:[]}});
+async function coin(message) {
+  let started=false;
+  await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);const left=commandCooldownLeft(fresh,'coin');if(left>0)return replyInfo(message,'العملة غير متاحة',`الوقت الباقي ${formatDuration(left)}`);setCommandCooldown(fresh,'coin');started=await persistUser(message.guild,message.author.id);});
+  if(!started)return;
+  const nonce=crypto.randomBytes(4).toString('hex'),labels=['وجه','كتابة'];
+  const sent=await message.reply({content:`🪙 <@${message.author.id}> — اختر وجه أو كتابة`,components:choiceButtons('coin',nonce,labels),allowedMentions:{users:[message.author.id],repliedUser:true}});
   const collector=sent.createMessageComponentCollector({time:45000});
   collector.on('collect',async interaction=>{
     if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
     collector.stop('done');await interaction.deferUpdate().catch(()=>{});
-    const side=Number(interaction.customId.split(':')[3])===0?'heads':'tails',result=Math.random()<.5?'heads':'tails';let output;
-    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);const left=commandCooldownLeft(fresh,'coin');if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;}if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}const won=side===result,payout=won?wager*2:0,net=payout-wager;fresh.balance=fresh.balance-wager+payout;fresh.games+=1;if(won){fresh.wins+=1;fresh.earned+=net;}else fresh.lost+=wager;setCommandCooldown(fresh,'coin');output=await persistUser(message.guild,message.author.id)?{won,balance:fresh.balance}:{error:'تعذر الحفظ'};});
-    if(output.error)return sent.edit({content:output.error,components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});
-    await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(wager)}`:`خسرت ${money(wager)}`}`,files:[{attachment:coinCard(wager,side,result,output.won,output.balance),name:`coin-${nonce}.png`}],attachments:[],components:choiceButtons('coin',nonce,labels,true),allowedMentions:{parse:[]}}).catch(()=>{});
+    const side=Number(interaction.customId.split(':')[3])===0?'heads':'tails',result=Math.random()<.5?'heads':'tails',won=side===result;let balance,reward=0;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);fresh.games+=1;if(won){reward=5000;fresh.balance+=reward;fresh.earned+=reward;fresh.wins+=1;}balance=fresh.balance;await persistUser(message.guild,message.author.id);});
+    await sent.edit({content:won?`<@${message.author.id}> — ربحت ${money(reward)}`:`<@${message.author.id}> — خسرت الجولة بدون خصم`,files:[{attachment:coinCard(0,side,result,won,balance,reward),name:`coin-${nonce}.png`}],attachments:[],components:choiceButtons('coin',nonce,labels,true),allowedMentions:{users:[message.author.id],repliedUser:true}}).catch(()=>{});
   });
-  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});});
+  collector.on('end',async(_,reason)=>{if(reason!=='done')await sent.edit({components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});});
 }
 
 async function numberGuess(message, raw) {
@@ -1494,7 +1561,7 @@ async function handleBankMessage(message, client) {
     if (/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)) {
       await message.reply({
         embeds: [helpEmbed()],
-        allowedMentions: { repliedUser: false, parse: [] },
+        allowedMentions: { repliedUser: true, users: [message.author.id] },
       });
       return true;
     }
@@ -1505,7 +1572,7 @@ async function handleBankMessage(message, client) {
     if (/^(?:وقت|cooldowns?)$/u.test(text)) {
       await message.reply({
         embeds: [cooldownEmbed(message.author, getUser(message.guildId, message.author.id))],
-        allowedMentions: { repliedUser: false, parse: [] },
+        allowedMentions: { repliedUser: true, users: [message.author.id] },
       });
       return true;
     }
@@ -1624,12 +1691,9 @@ async function handleBankMessage(message, client) {
 
     match = text.match(/^(?:الغام|ألغام|mines)\s+(.+)$/u);
     if (match) { await mines(message, match[1]); return true; }
-    match = text.match(/^(?:فواكه|fruits)\s+(.+)$/u);
-    if (match) { await fruits(message, match[1]); return true; }
-    match = text.match(/^(?:الوان|ألوان|colors)\s+(.+)$/u);
-    if (match) { await colors(message, match[1]); return true; }
-    match = text.match(/^(?:عملة|coin)\s+(.+)$/u);
-    if (match) { await coin(message, match[1]); return true; }
+    if (/^(?:فواكه|fruits)(?:\s|$)/u.test(text)) { await fruits(message); return true; }
+    if (/^(?:الوان|ألوان|colors)(?:\s|$)/u.test(text)) { await colors(message); return true; }
+    if (/^(?:عملة|coin)(?:\s|$)/u.test(text)) { await coin(message); return true; }
     match = text.match(/^(?:رقم|number)\s+(.+)$/u);
     if (match) { await numberGuess(message, match[1]); return true; }
 
@@ -1654,9 +1718,6 @@ async function handleBankMessage(message, client) {
     if (/^(?:هايلو|هاي لو|hilo)$/u.test(text)) return replyUsage(message, 'هايلو', ['هايلو كامل', 'هايلو نص', 'هايلو ربع', 'هايلو 5000']);
     if (/^(?:صناديق|boxes)$/u.test(text)) return replyUsage(message, 'صناديق', ['صناديق كامل', 'صناديق نص', 'صناديق ربع', 'صناديق 5000']);
     if (/^(?:الغام|ألغام|mines)$/u.test(text)) return replyUsage(message, 'الغام', ['الغام كامل', 'الغام نص', 'الغام ربع', 'الغام 5000']);
-    if (/^(?:فواكه|fruits)$/u.test(text)) return replyUsage(message, 'فواكه', ['فواكه كامل', 'فواكه نص', 'فواكه ربع', 'فواكه 5000']);
-    if (/^(?:الوان|ألوان|colors)$/u.test(text)) return replyUsage(message, 'الوان', ['الوان كامل', 'الوان نص', 'الوان ربع', 'الوان 5000']);
-    if (/^(?:عملة|coin)$/u.test(text)) return replyUsage(message, 'عملة', ['عملة كامل', 'عملة نص', 'عملة ربع', 'عملة 5000']);
     if (/^(?:رقم|number)$/u.test(text)) return replyUsage(message, 'رقم', ['رقم كامل', 'رقم نص', 'رقم ربع', 'رقم 5000']);
     if (/^(?:ايداع|إيداع|deposit)$/u.test(text)) return replyUsage(message, 'ايداع', ['ايداع كامل', 'ايداع نص', 'ايداع ربع', 'ايداع 5000']);
     if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
