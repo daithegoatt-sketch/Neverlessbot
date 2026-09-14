@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const { handleMessage: handleFriendshipMessage } = require('./friendshipSystem');
 const {
   USER_PREFIX,
@@ -11,6 +11,7 @@ const {
   TIP_CD,
   MARKET_STEP,
   MAX_BET,
+  PROTECTION_DURATION,
   clamp,
   newUser,
   packUser,
@@ -31,7 +32,6 @@ const {
   cooldownStatus,
 } = require('./bankUtils');
 const {
-  helpCard,
   balanceCard,
   rewardCard,
   vaultCard,
@@ -39,8 +39,8 @@ const {
   marketCard,
   stockTradeCard,
   topCard,
-  statusCard,
   infoCard,
+  economyEventCard,
 } = require('./bankVisualCore');
 const {
   investmentCard,
@@ -58,6 +58,7 @@ const BANK_TEST_CHANNEL_ID = '1548665662556217384';
 const BANK_EXTRA_CHANNEL_ID = '1548983198120419418';
 const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID, BANK_EXTRA_CHANNEL_ID]);
 const DATA_CHANNEL_NAME = 'neverless-data';
+const ADMIN_PERMISSION = 'Administrator';
 
 const users = new Map();
 const userMessageIds = new Map();
@@ -237,6 +238,47 @@ function updateMarket(guildId) {
   return { market, changed: steps > 0 };
 }
 
+function helpEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x173a5e)
+    .setTitle('🏦 أوامر Neverless Bank')
+    .setDescription('جميع الأموال داخل النظام افتراضية.')
+    .addFields(
+      { name: 'الحساب', value: 'رصيد\nتحويل\nايداع\nسحب', inline: true },
+      { name: 'الدخل', value: 'راتب\nبخشيش\nوقت', inline: true },
+      { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
+      { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق', inline: true },
+      { name: 'السوق', value: 'سهم\nشراء سهم\nبيع سهم', inline: true },
+      { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
+    )
+    .setFooter({ text: 'Neverless Bank' });
+}
+
+function cooldownEmbed(user, state) {
+  const now = Date.now();
+  const rows = [
+    ['راتب', Math.max(0, state.salaryAt + SALARY_CD - now)],
+    ['بخشيش', Math.max(0, state.tipAt + TIP_CD - now)],
+    ['رهان', commandCooldownLeft(state, 'bet', now)],
+    ['استثمار', commandCooldownLeft(state, 'invest', now)],
+    ['نرد', commandCooldownLeft(state, 'dice', now)],
+    ['قمار', commandCooldownLeft(state, 'gamble', now)],
+    ['تداول', commandCooldownLeft(state, 'trade', now)],
+    ['روليت', commandCooldownLeft(state, 'roulette', now)],
+    ['هايلو', commandCooldownLeft(state, 'hilo', now)],
+    ['صناديق', commandCooldownLeft(state, 'boxes', now)],
+    ['سرقة', commandCooldownLeft(state, 'rob', now)],
+  ];
+  const protectionLeft = Math.max(0, Number(state.protectionUntil || 0) - now);
+  const value = rows.map(([name, ms]) => `${ms <= 0 ? '✅' : '❌'} **${name}** — ${ms <= 0 ? 'متاح' : formatDuration(ms)}`).join('\n');
+  return new EmbedBuilder()
+    .setColor(0x173a5e)
+    .setTitle('⏱️ حالة أوامر Neverless Bank')
+    .setDescription(value)
+    .addFields({ name: 'الحماية', value: protectionLeft > 0 ? `🛡️ مفعلة — ${formatDuration(protectionLeft)}` : 'غير مفعلة' })
+    .setFooter({ text: user.globalName || user.username || 'Neverless Bank' });
+}
+
 async function replyImage(message, buffer, name, content = null, components = []) {
   return message.reply({
     content: content || undefined,
@@ -369,6 +411,13 @@ async function vault(message, action, raw) {
   });
 }
 
+function scaledPercent(wager, min, max) {
+  const scale = Math.max(0, Math.min(1, Math.log10(Math.max(10, wager)) / 9));
+  const lo = min * (1 - scale * 0.35);
+  const hi = max * (1 - scale * 0.45);
+  return Math.round(lo + Math.random() * (hi - lo));
+}
+
 function randomOutcome(type, wager) {
   if (type === 'bet') {
     const won = Math.random() < 0.48;
@@ -376,7 +425,7 @@ function randomOutcome(type, wager) {
     return { payout: won ? Math.floor(wager * multiplier) : 0, multiplier };
   }
   if (type === 'invest') {
-    const percent = Math.floor(Math.random() * 71) - 30;
+    const percent = scaledPercent(wager, -28, 38);
     return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
   }
   if (type === 'dice') {
@@ -389,7 +438,7 @@ function randomOutcome(type, wager) {
     const multiplier = roll < 0.52 ? 0 : roll < 0.78 ? 1.5 : roll < 0.94 ? 2 : 5;
     return { payout: Math.floor(wager * multiplier), multiplier };
   }
-  const percent = Math.floor(Math.random() * 51) - 22;
+  const percent = scaledPercent(wager, -20, 26);
   return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
 }
 
@@ -775,7 +824,7 @@ async function top(message, client) {
     }
     rows.sort((a, b) => b.net - a.net);
 
-    const enriched = await Promise.all(rows.slice(0, 5).map(async (row) => {
+    const enriched = await Promise.all(rows.slice(0, 10).map(async (row) => {
       const user = client.users.cache.get(row.userId) || await client.users.fetch(row.userId).catch(() => null);
       return {
         ...row,
@@ -787,7 +836,84 @@ async function top(message, client) {
       await replyInfo(message, 'تعذر تحديث الترتيب', 'جرّب مرة ثانية');
       return;
     }
-    await replyImage(message, await topCard(enriched, market.price), `top-${message.guildId}.png`, '🏆 أغنى 5 أعضاء في Neverless Bank');
+    await replyImage(message, await topCard(enriched, market.price), `top-${message.guildId}.png`, '🏆 أغنى 10 أعضاء في Neverless Bank • المركز الأول VVIP 👑');
+  });
+}
+
+async function richestId(guildId, marketPrice = 100) {
+  let best = null;
+  for (const [accountKey, state] of users) {
+    if (!accountKey.startsWith(`${guildId}:`)) continue;
+    const userId = accountKey.slice(guildId.length + 1);
+    const net = state.balance + state.vault + state.shares * marketPrice;
+    if (!best || net > best.net) best = { userId, net };
+  }
+  return best?.userId || null;
+}
+
+async function protect(message, cancel = false) {
+  await withLock(accountLockKey(message.guildId, message.author.id), async () => {
+    const state = getUser(message.guildId, message.author.id);
+    const now = Date.now();
+    if (cancel) {
+      state.protectionUntil = 0;
+      await commitCard(message, persistUser(message.guild, message.author.id),
+        economyEventCard(message.author, 'تم إلغاء الحماية', 0, state.balance, 'protect'),
+        `protection-cancel-${message.author.id}.png`, `<@${message.author.id}> — تم إلغاء الحماية`);
+      return;
+    }
+    if (state.protectionUntil > now) {
+      await replyInfo(message, 'الحماية مفعلة', `الوقت المتبقي ${formatDuration(state.protectionUntil - now)}`);
+      return;
+    }
+    state.protectionAt = now;
+    state.protectionUntil = now + PROTECTION_DURATION;
+    await commitCard(message, persistUser(message.guild, message.author.id),
+      economyEventCard(message.author, 'حماية لمدة ساعة', 0, state.balance, 'protect'),
+      `protection-${message.author.id}.png`, `<@${message.author.id}> — الحماية مفعلة لمدة ساعة`);
+  });
+}
+
+async function rob(message) {
+  const target = message.mentions.users.first();
+  if (!target || target.bot || target.id === message.author.id) return replyInfo(message, 'طريقة الاستخدام', 'سرقة @member');
+  await withLocks([accountLockKey(message.guildId, message.author.id), accountLockKey(message.guildId, target.id)], async () => {
+    const thief = getUser(message.guildId, message.author.id);
+    const victim = getUser(message.guildId, target.id);
+    const left = commandCooldownLeft(thief, 'rob');
+    if (left > 0) return replyInfo(message, 'السرقة غير متاحة', `الوقت الباقي ${formatDuration(left)}`);
+    const { market } = updateMarket(message.guildId);
+    if (await richestId(message.guildId, market.price) === target.id) return replyInfo(message, 'VVIP 👑', 'أغنى شخص في السيرفر محمي من السرقة');
+    if (victim.protectionUntil > Date.now()) return replyInfo(message, 'العميل محمي', `العميل <@${target.id}> لديه حماية لمدة ${formatDuration(victim.protectionUntil - Date.now())}`, `<@${target.id}>`);
+    setCommandCooldown(thief, 'rob');
+    const available = Math.max(0, victim.balance);
+    if (available < 1) { await persistUser(message.guild, message.author.id); return replyInfo(message, 'لا يوجد ما يسرق', 'رصيد العميل المتاح فارغ'); }
+    const success = Math.random() < 0.52;
+    const amount = Math.max(1, Math.min(available, Math.floor(available * (0.02 + Math.random() * 0.06))));
+    if (success) { victim.balance -= amount; thief.balance += amount; thief.earned += amount; }
+    else { const fine = Math.min(thief.balance, Math.max(1, Math.floor(amount * 0.35))); thief.balance -= fine; thief.lost += fine; }
+    const saved = Promise.all([persistUser(message.guild, message.author.id), persistUser(message.guild, target.id)]).then(x => x.every(Boolean));
+    const shown = success ? amount : Math.min(thief.lost, Math.max(1, Math.floor(amount * .35)));
+    await commitCard(message, saved, economyEventCard(message.author, success ? 'سرقة ناجحة' : 'فشلت السرقة', shown, thief.balance, success ? 'good' : 'bad'),
+      `rob-${message.author.id}.png`, success ? `<@${message.author.id}> سرق ${money(amount)} من <@${target.id}>` : `<@${message.author.id}> فشلت السرقة وتم تغريمه`);
+  });
+}
+
+function isAdmin(message) { return Boolean(message.member?.permissions?.has?.(ADMIN_PERMISSION)); }
+
+async function adminMoney(message, action, raw) {
+  if (!isAdmin(message)) return replyInfo(message, 'غير مصرح', 'هذا الأمر للإدارة فقط');
+  if (action === 'reset-server') {
+    const ids = [...users.keys()].filter(k => k.startsWith(`${message.guildId}:`)).map(k => k.slice(message.guildId.length + 1));
+    await Promise.all(ids.map(id => withLock(accountLockKey(message.guildId,id), async()=>{ const cleared = newUser(); cleared.balance = 0; users.set(key(message.guildId,id), cleared); return persistUser(message.guild,id); })));
+    return replyInfo(message, 'تم التصفير', 'تم تصفير حسابات البنك في السيرفر', null);
+  }
+  const target = message.mentions.users.first();
+  if (!target || target.bot) return replyInfo(message, 'طريقة الاستخدام', action === 'add' ? 'زيده 5000000 @member' : 'تصفير كامل @member');
+  return withLock(accountLockKey(message.guildId,target.id), async()=>{
+    const state=getUser(message.guildId,target.id);
+    if(action==='add'){ const amount=parseAmount(raw, Number.MAX_SAFE_INTEGER); if(!Number.isFinite(amount)) return replyInfo(message,'مبلغ غير صالح','مثال: زيده 5000000 @member'); state.balance += amount; await commitCard(message,persistUser(message.guild,target.id),economyEventCard(target,'إضافة إدارية',amount,state.balance,'good'),`admin-add-${target.id}.png`,`<@${target.id}> — تمت إضافة ${money(amount)}`); }
+    else { const cleared = newUser(); cleared.balance = 0; users.set(key(message.guildId,target.id),cleared); await commitCard(message,persistUser(message.guild,target.id),economyEventCard(target,'تصفير الحساب',0,0,'bad'),`admin-reset-${target.id}.png`,`<@${target.id}> — تم تصفير الحساب`); }
   });
 }
 
@@ -805,14 +931,17 @@ async function handleBankMessage(message, client) {
   const text = normalized(message.content);
   if (!text) return false;
 
-  const known = /^(?:اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);
+  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);
   if (!known) return false;
 
   try {
     await ensureLoaded(message.guild);
 
     if (/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)) {
-      await replyImage(message, helpCard(), 'neverless-bank-commands.png', '🏦 أوامر Neverless Bank');
+      await message.reply({
+        embeds: [helpEmbed()],
+        allowedMentions: { repliedUser: false, parse: [] },
+      });
       return true;
     }
     if (/^(?:رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي)(?:\s|$)/u.test(text)) {
@@ -820,12 +949,10 @@ async function handleBankMessage(message, client) {
       return true;
     }
     if (/^(?:وقت|cooldowns?)$/u.test(text)) {
-      await replyImage(
-        message,
-        statusCard(message.author, getUser(message.guildId, message.author.id)),
-        `bank-time-${message.author.id}.png`,
-        `<@${message.author.id}> — حالة الأوامر`,
-      );
+      await message.reply({
+        embeds: [cooldownEmbed(message.author, getUser(message.guildId, message.author.id))],
+        allowedMentions: { repliedUser: false, parse: [] },
+      });
       return true;
     }
     if (/^(?:راتب|salary|daily)$/u.test(text)) {
@@ -836,6 +963,13 @@ async function handleBankMessage(message, client) {
       await income(message, 'tip');
       return true;
     }
+    if (/^(?:حماية)$/u.test(text)) { await protect(message, false); return true; }
+    if (/^(?:الغاء حماية|إلغاء حماية)$/u.test(text)) { await protect(message, true); return true; }
+    if (/^(?:سرقة)\s+<@!?\d{15,22}>$/u.test(text)) { await rob(message); return true; }
+    let adminMatch = text.match(/^زيده\s+([^ ]+)\s+<@!?\d{15,22}>$/u);
+    if (adminMatch) { await adminMoney(message, 'add', adminMatch[1]); return true; }
+    if (/^تصفير كامل السيرفر$/u.test(text)) { await adminMoney(message, 'reset-server', ''); return true; }
+    if (/^تصفير كامل\s+<@!?\d{15,22}>$/u.test(text)) { await adminMoney(message, 'reset-user', ''); return true; }
     if (/^(?:توب|top)$/u.test(text)) {
       await top(message, client);
       return true;
@@ -845,9 +979,9 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
-    let match = text.match(/^(?:تحويل|transfer)\s+<@!?\d{15,22}>\s+(.+)$/u);
+    let match = text.match(/^(?:تحويل|transfer)\s+(?:<@!?\d{15,22}>\s+(.+)|(.+?)\s+<@!?\d{15,22}>)$/u);
     if (match) {
-      await transfer(message, match[1]);
+      await transfer(message, match[1] || match[2]);
       return true;
     }
 
