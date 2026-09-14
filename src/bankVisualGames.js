@@ -274,16 +274,67 @@ function rouletteCard(mult, wager, payout, balance) {
 function hiloCard(current, next = null, won = null, wager = 0, balance = null) {
   const accent = won === null ? THEME.blue : won ? THEME.green : THEME.red;
   const { canvas, ctx } = baseCard('NEVERLESS HIGH / LOW', 'أعلى أم أقل؟', 1000, 560, accent);
-  const suits = ['♠','♥','♦','♣'];
   const label = (n) => n === 14 ? 'A' : n === 13 ? 'K' : n === 12 ? 'Q' : n === 11 ? 'J' : String(n);
+
+  const drawSuit = (kind, cx, cy, size, color) => {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    if (kind === 0) { // spade
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - size * 0.55);
+      ctx.bezierCurveTo(cx - size * 0.55, cy - size * 0.10, cx - size * 0.42, cy + size * 0.30, cx, cy + size * 0.08);
+      ctx.bezierCurveTo(cx + size * 0.42, cy + size * 0.30, cx + size * 0.55, cy - size * 0.10, cx, cy - size * 0.55);
+      ctx.fill();
+      ctx.fillRect(cx - size * 0.08, cy + size * 0.02, size * 0.16, size * 0.42);
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.22, cy + size * 0.44);
+      ctx.lineTo(cx + size * 0.22, cy + size * 0.44);
+      ctx.lineTo(cx + size * 0.08, cy + size * 0.23);
+      ctx.lineTo(cx - size * 0.08, cy + size * 0.23);
+      ctx.closePath();
+      ctx.fill();
+    } else if (kind === 1) { // heart
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + size * 0.50);
+      ctx.bezierCurveTo(cx - size * 0.65, cy + size * 0.08, cx - size * 0.55, cy - size * 0.48, cx - size * 0.18, cy - size * 0.38);
+      ctx.bezierCurveTo(cx, cy - size * 0.32, cx, cy - size * 0.16, cx, cy - size * 0.08);
+      ctx.bezierCurveTo(cx, cy - size * 0.16, cx, cy - size * 0.32, cx + size * 0.18, cy - size * 0.38);
+      ctx.bezierCurveTo(cx + size * 0.55, cy - size * 0.48, cx + size * 0.65, cy + size * 0.08, cx, cy + size * 0.50);
+      ctx.fill();
+    } else if (kind === 2) { // diamond
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - size * 0.58);
+      ctx.lineTo(cx + size * 0.38, cy);
+      ctx.lineTo(cx, cy + size * 0.58);
+      ctx.lineTo(cx - size * 0.38, cy);
+      ctx.closePath();
+      ctx.fill();
+    } else { // club
+      ctx.beginPath(); ctx.arc(cx, cy - size * 0.22, size * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - size * 0.22, cy + size * 0.05, size * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + size * 0.22, cy + size * 0.05, size * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(cx - size * 0.07, cy + size * 0.05, size * 0.14, size * 0.38);
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.22, cy + size * 0.43);
+      ctx.lineTo(cx + size * 0.22, cy + size * 0.43);
+      ctx.lineTo(cx + size * 0.07, cy + size * 0.24);
+      ctx.lineTo(cx - size * 0.07, cy + size * 0.24);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+
   const drawCard = (x, n, activeColor) => {
     fillRoundRect(ctx,x,160,245,300,26,'#f4f6f8',activeColor,4);
-    const suit=suits[n % suits.length];
-    const red=suit==='♥'||suit==='♦';
-    ctx.fillStyle=red?'#c63145':'#101820'; ctx.textAlign='left';
+    const suitKind = n % 4;
+    const red = suitKind === 1 || suitKind === 2;
+    const suitColor = red ? '#c63145' : '#101820';
+    ctx.fillStyle=suitColor; ctx.textAlign='left';
     ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(label(n),x+24,215);
-    ctx.font='900 38px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(suit,x+26,260);
-    ctx.textAlign='center'; ctx.font='900 96px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(suit,x+122,350);
+    drawSuit(suitKind, x + 42, 255, 34, suitColor);
+    drawSuit(suitKind, x + 122, 330, 78, suitColor);
     ctx.textAlign='right'; ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(label(n),x+220,425);
     ctx.textAlign='left';
   };
@@ -316,9 +367,25 @@ function boxesCard(wager, boxes = null, picked = null, balance = null) {
     ctx.fillStyle=THEME.silver; ctx.font='800 16px "Noto Sans Arabic", "Neverless Latin"';
     ctx.fillText(`BOX ${index+1}`,x+85,400);
     if(box){
-      ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"';
       ctx.fillStyle=box.bomb?THEME.red:THEME.green;
-      ctx.fillText(box.bomb?'✕':`x${box.mult}`,x+85,455);
+      if (box.bomb) {
+        ctx.beginPath();
+        ctx.arc(x + 85, 441, 19, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = THEME.red;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x + 98, 426);
+        ctx.quadraticCurveTo(x + 116, 408, x + 126, 419);
+        ctx.stroke();
+        ctx.fillStyle = THEME.gold;
+        ctx.beginPath();
+        ctx.arc(x + 129, 417, 5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"';
+        ctx.fillText(`x${box.mult}`,x+85,455);
+      }
     } else {
       ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillStyle=THEME.cyan; ctx.fillText('?',x+85,455);
     }
