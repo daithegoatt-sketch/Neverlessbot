@@ -481,21 +481,22 @@ async function handleManualWarn(interaction) {
     return true;
   }
 
+  await interaction.deferReply({ ephemeral: true });
+
   const user = interaction.options.getUser('member', true);
   const member = await interaction.guild.members.fetch(user.id).catch(() => null);
   if (!member) {
-    await interaction.reply({ content: 'العضو غير موجود في السيرفر.', ephemeral: true });
+    await interaction.editReply({ content: 'العضو غير موجود في السيرفر.' });
     return true;
   }
 
   const allowed = manualWarnTargetAllowed(interaction, member);
   if (!allowed.ok) {
-    await interaction.reply({ content: allowed.reason, ephemeral: true });
+    await interaction.editReply({ content: allowed.reason });
     return true;
   }
 
   const reason = interaction.options.getString('reason', true).trim();
-  await interaction.deferReply({ ephemeral: true });
   return queueManualWarning(interaction, member, reason);
 }
 
