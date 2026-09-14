@@ -21,6 +21,7 @@ function newUser() {
     vault: 0,
     shares: 0,
     stocks: {},
+    assets: { LAND: 0, CAR: 0, PLANE: 0, GOLD: 0 },
     salaryAt: 0,
     tipAt: 0,
     loanAt: 0,
@@ -40,6 +41,7 @@ function packUser(s) {
     v: s.vault,
     sh: s.shares,
     st: s.stocks || {},
+    as: s.assets || {},
     sa: s.salaryAt,
     ta: s.tipAt,
     la: s.loanAt || 0,
@@ -58,11 +60,19 @@ function unpackUser(x = {}) {
   const stocks = x.st && typeof x.st === 'object' && !Array.isArray(x.st)
     ? Object.fromEntries(Object.entries(x.st).filter(([, q]) => Number(q) > 0).map(([k, q]) => [String(k).toUpperCase(), Number(q)]))
     : (legacyShares > 0 ? { NVRS: legacyShares } : {});
+  const assetsRaw = x.as && typeof x.as === 'object' && !Array.isArray(x.as) ? x.as : {};
+  const assets = {
+    LAND: Math.max(0, Math.floor(Number(assetsRaw.LAND) || 0)),
+    CAR: Math.max(0, Math.floor(Number(assetsRaw.CAR) || 0)),
+    PLANE: Math.max(0, Math.floor(Number(assetsRaw.PLANE) || 0)),
+    GOLD: Math.max(0, Number(assetsRaw.GOLD) || 0),
+  };
   return {
     balance: Math.max(0, Math.floor(Number(x.b ?? START_BALANCE) || 0)),
     vault: Math.max(0, Math.floor(Number(x.v ?? 0) || 0)),
     shares: Math.max(0, Number(stocks.NVRS || legacyShares) || 0),
     stocks,
+    assets,
     salaryAt: Math.max(0, Number(x.sa ?? 0) || 0),
     tipAt: Math.max(0, Number(x.ta ?? 0) || 0),
     loanAt: Math.max(0, Number(x.la ?? 0) || 0),
@@ -96,7 +106,16 @@ function packMarket(m) {
       };
     }
   }
-  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies };
+  const assets = {};
+  if (m.assets && typeof m.assets === 'object') {
+    for (const [code, data] of Object.entries(m.assets)) {
+      assets[code] = {
+        p: Math.max(1, Math.round(Number(data.price) || 1)),
+        h: Array.isArray(data.history) ? data.history.slice(-24).map((n) => Math.max(1, Math.round(Number(n) || 1))) : [],
+      };
+    }
+  }
+  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies, a: assets, vl: m.vvipLeaderId || null };
 }
 
 function unpackMarket(x = {}) {
@@ -116,7 +135,17 @@ function unpackMarket(x = {}) {
       };
     }
   }
-  return { price, history, companies, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
+  const assets = {};
+  if (x.a && typeof x.a === 'object' && !Array.isArray(x.a)) {
+    for (const [code, data] of Object.entries(x.a)) {
+      const p = Math.max(1, Math.round(Number(data?.p) || 1));
+      assets[String(code).toUpperCase()] = {
+        price: p,
+        history: Array.isArray(data?.h) && data.h.length ? data.h.map((n) => Math.max(1, Math.round(Number(n) || p))).slice(-24) : [p],
+      };
+    }
+  }
+  return { price, history, companies, assets, vvipLeaderId: x.vl || null, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
 }
 
 function enc(value) {

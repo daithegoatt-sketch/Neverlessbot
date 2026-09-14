@@ -43,6 +43,9 @@ const {
   topCard,
   infoCard,
   economyEventCard,
+  usageCard,
+  propertiesCard,
+  assetTradeCard,
 } = require('./bankVisualCore');
 const {
   investmentCard,
@@ -53,6 +56,11 @@ const {
   rouletteCard,
   hiloCard,
   boxesCard,
+  minesCard,
+  fruitGameCard,
+  colorsCard,
+  coinCard,
+  numberGuessCard,
 } = require('./bankVisualGames');
 
 const BANK_CHANNEL_ID = '1548665575247581184';
@@ -67,6 +75,13 @@ const STOCK_COMPANIES = Object.freeze({
   ARCANE: { code: 'ARCANE', name: 'Arcane Media', aliases: ['arcane','اركين','أركين'] },
   SALV: { code: 'SALV', name: 'Salvation Energy', aliases: ['salvation','سلفيشن','سالفاشن'] },
   VIRO: { code: 'VIRO', name: 'Viro Systems', aliases: ['viro','فايرو','فيرو'] },
+  VVIP: { code: 'VVIP', name: 'VVIP Index', aliases: ['vvip','في اي بي','فياب'] },
+});
+const ASSET_CATALOG = Object.freeze({
+  LAND: { code: 'LAND', name: 'أرض', aliases: ['ارض','أرض','اراضي','أراضي'], seed: 50000, fractional: false },
+  CAR: { code: 'CAR', name: 'سيارة', aliases: ['سيارة','سياره','سيارات'], seed: 25000, fractional: false },
+  PLANE: { code: 'PLANE', name: 'طائرة', aliases: ['طيارة','طائرة','طياره','طائرات'], seed: 500000, fractional: false },
+  GOLD: { code: 'GOLD', name: 'ذهب', aliases: ['ذهب','gold'], seed: 2500, fractional: true },
 });
 
 
@@ -233,7 +248,7 @@ async function withLocks(lockKeys, fn) {
 
 function normalizeMarketShape(market) {
   if (!market.companies || typeof market.companies !== 'object') market.companies = {};
-  const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42 };
+  const seeds = { NVRS: 100, ASTRA: 240, ARCANE: 75, SALV: 155, VIRO: 42, VVIP: 100 };
   for (const company of Object.values(STOCK_COMPANIES)) {
     if (!market.companies[company.code]) {
       const seed = company.code === 'NVRS' && Number(market.price) > 0 ? Number(market.price) : seeds[company.code];
@@ -241,10 +256,67 @@ function normalizeMarketShape(market) {
       market.companies[company.code] = { price: Math.max(5, Math.round(seed)), history: oldHistory.slice(-24) };
     }
   }
+  if (!market.assets || typeof market.assets !== 'object') market.assets = {};
+  for (const asset of Object.values(ASSET_CATALOG)) {
+    if (!market.assets[asset.code]) market.assets[asset.code] = { price: asset.seed, history: [asset.seed] };
+  }
   market.updatedAt = Math.max(0, Number(market.updatedAt) || Date.now());
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   return market;
+}
+
+function marketMove() {
+  const roll = Math.random();
+  let magnitude;
+  if (roll < 0.55) magnitude = 0.01 + Math.random() * 0.04;
+  else if (roll < 0.85) magnitude = 0.06 + Math.random() * 0.08;
+  else if (roll < 0.97) magnitude = 0.15 + Math.random() * 0.13;
+  else magnitude = 0.30 + Math.random() * 0.15;
+  return magnitude * (Math.random() < 0.5 ? -1 : 1);
+}
+
+function nonVvipPortfolioValue(state, market) {
+  return Object.values(STOCK_COMPANIES)
+    .filter((company) => company.code !== 'VVIP')
+    .reduce((sum, company) => sum + holdingUnits(state, company.code) * market.companies[company.code].price, 0);
+}
+
+function assetsValue(state, market) {
+  return Object.values(ASSET_CATALOG).reduce((sum, asset) => sum + Math.max(0, Number(state.assets?.[asset.code] || 0)) * market.assets[asset.code].price, 0);
+}
+
+function baseNetWorth(state, market) {
+  return state.balance + state.vault + nonVvipPortfolioValue(state, market) + assetsValue(state, market);
+}
+
+function richestBaseUser(guildId, market) {
+  let best = null;
+  for (const [accountKey, state] of users) {
+    if (!accountKey.startsWith(`${guildId}:`)) continue;
+    const userId = accountKey.slice(guildId.length + 1);
+    const net = baseNetWorth(state, market);
+    if (!best || net > best.net) best = { userId, net };
+  }
+  return best;
+}
+
+function syncVvipIndex(guildId, market) {
+  const richest = richestBaseUser(guildId, market);
+  if (!richest) {
+    market.companies.VVIP.price = 100;
+    return;
+  }
+  if (!market.vvipLeaderId) market.vvipLeaderId = richest.userId;
+  const leaderState = users.get(key(guildId, market.vvipLeaderId));
+  const leaderNet = leaderState ? baseNetWorth(leaderState, market) : 0;
+  const target = Math.max(1, Math.round(leaderNet / 1000));
+  const data = market.companies.VVIP;
+  data.price = target;
+  data.history = [...(data.history || []), target].slice(-24);
+  if (leaderNet <= 0 || (richest.userId !== market.vvipLeaderId && richest.net > Math.max(leaderNet * 1.20, leaderNet + 50000))) {
+    market.vvipLeaderId = richest.userId;
+  }
 }
 
 function updateMarket(guildId) {
@@ -252,16 +324,22 @@ function updateMarket(guildId) {
   const steps = Math.min(24, Math.floor(Math.max(0, Date.now() - market.updatedAt) / MARKET_STEP));
   for (let i = 0; i < steps; i += 1) {
     for (const company of Object.values(STOCK_COMPANIES)) {
+      if (company.code === 'VVIP') continue;
       const data = market.companies[company.code];
-      const history = data.history || [data.price];
-      const momentum = history.length > 1 ? (history.at(-1) - history.at(-2)) / Math.max(1, history.at(-2)) : 0;
-      const volatility = company.code === 'VIRO' ? 0.11 : company.code === 'ASTRA' ? 0.075 : 0.09;
-      const move = clamp((Math.random() * volatility * 2) - volatility + momentum * 0.14, -0.14, 0.16);
-      data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), 5, 500000);
-      data.history = [...history, data.price].slice(-24);
+      const move = marketMove();
+      data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), 2, 5000000);
+      data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
+    for (const asset of Object.values(ASSET_CATALOG)) {
+      const data = market.assets[asset.code];
+      const move = marketMove() * (asset.code === 'GOLD' ? 0.55 : 0.8);
+      data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
+      data.history = [...(data.history || [data.price]), data.price].slice(-24);
+    }
+    syncVvipIndex(guildId, market);
     market.updatedAt += MARKET_STEP;
   }
+  syncVvipIndex(guildId, market);
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   markets.set(guildId, market);
@@ -288,6 +366,73 @@ function portfolioValue(state, market) {
   return Object.values(STOCK_COMPANIES).reduce((sum, company) => sum + holdingUnits(state, company.code) * market.companies[company.code].price, 0);
 }
 
+function assetFrom(raw) {
+  const q = String(raw || '').trim().toLowerCase();
+  return Object.values(ASSET_CATALOG).find((a) => a.code.toLowerCase() === q || a.aliases.includes(q)) || null;
+}
+
+async function properties(message) {
+  const { market, changed } = updateMarket(message.guildId);
+  const state = getUser(message.guildId, message.author.id);
+  const save = changed ? persistMarket(message.guild) : Promise.resolve(true);
+  await commitCard(
+    message,
+    save,
+    Promise.resolve(propertiesCard(state, market, portfolioValue(state, market), assetsValue(state, market))),
+    `properties-${message.author.id}.png`,
+    `<@${message.author.id}> — ممتلكات Neverless`,
+  );
+}
+
+async function tradeAsset(message, action, assetRaw, amountRaw = '') {
+  const asset = assetFrom(assetRaw);
+  if (!asset) return replyUsage(message, action === 'buy' ? 'شراء' : 'بيع', ['شراء سيارة', 'شراء أرض', 'شراء طيارة', 'شراء ذهب 5000']);
+  await withLocks([marketLockKey(message.guildId), accountLockKey(message.guildId, message.author.id)], async () => {
+    const { market, changed } = updateMarket(message.guildId);
+    const state = getUser(message.guildId, message.author.id);
+    const price = market.assets[asset.code].price;
+    const owned = Math.max(0, Number(state.assets?.[asset.code] || 0));
+    let quantity;
+    let total;
+    if (asset.fractional) {
+      if (action === 'buy') {
+        if (!amountRaw) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
+        const raw = amountRaw;
+        total = parseAmount(raw, state.balance);
+        if (!Number.isFinite(total)) return replyUsage(message, 'شراء ذهب', ['شراء ذهب كامل', 'شراء ذهب نص', 'شراء ذهب ربع', 'شراء ذهب 5000']);
+        quantity = total / price;
+        state.balance -= total;
+        state.assets.GOLD = owned + quantity;
+      } else {
+        const ownedValue = owned * price;
+        if (!amountRaw) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
+        const raw = amountRaw;
+        total = parseAmount(raw, ownedValue);
+        if (!Number.isFinite(total)) return replyUsage(message, 'بيع ذهب', ['بيع ذهب كامل', 'بيع ذهب نص', 'بيع ذهب ربع', 'بيع ذهب 5000']);
+        quantity = total / price;
+        state.assets.GOLD = Math.max(0, owned - quantity);
+        state.balance += total;
+      }
+    } else {
+      const count = amountRaw ? Number(digits(amountRaw).trim()) : 1;
+      if (!Number.isInteger(count) || count <= 0 || count > 100) return replyUsage(message, action === 'buy' ? `شراء ${asset.name}` : `بيع ${asset.name}`, [`${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name}`, `${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name} 2`]);
+      quantity = count;
+      total = price * count;
+      if (action === 'buy') {
+        if (state.balance < total) return replyInfo(message, 'رصيد غير كافٍ', `تحتاج ${money(total)}`);
+        state.balance -= total;
+        state.assets[asset.code] = owned + count;
+      } else {
+        if (owned < count) return replyInfo(message, 'ممتلكات غير كافية', `لديك ${owned} من ${asset.name}`);
+        state.assets[asset.code] = owned - count;
+        state.balance += total;
+      }
+    }
+    const persisted = Promise.all([persistUser(message.guild, message.author.id), changed ? persistMarket(message.guild) : Promise.resolve(true)]).then(x=>x.every(Boolean));
+    await commitCard(message, persisted, assetTradeCard(message.author, action, asset, quantity, total, price, state, assetsValue(state, market)), `asset-${action}-${asset.code}-${message.author.id}.png`, `<@${message.author.id}> — ${action === 'buy' ? 'شراء' : 'بيع'} ${asset.name} • ${money(total)}`);
+  });
+}
+
 function helpEmbed() {
   return new EmbedBuilder()
     .setColor(0x173a5e)
@@ -297,8 +442,8 @@ function helpEmbed() {
       { name: 'الحساب', value: 'رصيد\nتحويل\nايداع\nسحب', inline: true },
       { name: 'الدخل', value: 'راتب\nبخشيش\nقرض\nوقت', inline: true },
       { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
-      { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق', inline: true },
-      { name: 'السوق', value: 'سهم\nأسهم\nبيع أسهم', inline: true },
+      { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق\nالغام\nفواكه\nالوان\nعملة\nرقم', inline: true },
+      { name: 'السوق', value: 'سهم\nشراء\nبيع\nممتلكات', inline: true },
       { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
     )
     .setFooter({ text: 'Neverless Bank' });
@@ -318,6 +463,11 @@ function cooldownEmbed(user, state) {
     ['روليت', commandCooldownLeft(state, 'roulette', now)],
     ['هايلو', commandCooldownLeft(state, 'hilo', now)],
     ['صناديق', commandCooldownLeft(state, 'boxes', now)],
+    ['ألغام', commandCooldownLeft(state, 'mines', now)],
+    ['فواكه', commandCooldownLeft(state, 'fruits', now)],
+    ['ألوان', commandCooldownLeft(state, 'colors', now)],
+    ['عملة', commandCooldownLeft(state, 'coin', now)],
+    ['رقم', commandCooldownLeft(state, 'number', now)],
     ['سرقة', commandCooldownLeft(state, 'rob', now)],
   ];
   const protectionLeft = Math.max(0, Number(state.protectionUntil || 0) - now);
@@ -343,6 +493,10 @@ async function replyInfo(message, title, text, content = null) {
   return replyImage(message, infoCard(title, text), `bank-info-${Date.now()}.png`, content);
 }
 
+async function replyUsage(message, command, lines) {
+  return replyImage(message, usageCard(command, lines), `bank-usage-${Date.now()}.png`);
+}
+
 async function commitCard(message, persistPromise, cardPromise, fileName, content) {
   const [persisted, image] = await Promise.all([persistPromise, cardPromise]);
   if (!persisted) {
@@ -364,7 +518,7 @@ async function balance(message) {
   await commitCard(
     message,
     persistPromise,
-    balanceCard(target, { ...state, portfolioValue: portfolioValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
+    balanceCard(target, { ...state, portfolioValue: portfolioValue(state, market), assetValue: assetsValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
     `neverless-balance-${target.id}.png`,
     `<@${target.id}> — حساب Neverless Bank`,
   );
@@ -461,7 +615,7 @@ async function vault(message, action, raw) {
     const source = action === 'deposit' ? state.balance : state.vault;
     const amount = parseAmount(raw, source);
     if (!Number.isFinite(amount)) {
-      await replyInfo(message, 'مبلغ غير صالح', `المتاح ${money(source)}`);
+      await replyUsage(message, action === 'deposit' ? 'ايداع' : 'سحب', [action === 'deposit' ? 'ايداع كامل' : 'سحب كامل', action === 'deposit' ? 'ايداع نص' : 'سحب نص', action === 'deposit' ? 'ايداع ربع' : 'سحب ربع', action === 'deposit' ? 'ايداع 5000' : 'سحب 5000']);
       return;
     }
 
@@ -528,7 +682,7 @@ async function moneyGame(message, type, raw) {
 
     const wager = parseAmount(raw, Math.min(state.balance, MAX_BET));
     if (!Number.isFinite(wager)) {
-      await replyInfo(message, 'طريقة الاستخدام', `${names[type]} كامل / نص / ربع / 1000 • رصيدك ${money(state.balance)}`);
+      await replyUsage(message, names[type], [`${names[type]} كامل`, `${names[type]} نص`, `${names[type]} ربع`, `${names[type]} 5000`]);
       return;
     }
 
@@ -967,6 +1121,172 @@ async function boxes(message, raw) {
   });
 }
 
+function gridButtons(prefix, nonce, count, disabled = false) {
+  const rows = [];
+  for (let start = 0; start < count; start += 3) {
+    const row = new ActionRowBuilder();
+    for (let i = start; i < Math.min(start + 3, count); i += 1) {
+      row.addComponents(new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}:${i}`).setLabel(String(i + 1)).setStyle(ButtonStyle.Secondary).setDisabled(disabled));
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+async function mines(message, raw) {
+  const state = getUser(message.guildId, message.author.id);
+  const wager = parseAmount(raw, Math.min(state.balance, MAX_BET));
+  if (!Number.isFinite(wager)) return replyUsage(message, 'الغام', ['الغام كامل', 'الغام نص', 'الغام ربع', 'الغام 5000']);
+  let started = false;
+  await withLock(accountLockKey(message.guildId, message.author.id), async () => {
+    const fresh = getUser(message.guildId, message.author.id);
+    const left = commandCooldownLeft(fresh, 'mines');
+    if (left > 0) return replyInfo(message, 'الألغام غير متاحة', `الوقت الباقي ${formatDuration(left)}`);
+    if (fresh.balance < wager) return replyInfo(message, 'رصيد غير كافٍ', `رصيدك ${money(fresh.balance)}`);
+    setCommandCooldown(fresh, 'mines');
+    started = await persistUser(message.guild, message.author.id);
+  });
+  if (!started) return;
+  const cells = Array(9).fill('safe');
+  const mineIndexes = new Set();
+  while (mineIndexes.size < 3) mineIndexes.add(Math.floor(Math.random() * 9));
+  for (const i of mineIndexes) cells[i] = 'mine';
+  const nonce = crypto.randomBytes(4).toString('hex');
+  const sent = await replyImage(message, minesCard(wager, cells, []), `mines-${nonce}.png`, `<@${message.author.id}> — اختر مربعاً`, gridButtons('mine', nonce, 9));
+  const collector = sent.createMessageComponentCollector({ time: 45_000 });
+  collector.on('collect', async (interaction) => {
+    if (interaction.user.id !== message.author.id) return interaction.reply({ content:'هذه الجولة ليست لك.', ephemeral:true }).catch(()=>{});
+    collector.stop('done'); await interaction.deferUpdate().catch(()=>{});
+    const picked = Number(interaction.customId.split(':')[3]);
+    const lost = cells[picked] === 'mine';
+    let result;
+    await withLock(accountLockKey(message.guildId, message.author.id), async () => {
+      const fresh = getUser(message.guildId, message.author.id);
+      if (fresh.balance < wager) { result={error:'رصيدك أصبح أقل من مبلغ الجولة.'}; return; }
+      const payout = lost ? 0 : Math.floor(wager * 1.5);
+      const net = payout - wager;
+      fresh.balance = fresh.balance - wager + payout;
+      fresh.games += 1;
+      if (net > 0) { fresh.wins += 1; fresh.earned += net; } else { fresh.lost += -net; }
+      result = await persistUser(message.guild, message.author.id) ? { balance:fresh.balance, net } : { error:'تعذر حفظ الجولة.' };
+    });
+    if (result.error) return sent.edit({content:result.error,components:gridButtons('mine',nonce,9,true)}).catch(()=>{});
+    await sent.edit({
+      content: `<@${message.author.id}> — ${lost ? `خسرت ${money(wager)}` : `ربحت ${money(result.net)}`}`,
+      files:[{attachment:minesCard(wager,cells,[picked],lost?'loss':'win',result.balance),name:`mines-result-${nonce}.png`}],
+      attachments:[],components:gridButtons('mine',nonce,9,true),allowedMentions:{parse:[]}
+    }).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:gridButtons('mine',nonce,9,true)}).catch(()=>{});});
+}
+
+function singleButton(prefix, nonce, label, disabled=false) {
+  return [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}`).setLabel(label).setStyle(ButtonStyle.Primary).setDisabled(disabled))];
+}
+
+async function fruits(message, raw) {
+  const state=getUser(message.guildId,message.author.id);
+  const wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
+  if(!Number.isFinite(wager)) return replyUsage(message,'فواكه',['فواكه كامل','فواكه نص','فواكه ربع','فواكه 5000']);
+  const nonce=crypto.randomBytes(4).toString('hex');
+  const sent=await message.reply({content:`🍒 <@${message.author.id}> — اضغط سحب`,components:singleButton('fruit',nonce,'سحب'),allowedMentions:{parse:[]}});
+  const collector=sent.createMessageComponentCollector({time:45000});
+  collector.on('collect',async interaction=>{
+    if(interaction.user.id!==message.author.id) return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
+    collector.stop('done'); await interaction.deferUpdate().catch(()=>{});
+    let output;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
+      const fresh=getUser(message.guildId,message.author.id);
+      const left=commandCooldownLeft(fresh,'fruits');
+      if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;}
+      if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}
+      const pool=['cherry','lemon','grape','melon'];
+      const fruits=[0,1,2].map(()=>pool[Math.floor(Math.random()*pool.length)]);
+      const triple=fruits[0]===fruits[1]&&fruits[1]===fruits[2];
+      const pair=!triple&&(fruits[0]===fruits[1]||fruits[1]===fruits[2]||fruits[0]===fruits[2]);
+      const mult=triple?4:pair?1.5:0;
+      const payout=Math.floor(wager*mult), net=payout-wager;
+      fresh.balance=fresh.balance-wager+payout; fresh.games+=1;
+      if(net>0){fresh.wins+=1;fresh.earned+=net;}else if(net<0)fresh.lost+=-net;
+      setCommandCooldown(fresh,'fruits');
+      output=await persistUser(message.guild,message.author.id)?{fruits,payout,net,balance:fresh.balance,won:net>0}:{error:'تعذر الحفظ'};
+    });
+    if(output.error) return sent.edit({content:output.error,components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});
+    await sent.edit({content:`<@${message.author.id}> — ${output.net>0?`ربحت ${money(output.net)}`:output.net===0?'تعادل':`خسرت ${money(-output.net)}`}`,files:[{attachment:fruitGameCard(wager,output.fruits,output.won,output.payout,output.balance),name:`fruits-${nonce}.png`}],attachments:[],components:singleButton('fruit',nonce,'سحب',true),allowedMentions:{parse:[]}}).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:singleButton('fruit',nonce,'سحب',true)}).catch(()=>{});});
+}
+
+function colorButtons(nonce, disabled=false) {
+  return [new ActionRowBuilder().addComponents(
+    ...['أحمر','أزرق','أخضر','ذهبي'].map((label,i)=>new ButtonBuilder().setCustomId(`nlbank:color:${nonce}:${i}`).setLabel(label).setStyle([ButtonStyle.Danger,ButtonStyle.Primary,ButtonStyle.Success,ButtonStyle.Secondary][i]).setDisabled(disabled))
+  )];
+}
+
+async function colors(message, raw) {
+  const state=getUser(message.guildId,message.author.id);
+  const wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
+  if(!Number.isFinite(wager)) return replyUsage(message,'الوان',['الوان كامل','الوان نص','الوان ربع','الوان 5000']);
+  const nonce=crypto.randomBytes(4).toString('hex'), names=['red','blue','green','gold'];
+  const target=names[Math.floor(Math.random()*names.length)];
+  const sent=await replyImage(message,colorsCard(wager,target),`colors-${nonce}.png`,`<@${message.author.id}> — اختر اللون`,colorButtons(nonce));
+  const collector=sent.createMessageComponentCollector({time:45000});
+  collector.on('collect',async interaction=>{
+    if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
+    collector.stop('done');await interaction.deferUpdate().catch(()=>{});
+    const picked=names[Number(interaction.customId.split(':')[3])];
+    let output;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{
+      const fresh=getUser(message.guildId,message.author.id); const left=commandCooldownLeft(fresh,'colors');
+      if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;} if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}
+      const won=picked===target,payout=won?wager*3:0,net=payout-wager;
+      fresh.balance=fresh.balance-wager+payout;fresh.games+=1;if(won){fresh.wins+=1;fresh.earned+=net;}else fresh.lost+=wager;setCommandCooldown(fresh,'colors');
+      output=await persistUser(message.guild,message.author.id)?{won,balance:fresh.balance,net}:{error:'تعذر الحفظ'};
+    });
+    if(output.error)return sent.edit({content:output.error,components:colorButtons(nonce,true)}).catch(()=>{});
+    await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(output.net)}`:`خسرت ${money(wager)}`}`,files:[{attachment:colorsCard(wager,target,picked,output.won,output.balance),name:`colors-result-${nonce}.png`}],attachments:[],components:colorButtons(nonce,true),allowedMentions:{parse:[]}}).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:colorButtons(nonce,true)}).catch(()=>{});});
+}
+
+function choiceButtons(prefix, nonce, labels, disabled=false) {
+  return [new ActionRowBuilder().addComponents(...labels.map((label,i)=>new ButtonBuilder().setCustomId(`nlbank:${prefix}:${nonce}:${i}`).setLabel(label).setStyle(ButtonStyle.Secondary).setDisabled(disabled)))];
+}
+
+async function coin(message, raw) {
+  const state=getUser(message.guildId,message.author.id), wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
+  if(!Number.isFinite(wager))return replyUsage(message,'عملة',['عملة كامل','عملة نص','عملة ربع','عملة 5000']);
+  const nonce=crypto.randomBytes(4).toString('hex'), labels=['وجه','كتابة'];
+  const sent=await message.reply({content:`🪙 <@${message.author.id}> — اختر وجه أو كتابة`,components:choiceButtons('coin',nonce,labels),allowedMentions:{parse:[]}});
+  const collector=sent.createMessageComponentCollector({time:45000});
+  collector.on('collect',async interaction=>{
+    if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
+    collector.stop('done');await interaction.deferUpdate().catch(()=>{});
+    const side=Number(interaction.customId.split(':')[3])===0?'heads':'tails',result=Math.random()<.5?'heads':'tails';let output;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);const left=commandCooldownLeft(fresh,'coin');if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;}if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}const won=side===result,payout=won?wager*2:0,net=payout-wager;fresh.balance=fresh.balance-wager+payout;fresh.games+=1;if(won){fresh.wins+=1;fresh.earned+=net;}else fresh.lost+=wager;setCommandCooldown(fresh,'coin');output=await persistUser(message.guild,message.author.id)?{won,balance:fresh.balance}:{error:'تعذر الحفظ'};});
+    if(output.error)return sent.edit({content:output.error,components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});
+    await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(wager)}`:`خسرت ${money(wager)}`}`,files:[{attachment:coinCard(wager,side,result,output.won,output.balance),name:`coin-${nonce}.png`}],attachments:[],components:choiceButtons('coin',nonce,labels,true),allowedMentions:{parse:[]}}).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:choiceButtons('coin',nonce,labels,true)}).catch(()=>{});});
+}
+
+async function numberGuess(message, raw) {
+  const state=getUser(message.guildId,message.author.id), wager=parseAmount(raw,Math.min(state.balance,MAX_BET));
+  if(!Number.isFinite(wager))return replyUsage(message,'رقم',['رقم كامل','رقم نص','رقم ربع','رقم 5000']);
+  const nonce=crypto.randomBytes(4).toString('hex'),labels=['1','2','3','4','5'];
+  const sent=await message.reply({content:`🔢 <@${message.author.id}> — اختر رقماً من 1 إلى 5`,components:choiceButtons('number',nonce,labels),allowedMentions:{parse:[]}});
+  const collector=sent.createMessageComponentCollector({time:45000});
+  collector.on('collect',async interaction=>{
+    if(interaction.user.id!==message.author.id)return interaction.reply({content:'هذه الجولة ليست لك.',ephemeral:true}).catch(()=>{});
+    collector.stop('done');await interaction.deferUpdate().catch(()=>{});
+    const picked=Number(interaction.customId.split(':')[3])+1,result=1+Math.floor(Math.random()*5);let output;
+    await withLock(accountLockKey(message.guildId,message.author.id),async()=>{const fresh=getUser(message.guildId,message.author.id);const left=commandCooldownLeft(fresh,'number');if(left>0){output={error:`الوقت الباقي ${formatDuration(left)}`};return;}if(fresh.balance<wager){output={error:'رصيد غير كافٍ'};return;}const won=picked===result,payout=won?wager*4:0,net=payout-wager;fresh.balance=fresh.balance-wager+payout;fresh.games+=1;if(won){fresh.wins+=1;fresh.earned+=net;}else fresh.lost+=wager;setCommandCooldown(fresh,'number');output=await persistUser(message.guild,message.author.id)?{won,balance:fresh.balance}:{error:'تعذر الحفظ'};});
+    if(output.error)return sent.edit({content:output.error,components:choiceButtons('number',nonce,labels,true)}).catch(()=>{});
+    await sent.edit({content:`<@${message.author.id}> — ${output.won?`ربحت ${money(wager*3)}`:`خسرت ${money(wager)}`}`,files:[{attachment:numberGuessCard(wager,picked,result,output.won,output.balance),name:`number-${nonce}.png`}],attachments:[],components:choiceButtons('number',nonce,labels,true),allowedMentions:{parse:[]}}).catch(()=>{});
+  });
+  collector.on('end',async(_,reason)=>{if(reason!=='done') await sent.edit({components:choiceButtons('number',nonce,labels,true)}).catch(()=>{});});
+}
+
 async function stock(message) {
   await withLock(marketLockKey(message.guildId), async () => {
     const { market, changed } = updateMarket(message.guildId);
@@ -995,7 +1315,7 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
     if (action === 'buy') {
       total = parseAmount(amountRaw, state.balance);
       if (!Number.isFinite(total)) {
-        await replyInfo(message, 'مبلغ غير صالح', `رصيدك المتاح ${money(state.balance)}`);
+        await replyUsage(message, `شراء ${company.code}`, [`شراء ${company.code} كامل`, `شراء ${company.code} نص`, `شراء ${company.code} ربع`, `شراء ${company.code} 5000`]);
         return;
       }
       units = total / price;
@@ -1004,8 +1324,12 @@ async function tradeStockByValue(message, action, companyRaw, amountRaw) {
     } else {
       const ownedValue = owned * price;
       total = parseAmount(amountRaw, ownedValue);
+      if (ownedValue <= 0) {
+        await replyInfo(message, 'لا تملك أسهماً', `لا تملك أسهم ${company.code}`);
+        return;
+      }
       if (!Number.isFinite(total)) {
-        await replyInfo(message, 'قيمة غير صالحة', `قيمة ملكيتك في ${company.name}: ${money(ownedValue)}`);
+        await replyUsage(message, `بيع ${company.code}`, [`بيع ${company.code} كامل`, `بيع ${company.code} نص`, `بيع ${company.code} ربع`, `بيع ${company.code} 5000`]);
         return;
       }
       units = total / price;
@@ -1034,7 +1358,7 @@ async function top(message, client) {
     for (const [accountKey, state] of users) {
       if (!accountKey.startsWith(`${message.guildId}:`)) continue;
       const userId = accountKey.slice(message.guildId.length + 1);
-      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: state.balance + state.vault + portfolioValue(state, market) });
+      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: state.balance + state.vault + portfolioValue(state, market) + assetsValue(state, market) });
     }
     rows.sort((a, b) => b.net - a.net);
 
@@ -1054,16 +1378,9 @@ async function top(message, client) {
   });
 }
 
-async function richestId(guildId, marketPrice = 100) {
-  let best = null;
-  for (const [accountKey, state] of users) {
-    if (!accountKey.startsWith(`${guildId}:`)) continue;
-    const userId = accountKey.slice(guildId.length + 1);
-    const market = normalizeMarketShape(markets.get(guildId) || newMarket());
-    const net = state.balance + state.vault + portfolioValue(state, market);
-    if (!best || net > best.net) best = { userId, net };
-  }
-  return best?.userId || null;
+async function richestId(guildId) {
+  const market = normalizeMarketShape(markets.get(guildId) || newMarket());
+  return richestBaseUser(guildId, market)?.userId || null;
 }
 
 async function protect(message, cancel = false) {
@@ -1146,7 +1463,7 @@ async function handleBankMessage(message, client) {
   const text = normalized(message.content);
   if (!text) return false;
 
-  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|قرض|loan|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);
+  const known = /^(?:حماية|الغاء حماية|إلغاء حماية|سرقة|زيده|تصفير كامل السيرفر|تصفير كامل|تصفير|اوامر|أوامر|bank|bank help|رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|قرض|loan|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell|ممتلكات|شراء|بيع|الغام|ألغام|mines|فواكه|fruits|الوان|ألوان|colors|عملة|coin|رقم|number)(?:\s|$)/u.test(text);
   if (!known) return false;
 
   try {
@@ -1188,12 +1505,22 @@ async function handleBankMessage(message, client) {
     let adminMatch = text.match(/^زيده\s+([^ ]+)\s+<@!?\d{15,22}>$/u);
     if (adminMatch) { await adminMoney(message, 'add', adminMatch[1]); return true; }
     if (/^تصفير كامل السيرفر$/u.test(text)) { await adminMoney(message, 'reset-server', ''); return true; }
-    if (/^تصفير كامل\s+<@!?\d{15,22}>$/u.test(text)) { await adminMoney(message, 'reset-user', ''); return true; }
+    if (/^(?:تصفير كامل|تصفير)\s+<@!?\d{15,22}>$/u.test(text)) { await adminMoney(message, 'reset-user', ''); return true; }
     if (/^(?:توب|top)$/u.test(text)) {
       await top(message, client);
       return true;
     }
-    let stockMatch = text.match(/^(?:أسهم|اسهم|stocks?)\s+([^\s]+)\s+(.+)$/u);
+    let stockMatch = text.match(/^(?:شراء|buy)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch && companyFrom(stockMatch[1])) {
+      await tradeStockByValue(message, 'buy', stockMatch[1], stockMatch[2]);
+      return true;
+    }
+    stockMatch = text.match(/^(?:بيع|sell)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch && companyFrom(stockMatch[1])) {
+      await tradeStockByValue(message, 'sell', stockMatch[1], stockMatch[2]);
+      return true;
+    }
+    stockMatch = text.match(/^(?:أسهم|اسهم|stocks?)\s+([^\s]+)\s+(.+)$/u);
     if (stockMatch) {
       await tradeStockByValue(message, 'buy', stockMatch[1], stockMatch[2]);
       return true;
@@ -1203,6 +1530,13 @@ async function handleBankMessage(message, client) {
       await tradeStockByValue(message, 'sell', stockMatch[1], stockMatch[2]);
       return true;
     }
+
+    if (/^(?:ممتلكات|properties)$/u.test(text)) { await properties(message); return true; }
+
+    let assetMatch = text.match(/^(شراء|buy)\s+([^\s]+)(?:\s+(.+))?$/u);
+    if (assetMatch && assetFrom(assetMatch[2])) { await tradeAsset(message, 'buy', assetMatch[2], assetMatch[3] || ''); return true; }
+    assetMatch = text.match(/^(بيع|sell)\s+([^\s]+)(?:\s+(.+))?$/u);
+    if (assetMatch && assetFrom(assetMatch[2])) { await tradeAsset(message, 'sell', assetMatch[2], assetMatch[3] || ''); return true; }
 
     if (/^(?:سهم|اسهم|أسهم|stock)$/u.test(text)) {
       await stock(message);
@@ -1260,11 +1594,22 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
-    match = text.match(/^(?:صناديق|boxes)(?:\s+(.+))?$/u);
+    match = text.match(/^(?:صناديق|boxes)\s+(.+)$/u);
     if (match) {
-      await boxes(message, match[1] || '500');
+      await boxes(message, match[1]);
       return true;
     }
+
+    match = text.match(/^(?:الغام|ألغام|mines)\s+(.+)$/u);
+    if (match) { await mines(message, match[1]); return true; }
+    match = text.match(/^(?:فواكه|fruits)\s+(.+)$/u);
+    if (match) { await fruits(message, match[1]); return true; }
+    match = text.match(/^(?:الوان|ألوان|colors)\s+(.+)$/u);
+    if (match) { await colors(message, match[1]); return true; }
+    match = text.match(/^(?:عملة|coin)\s+(.+)$/u);
+    if (match) { await coin(message, match[1]); return true; }
+    match = text.match(/^(?:رقم|number)\s+(.+)$/u);
+    if (match) { await numberGuess(message, match[1]); return true; }
 
     match = text.match(/^(?:شراء سهم|شراء اسهم|شراء أسهم|buy)\s+(.+)$/u);
     if (match) {
@@ -1278,7 +1623,33 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
-    await replyInfo(message, 'الأمر غير مكتمل', 'اكتب اوامر لعرض جميع أوامر البنك');
+    if (/^(?:تداول|تدوال|trade)$/u.test(text)) return replyUsage(message, 'تداول', ['تداول كامل', 'تداول نص', 'تداول ربع', 'تداول 5000']);
+    if (/^(?:استثمار|invest)$/u.test(text)) return replyUsage(message, 'استثمار', ['استثمار كامل', 'استثمار نص', 'استثمار ربع', 'استثمار 5000']);
+    if (/^(?:رهان|bet)$/u.test(text)) return replyUsage(message, 'رهان', ['رهان كامل', 'رهان نص', 'رهان ربع', 'رهان 5000']);
+    if (/^(?:قمار|gamble)$/u.test(text)) return replyUsage(message, 'قمار', ['قمار كامل', 'قمار نص', 'قمار ربع', 'قمار 5000']);
+    if (/^(?:نرد|dice)$/u.test(text)) return replyUsage(message, 'نرد', ['نرد كامل', 'نرد 5000', 'نرد 5000 @member']);
+    if (/^(?:روليت|roulette)$/u.test(text)) return replyUsage(message, 'روليت', ['روليت كامل', 'روليت نص', 'روليت ربع', 'روليت 5000']);
+    if (/^(?:هايلو|هاي لو|hilo)$/u.test(text)) return replyUsage(message, 'هايلو', ['هايلو كامل', 'هايلو نص', 'هايلو ربع', 'هايلو 5000']);
+    if (/^(?:صناديق|boxes)$/u.test(text)) return replyUsage(message, 'صناديق', ['صناديق كامل', 'صناديق نص', 'صناديق ربع', 'صناديق 5000']);
+    if (/^(?:الغام|ألغام|mines)$/u.test(text)) return replyUsage(message, 'الغام', ['الغام كامل', 'الغام نص', 'الغام ربع', 'الغام 5000']);
+    if (/^(?:فواكه|fruits)$/u.test(text)) return replyUsage(message, 'فواكه', ['فواكه كامل', 'فواكه نص', 'فواكه ربع', 'فواكه 5000']);
+    if (/^(?:الوان|ألوان|colors)$/u.test(text)) return replyUsage(message, 'الوان', ['الوان كامل', 'الوان نص', 'الوان ربع', 'الوان 5000']);
+    if (/^(?:عملة|coin)$/u.test(text)) return replyUsage(message, 'عملة', ['عملة كامل', 'عملة نص', 'عملة ربع', 'عملة 5000']);
+    if (/^(?:رقم|number)$/u.test(text)) return replyUsage(message, 'رقم', ['رقم كامل', 'رقم نص', 'رقم ربع', 'رقم 5000']);
+    if (/^(?:ايداع|إيداع|deposit)$/u.test(text)) return replyUsage(message, 'ايداع', ['ايداع كامل', 'ايداع نص', 'ايداع ربع', 'ايداع 5000']);
+    if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
+    const stockInfo = text.match(/^(?:سهم|stock)\s+([^\s]+)$/u);
+    if (stockInfo && companyFrom(stockInfo[1])) return replyUsage(message, stockInfo[1].toUpperCase(), [`شراء ${stockInfo[1].toUpperCase()} كامل`, `شراء ${stockInfo[1].toUpperCase()} 5000`, `بيع ${stockInfo[1].toUpperCase()} كامل`, `بيع ${stockInfo[1].toUpperCase()} 5000`]);
+    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء ARCANE كامل', 'شراء NVRS نص', 'شراء ASTRA ربع', 'شراء VVIP 5000']);
+    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع ARCANE كامل', 'بيع NVRS نص', 'بيع ASTRA ربع', 'بيع VVIP 5000']);
+    const incompleteBuy = text.match(/^(?:شراء|buy)\s+([^\s]+)$/u);
+    if (incompleteBuy && companyFrom(incompleteBuy[1])) return replyUsage(message, `شراء ${incompleteBuy[1].toUpperCase()}`, [`شراء ${incompleteBuy[1].toUpperCase()} كامل`, `شراء ${incompleteBuy[1].toUpperCase()} نص`, `شراء ${incompleteBuy[1].toUpperCase()} ربع`, `شراء ${incompleteBuy[1].toUpperCase()} 5000`]);
+    const incompleteSell = text.match(/^(?:بيع|sell)\s+([^\s]+)$/u);
+    if (incompleteSell && companyFrom(incompleteSell[1])) return replyUsage(message, `بيع ${incompleteSell[1].toUpperCase()}`, [`بيع ${incompleteSell[1].toUpperCase()} كامل`, `بيع ${incompleteSell[1].toUpperCase()} نص`, `بيع ${incompleteSell[1].toUpperCase()} ربع`, `بيع ${incompleteSell[1].toUpperCase()} 5000`]);
+    if (/^(?:شراء)$/u.test(text)) return replyUsage(message, 'شراء', ['شراء ARCANE كامل', 'شراء سيارة', 'شراء أرض', 'شراء طيارة', 'شراء ذهب 5000']);
+    if (/^(?:بيع)$/u.test(text)) return replyUsage(message, 'بيع', ['بيع ARCANE كامل', 'بيع سيارة', 'بيع أرض', 'بيع طيارة', 'بيع ذهب كامل']);
+
+        await replyInfo(message, 'الأمر غير مكتمل', 'اكتب اوامر لعرض جميع أوامر البنك');
     return true;
   } catch (error) {
     console.error('[bank] command failed:', error);
