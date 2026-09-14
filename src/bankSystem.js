@@ -86,8 +86,8 @@ const ASSET_CATALOG = Object.freeze({
   SPORT: { code:'SPORT', category:'CAR', name:'سيارة رياضية', aliases:['سيارة رياضية','سياره رياضيه','رياضية','رياضيه'], seed:120000, fractional:false },
   LUXURY: { code:'LUXURY', category:'CAR', name:'سيارة فخمة', aliases:['سيارة فخمة','سياره فخمه','فخمة','فخمه'], seed:250000, fractional:false },
   HELI: { code:'HELI', category:'PLANE', name:'هليكوبتر', aliases:['هليكوبتر','هيلكوبتر'], seed:450000, fractional:false },
-  JET: { code:'JET', category:'PLANE', name:'طائرة خاصة', aliases:['طائرة خاصة','طيارة خاصة','طياره خاصه','طائره خاصه'], seed:900000, fractional:false },
-  BIZJET: { code:'BIZJET', category:'PLANE', name:'طائرة رجال أعمال', aliases:['طائرة رجال أعمال','طيارة رجال اعمال','طائره رجال اعمال'], seed:1800000, fractional:false },
+  JET: { code:'JET', category:'PLANE', name:'طائرة خاصة', aliases:['طائرة خاصة','طيارة خاصة','طياره خاصه','طائره خاصه','خاصة','خاصه'], seed:900000, fractional:false },
+  BIZJET: { code:'BIZJET', category:'PLANE', name:'طائرة رجال أعمال', aliases:['طائرة رجال أعمال','طيارة رجال اعمال','طائره رجال اعمال','رجال أعمال','رجال اعمال'], seed:1800000, fractional:false },
   GOLD: { code:'GOLD', category:'GOLD', name:'ذهب', aliases:['ذهب','gold'], seed:2500, fractional:true },
 });
 
@@ -1599,6 +1599,11 @@ async function handleBankMessage(message, client) {
       await top(message, client);
       return true;
     }
+    let explicitStock = text.match(/^(?:شراء سهم|شراء اسهم|شراء أسهم)\s+([^\s]+)\s+(.+)$/u);
+    if (explicitStock) { await tradeStockByValue(message,'buy',explicitStock[1],explicitStock[2]); return true; }
+    explicitStock = text.match(/^(?:بيع سهم|بيع اسهم|بيع أسهم)\s+([^\s]+)\s+(.+)$/u);
+    if (explicitStock) { await tradeStockByValue(message,'sell',explicitStock[1],explicitStock[2]); return true; }
+
     let stockMatch = text.match(/^(?:شراء|buy)\s+([^\s]+)\s+(.+)$/u);
     if (stockMatch && companyFrom(stockMatch[1])) {
       await tradeStockByValue(message, 'buy', stockMatch[1], stockMatch[2]);
@@ -1697,18 +1702,6 @@ async function handleBankMessage(message, client) {
     match = text.match(/^(?:رقم|number)\s+(.+)$/u);
     if (match) { await numberGuess(message, match[1]); return true; }
 
-    match = text.match(/^(?:شراء سهم|شراء اسهم|شراء أسهم|buy)\s+(.+)$/u);
-    if (match) {
-      await tradeStockByValue(message, 'buy', 'NVRS', match[1]);
-      return true;
-    }
-
-    match = text.match(/^(?:بيع سهم|sell)\s+(.+)$/u);
-    if (match) {
-      await tradeStockByValue(message, 'sell', 'NVRS', match[1]);
-      return true;
-    }
-
     if (/^(?:تداول|تدوال|trade)$/u.test(text)) return replyUsage(message, 'تداول', ['تداول كامل', 'تداول نص', 'تداول ربع', 'تداول 5000']);
     if (/^(?:استثمار|invest)$/u.test(text)) return replyUsage(message, 'استثمار', ['استثمار كامل', 'استثمار نص', 'استثمار ربع', 'استثمار 5000']);
     if (/^(?:رهان|bet)$/u.test(text)) return replyUsage(message, 'رهان', ['رهان كامل', 'رهان نص', 'رهان ربع', 'رهان 5000']);
@@ -1723,14 +1716,14 @@ async function handleBankMessage(message, client) {
     if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
     const stockInfo = text.match(/^(?:سهم|stock)\s+([^\s]+)$/u);
     if (stockInfo && companyFrom(stockInfo[1])) return replyUsage(message, stockInfo[1].toUpperCase(), [`شراء ${stockInfo[1].toUpperCase()} كامل`, `شراء ${stockInfo[1].toUpperCase()} 5000`, `بيع ${stockInfo[1].toUpperCase()} كامل`, `بيع ${stockInfo[1].toUpperCase()} 5000`]);
-    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء ARCANE كامل', 'شراء NVRS نص', 'شراء ASTRA ربع']);
-    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع ARCANE كامل', 'بيع NVRS نص', 'بيع ASTRA ربع']);
+    if (/^(?:شراء سهم|شراء اسهم|شراء أسهم)$/u.test(text)) return replyUsage(message, 'شراء الأسهم', ['شراء اسم السهم كامل', 'شراء اسم السهم نص', 'شراء اسم السهم ربع', 'شراء اسم السهم 5000']);
+    if (/^(?:بيع سهم|بيع اسهم|بيع أسهم)$/u.test(text)) return replyUsage(message, 'بيع الأسهم', ['بيع اسم السهم كامل', 'بيع اسم السهم نص', 'بيع اسم السهم ربع', 'بيع اسم السهم 5000']);
     const incompleteBuy = text.match(/^(?:شراء|buy)\s+([^\s]+)$/u);
     if (incompleteBuy && companyFrom(incompleteBuy[1])) return replyUsage(message, `شراء ${incompleteBuy[1].toUpperCase()}`, [`شراء ${incompleteBuy[1].toUpperCase()} كامل`, `شراء ${incompleteBuy[1].toUpperCase()} نص`, `شراء ${incompleteBuy[1].toUpperCase()} ربع`, `شراء ${incompleteBuy[1].toUpperCase()} 5000`]);
     const incompleteSell = text.match(/^(?:بيع|sell)\s+([^\s]+)$/u);
     if (incompleteSell && companyFrom(incompleteSell[1])) return replyUsage(message, `بيع ${incompleteSell[1].toUpperCase()}`, [`بيع ${incompleteSell[1].toUpperCase()} كامل`, `بيع ${incompleteSell[1].toUpperCase()} نص`, `بيع ${incompleteSell[1].toUpperCase()} ربع`, `بيع ${incompleteSell[1].toUpperCase()} 5000`]);
-    if (/^(?:شراء)$/u.test(text)) return replyUsage(message, 'شراء', ['شراء ARCANE كامل', 'شراء سيارة', 'شراء أرض', 'شراء طيارة', 'شراء ذهب 5000']);
-    if (/^(?:بيع)$/u.test(text)) return replyUsage(message, 'بيع', ['بيع ARCANE كامل', 'بيع سيارة', 'بيع أرض', 'بيع طيارة', 'بيع ذهب كامل']);
+    if (/^(?:شراء)$/u.test(text)) return replyUsage(message, 'شراء', ['شراء اسم السهم كامل', 'شراء فيلا', 'شراء سيارة رياضية', 'شراء طائرة خاصة', 'شراء ذهب 50000']);
+    if (/^(?:بيع)$/u.test(text)) return replyUsage(message, 'بيع', ['بيع اسم السهم كامل', 'بيع فيلا', 'بيع سيارة رياضية', 'بيع طائرة خاصة', 'بيع ذهب كامل']);
 
         await replyInfo(message, 'الأمر غير مكتمل', 'اكتب اوامر لعرض جميع أوامر البنك');
     return true;
