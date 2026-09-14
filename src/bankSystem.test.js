@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {parseAmount,unpackUser,commandCooldownLeft,cooldownStatus,BANK_EXTRA_CHANNEL_ID,COMMAND_CD}=require('./bankSystem');
+assert.equal(parseAmount('كامل',1200),1200);
+assert.equal(parseAmount('نص',1201),600);
+assert.equal(parseAmount('ربع',1000),250);
+assert.equal(parseAmount('١٠٠٠',5000),1000);
+assert.equal(parseAmount('2k',5000),2000);
+assert.equal(Number.isNaN(parseAmount('6000',5000)),true);
+const legacy=unpackUser({b:2500,v:400,sh:2,sa:10,ta:20,e:900,l:100,g:4,w:3});
+assert.equal(legacy.balance,2500);assert.equal(legacy.vault,400);assert.deepEqual(legacy.cooldowns,{});
+const now=1800000,state={cooldowns:{bet:now-1000}};
+assert.equal(commandCooldownLeft(state,'bet',now),COMMAND_CD-1000);
+assert.equal(commandCooldownLeft(state,'dice',now),0);
+assert.equal(cooldownStatus(0),'🟢 متاح');assert.match(cooldownStatus(61000),/^🔴 الوقت الباقي/);
+assert.equal(BANK_EXTRA_CHANNEL_ID,'1548983198120419418');
+console.log('bank system tests passed');

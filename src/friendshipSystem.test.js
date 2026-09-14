@@ -1,0 +1,10 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {parseRecord,unpack,pairKey,ALLOWED_CHANNELS}=require('./friendshipSystem');
+const friend=unpack({a:'222222222222222222',b:'111111111111111111',s:123,m:7,x:1});
+assert.equal(friend.a,'111111111111111111');assert.equal(friend.b,'222222222222222222');assert.equal(friend.mentions,7);
+assert.equal(pairKey('333333333333333333',friend.b,friend.a),'333333333333333333:111111111111111111:222222222222222222');
+assert.equal(parseRecord('invalid'),null);
+assert.equal(ALLOWED_CHANNELS.has('1548665662556217384'),true);
+assert.equal(ALLOWED_CHANNELS.has('1548983198120419418'),true);
+console.log('friendship system tests passed');
