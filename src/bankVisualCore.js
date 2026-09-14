@@ -62,7 +62,8 @@ async function balanceCard(user, state, price) {
 
   const portfolio = Number(state.portfolioValue ?? (state.shares * price)) || 0;
   const positions = Math.max(0, Number(state.stockPositions ?? (state.shares > 0 ? 1 : 0)) || 0);
-  const net = state.balance + state.vault + portfolio;
+  const assetValue = Number(state.assetValue || 0);
+  const net = state.balance + state.vault + portfolio + assetValue;
   const rate = state.games ? Math.round((state.wins / state.games) * 100) : 0;
 
   ctx.fillStyle = THEME.text;
@@ -245,10 +246,10 @@ function propertiesCard(state, market, stockValue, assetValue) {
   const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ممتلكاتك الحالية', 1050, 760, THEME.gold);
   const items = [
     ['الأسهم', stockValue, `${Object.values(state.stocks || {}).filter(v => Number(v) > 0).length} شركات`, THEME.cyan],
-    ['الأراضي', (state.assets?.LAND || 0) * market.assets.LAND.price, `${state.assets?.LAND || 0} أرض`, THEME.green],
-    ['السيارات', (state.assets?.CAR || 0) * market.assets.CAR.price, `${state.assets?.CAR || 0} سيارة`, THEME.blue],
-    ['الطائرات', (state.assets?.PLANE || 0) * market.assets.PLANE.price, `${state.assets?.PLANE || 0} طائرة`, THEME.silver],
-    ['الذهب', (state.assets?.GOLD || 0) * market.assets.GOLD.price, `${Number(state.assets?.GOLD || 0).toFixed(3)} أونصة`, THEME.gold],
+    ['الأراضي', (state.assets?.LAND || 0) * market.assets.LAND.price, `${state.assets?.LAND || 0} أرض • ${money(market.assets.LAND.price)}`, THEME.green],
+    ['السيارات', (state.assets?.CAR || 0) * market.assets.CAR.price, `${state.assets?.CAR || 0} سيارة • ${money(market.assets.CAR.price)}`, THEME.blue],
+    ['الطائرات', (state.assets?.PLANE || 0) * market.assets.PLANE.price, `${state.assets?.PLANE || 0} طائرة • ${money(market.assets.PLANE.price)}`, THEME.silver],
+    ['الذهب', (state.assets?.GOLD || 0) * market.assets.GOLD.price, `${Number(state.assets?.GOLD || 0).toFixed(3)} أونصة • ${money(market.assets.GOLD.price)}`, THEME.gold],
   ];
   let y = 150;
   for (const [name, value, count, color] of items) {
