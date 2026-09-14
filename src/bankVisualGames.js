@@ -37,10 +37,10 @@ async function investmentCard(user, wager, out, net, balance) {
   const { canvas, ctx } = baseCard('NEVERLESS INVEST', 'محفظة استثمار افتراضية', 1100, 640, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 68, 152, 92, color);
   ctx.fillStyle = THEME.text;
-  ctx.font = `800 ${fitText(ctx, playerName(user), 260, 23, 15, 800)}px sans-serif`;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 260, 23, 15, 800)}px Noto Sans Arabic`;
   ctx.fillText(playerName(user), 182, 187);
   ctx.fillStyle = THEME.muted;
-  ctx.font = '500 14px sans-serif';
+  ctx.font = '500 14px Noto Sans Arabic';
   ctx.fillText(net >= 0 ? 'POSITION CLOSED • PROFIT' : 'POSITION CLOSED • LOSS', 182, 215);
 
   fillRoundRect(ctx, 55, 260, 990, 265, 22, 'rgba(7,17,30,.92)', THEME.strokeSoft, 1.5);
@@ -48,7 +48,7 @@ async function investmentCard(user, wager, out, net, balance) {
 
   ctx.textAlign = 'right';
   ctx.fillStyle = color;
-  ctx.font = '900 42px sans-serif';
+  ctx.font = '900 42px Noto Sans Arabic';
   ctx.fillText(`${out.percent >= 0 ? '+' : ''}${out.percent}%`, 1010, 243);
   ctx.textAlign = 'left';
 
@@ -65,17 +65,17 @@ async function betCard(user, wager, out, net, balance) {
   const { canvas, ctx } = baseCard('NEVERLESS BET', 'تذكرة الرهان', 1000, 500, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 72, 155, 108, color);
   ctx.fillStyle = THEME.text;
-  ctx.font = `800 ${fitText(ctx, playerName(user), 270, 25, 16, 800)}px sans-serif`;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 270, 25, 16, 800)}px Noto Sans Arabic`;
   ctx.fillText(playerName(user), 205, 194);
 
   fillRoundRect(ctx, 515, 150, 390, 210, 24, won ? 'rgba(21,70,53,.34)' : 'rgba(79,29,42,.34)', color, 2);
-  centerText(ctx, won ? 'رهان ناجح' : 'الرهان خسر', 710, 205, '800 26px sans-serif', color);
+  centerText(ctx, won ? 'رهان ناجح' : 'الرهان خسر', 710, 205, '800 26px Noto Sans Arabic', color);
   ctx.textAlign = 'center';
   ctx.fillStyle = color;
-  ctx.font = '900 54px sans-serif';
+  ctx.font = '900 54px Noto Sans Arabic';
   ctx.fillText(won ? `+${money(net)}` : `-${money(Math.abs(net))}`, 710, 282);
   ctx.textAlign = 'left';
-  centerText(ctx, `x${out.multiplier.toFixed(1)}`, 710, 326, '700 18px sans-serif', THEME.silver);
+  centerText(ctx, `x${out.multiplier.toFixed(1)}`, 710, 326, '700 18px Noto Sans Arabic', THEME.silver);
 
   metric(ctx, 72, 385, 260, 72, 'الرهان', money(wager), THEME.silver);
   metric(ctx, 370, 385, 260, 72, 'العائد', money(out.payout), color);
@@ -106,14 +106,14 @@ async function diceCard(user, wager, out, net, balance) {
   const { canvas, ctx } = baseCard('NEVERLESS DICE', 'مواجهة النرد', 1000, 520, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 60, 160, 90, color);
   ctx.fillStyle = THEME.text;
-  ctx.font = `800 ${fitText(ctx, playerName(user), 235, 22, 15, 800)}px sans-serif`;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 235, 22, 15, 800)}px Noto Sans Arabic`;
   ctx.fillText(playerName(user), 170, 194);
 
   drawDie(ctx, 330, 160, 150, out.player, THEME.blue);
   drawDie(ctx, 620, 160, 150, out.bank, THEME.silver);
-  centerText(ctx, 'أنت', 405, 345, '700 17px sans-serif', THEME.muted);
-  centerText(ctx, 'البنك', 695, 345, '700 17px sans-serif', THEME.muted);
-  centerText(ctx, net > 0 ? 'فوز' : net < 0 ? 'خسارة' : 'تعادل', 550, 395, '900 31px sans-serif', color);
+  centerText(ctx, 'أنت', 405, 345, '700 17px Noto Sans Arabic', THEME.muted);
+  centerText(ctx, 'البنك', 695, 345, '700 17px Noto Sans Arabic', THEME.muted);
+  centerText(ctx, net > 0 ? 'فوز' : net < 0 ? 'خسارة' : 'تعادل', 550, 395, '900 31px Noto Sans Arabic', color);
 
   metric(ctx, 65, 425, 265, 68, 'المبلغ', money(wager), THEME.silver);
   metric(ctx, 365, 425, 265, 68, 'النتيجة', `${net >= 0 ? '+' : '-'}${money(Math.abs(net))}`, color);
@@ -126,7 +126,7 @@ async function gambleCard(user, wager, out, net, balance) {
   const { canvas, ctx } = baseCard('NEVERLESS JACKPOT', 'نتيجة القمار', 1000, 520, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 60, 155, 92, color);
   ctx.fillStyle = THEME.text;
-  ctx.font = `800 ${fitText(ctx, playerName(user), 250, 22, 15, 800)}px sans-serif`;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 250, 22, 15, 800)}px Noto Sans Arabic`;
   ctx.fillText(playerName(user), 172, 191);
 
   const labels = out.multiplier >= 5 ? ['7', '7', '7'] : out.multiplier >= 2 ? ['N', 'N', 'N'] : out.multiplier > 0 ? ['N', '7', 'N'] : ['X', 'N', 'X'];
@@ -135,11 +135,11 @@ async function gambleCard(user, wager, out, net, balance) {
     fillRoundRect(ctx, x, 155, 130, 145, 18, 'rgba(238,244,249,.96)', THEME.stroke, 2);
     ctx.textAlign = 'center';
     ctx.fillStyle = index === 1 ? '#143b64' : '#101a26';
-    ctx.font = '900 58px sans-serif';
+    ctx.font = '900 58px Noto Sans Arabic';
     ctx.fillText(label, x + 65, 247);
   });
   ctx.textAlign = 'left';
-  centerText(ctx, `المضاعف x${out.multiplier}`, 600, 345, '900 28px sans-serif', color);
+  centerText(ctx, `المضاعف x${out.multiplier}`, 600, 345, '900 28px Noto Sans Arabic', color);
 
   metric(ctx, 65, 405, 265, 72, 'الرهان', money(wager), THEME.silver);
   metric(ctx, 365, 405, 265, 72, net >= 0 ? 'صافي الربح' : 'الخسارة', `${net >= 0 ? '+' : '-'}${money(Math.abs(net))}`, color);
@@ -152,10 +152,10 @@ async function tradeGameCard(user, wager, out, net, balance) {
   const { canvas, ctx } = baseCard('NEVERLESS TRADE', 'صفقة قصيرة', 1050, 600, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 65, 150, 86, color);
   ctx.fillStyle = THEME.text;
-  ctx.font = `800 ${fitText(ctx, playerName(user), 255, 22, 15, 800)}px sans-serif`;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 255, 22, 15, 800)}px Noto Sans Arabic`;
   ctx.fillText(playerName(user), 172, 184);
   ctx.fillStyle = color;
-  ctx.font = '900 38px sans-serif';
+  ctx.font = '900 38px Noto Sans Arabic';
   ctx.textAlign = 'right';
   ctx.fillText(`${out.percent >= 0 ? '+' : ''}${out.percent}%`, 982, 191);
   ctx.textAlign = 'left';
@@ -199,7 +199,7 @@ function rouletteCard(mult, wager, payout, balance) {
     ctx.rotate(mid + Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.fillStyle = THEME.silver;
-    ctx.font = '800 16px sans-serif';
+    ctx.font = '800 16px Noto Sans Arabic';
     ctx.fillText(`x${m}`, 0, 5);
     ctx.restore();
   });
@@ -210,7 +210,7 @@ function rouletteCard(mult, wager, payout, balance) {
   ctx.fill();
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0e2740';
-  ctx.font = '900 38px sans-serif';
+  ctx.font = '900 38px Noto Sans Arabic';
   ctx.fillText(`x${mult}`, cx, cy + 12);
   ctx.textAlign = 'left';
 
@@ -222,8 +222,8 @@ function rouletteCard(mult, wager, payout, balance) {
   ctx.closePath();
   ctx.fill();
 
-  centerText(ctx, net > 0 ? `ربحت ${money(net)}` : net < 0 ? `خسرت ${money(-net)}` : 'عاد لك نفس المبلغ', 500, 558, '900 25px sans-serif', color);
-  centerText(ctx, `الرهان ${money(wager)} • الرصيد ${money(balance)}`, 500, 590, '600 15px sans-serif', THEME.muted);
+  centerText(ctx, net > 0 ? `ربحت ${money(net)}` : net < 0 ? `خسرت ${money(-net)}` : 'عاد لك نفس المبلغ', 500, 558, '900 25px Noto Sans Arabic', color);
+  centerText(ctx, `الرهان ${money(wager)} • الرصيد ${money(balance)}`, 500, 590, '600 15px Noto Sans Arabic', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
@@ -235,7 +235,7 @@ function hiloCard(current, next = null, won = null, wager = 0, balance = null) {
     fillRoundRect(ctx, x, 165, 225, 250, 24, '#eaf0f5', color, 3);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#0b1726';
-    ctx.font = '900 86px sans-serif';
+    ctx.font = '900 86px Noto Sans Arabic';
     ctx.fillText(String(number), x + 112, 315);
     ctx.textAlign = 'left';
   };
@@ -243,11 +243,11 @@ function hiloCard(current, next = null, won = null, wager = 0, balance = null) {
   drawNumber(145, current, THEME.blue);
   if (next !== null) {
     drawNumber(630, next, accent);
-    centerText(ctx, won ? 'اختيار صحيح' : 'اختيار خاطئ', 500, 462, '900 27px sans-serif', accent);
-    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 500, 497, '600 16px sans-serif', THEME.muted);
+    centerText(ctx, won ? 'اختيار صحيح' : 'اختيار خاطئ', 500, 462, '900 27px Noto Sans Arabic', accent);
+    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 500, 497, '600 16px Noto Sans Arabic', THEME.muted);
   } else {
-    centerText(ctx, 'هل الرقم القادم أعلى أم أقل؟', 720, 270, '800 23px sans-serif', THEME.text);
-    centerText(ctx, 'اختر من الأزرار بالأسفل', 720, 309, '600 16px sans-serif', THEME.muted);
+    centerText(ctx, 'هل الرقم القادم أعلى أم أقل؟', 720, 270, '800 23px Noto Sans Arabic', THEME.text);
+    centerText(ctx, 'اختر من الأزرار بالأسفل', 720, 309, '600 16px Noto Sans Arabic', THEME.muted);
   }
   return canvas.toBuffer('image/png');
 }
@@ -265,19 +265,19 @@ function boxesCard(wager, boxes = null, picked = null, balance = null) {
     fillRoundRect(ctx, x, 170, 170, 205, 20, fill, selected ? accent : THEME.stroke, selected ? 3 : 1.5);
     ctx.textAlign = 'center';
     ctx.fillStyle = box?.bomb ? THEME.red : box ? THEME.green : THEME.cyan;
-    ctx.font = '900 48px sans-serif';
+    ctx.font = '900 48px Noto Sans Arabic';
     ctx.fillText(box ? (box.bomb ? 'X' : `x${box.mult}`) : '?', x + 85, 278);
     ctx.fillStyle = THEME.silver;
-    ctx.font = '800 17px sans-serif';
+    ctx.font = '800 17px Noto Sans Arabic';
     ctx.fillText(`BOX ${index + 1}`, x + 85, 333);
     ctx.textAlign = 'left';
   }
 
   if (!boxes) {
-    centerText(ctx, 'اختر صندوقاً واحداً • صندوق واحد مفخخ', 550, 435, '700 18px sans-serif', THEME.muted);
+    centerText(ctx, 'اختر صندوقاً واحداً • صندوق واحد مفخخ', 550, 435, '700 18px Noto Sans Arabic', THEME.muted);
   } else if (pickedBox) {
-    centerText(ctx, pickedBox.bomb ? 'الصندوق انفجر' : `المضاعف x${pickedBox.mult}`, 550, 430, '900 24px sans-serif', accent);
-    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 550, 466, '600 16px sans-serif', THEME.muted);
+    centerText(ctx, pickedBox.bomb ? 'الصندوق انفجر' : `المضاعف x${pickedBox.mult}`, 550, 430, '900 24px Noto Sans Arabic', accent);
+    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 550, 466, '600 16px Noto Sans Arabic', THEME.muted);
   }
   return canvas.toBuffer('image/png');
 }
