@@ -818,7 +818,7 @@ async function hilo(message, raw) {
       let next = current;
       while (next === current) next = 2 + Math.floor(Math.random() * 13);
       const won = up ? next > current : next < current;
-      const payout = won ? Math.floor(wager * 1.85) : 0;
+      const payout = won ? wager * 2 : 0;
       const net = payout - wager;
       fresh.balance = fresh.balance - wager + payout;
       fresh.games += 1;
@@ -892,7 +892,7 @@ async function boxes(message, raw) {
   if (!started) return;
 
   const bomb = Math.floor(Math.random() * 5);
-  const multipliers = [0.5, 0.8, 1.2, 2].sort(() => Math.random() - 0.5);
+  const multipliers = [0.5, 1, 1.5, 2.5].sort(() => Math.random() - 0.5);
   const list = [];
   let multiplierIndex = 0;
   for (let index = 0; index < 5; index += 1) {
