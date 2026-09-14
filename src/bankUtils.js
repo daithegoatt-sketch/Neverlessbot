@@ -123,7 +123,7 @@ function packMarket(m) {
       };
     }
   }
-  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies, a: assets, vl: m.vvipLeaderId || null };
+  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies, a: assets };
 }
 
 function unpackMarket(x = {}) {
@@ -153,7 +153,7 @@ function unpackMarket(x = {}) {
       };
     }
   }
-  return { price, history, companies, assets, vvipLeaderId: x.vl || null, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
+  return { price, history, companies, assets, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
 }
 
 function enc(value) {
