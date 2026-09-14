@@ -388,7 +388,7 @@ async function moneyGame(message,type,raw) {
 function normalized(content) { return digits(content).trim().replace(/^[-#]+\s*/u,'').replace(/^<@!?\d{15,22}>\s*/u,'').replace(/\s+/g,' ').toLowerCase(); }
 async function handleBankMessage(message,client) {
   if(!message?.guildId||message.author?.bot||!BANK_CHANNELS.has(message.channelId))return false;const text=normalized(message.content);if(!text)return false;
-  const known=/^(?:اوامر|أوامر|bank|bank help|رصيد|balance|bal|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);if(!known)return false;await ensureLoaded(message.guild);
+  const known=/^(?:اوامر|أوامر|bank|bank help|رصيد|balance|bal|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|تدوال|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);if(!known)return false;await ensureLoaded(message.guild);
   try {
     if(/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)){await message.reply({embeds:[helpEmbed(client)],allowedMentions:{repliedUser:false}});return true;}
     if(/^(?:رصيد|balance|bal)(?:\s|$)/u.test(text)){await balance(message);return true;}
@@ -405,7 +405,7 @@ async function handleBankMessage(message,client) {
       [/^(?:استثمار|invest)\s+(.+)$/u,'invest'],
       [/^(?:نرد|dice)\s+(.+)$/u,'dice'],
       [/^(?:قمار|gamble)\s+(.+)$/u,'gamble'],
-      [/^(?:تداول|trade)\s+(.+)$/u,'trade'],
+      [/^(?:تداول|تدوال|trade)\s+(.+)$/u,'trade'],
     ];
     for(const [pattern,type] of moneyGames){m=text.match(pattern);if(m){await moneyGame(message,type,m[1]);return true;}}
     m=text.match(/^(?:روليت|roulette)\s+(.+)$/u);if(m){await moneyGame(message,'gamble',m[1]);return true;}
