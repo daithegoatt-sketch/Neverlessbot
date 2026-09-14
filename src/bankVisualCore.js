@@ -175,9 +175,10 @@ async function transferCard(from, to, amount, fromBalance, toBalance) {
 }
 
 function marketCard(market, companies, nextUpdateMs) {
-  const { canvas, ctx } = baseCard('NEVERLESS MARKET', 'سوق الأسهم الافتراضي', 1050, 760, THEME.cyan);
   const entries = Object.values(companies);
-  let y = 155;
+  const height = 220 + entries.length * 105;
+  const { canvas, ctx } = baseCard('NEVERLESS MARKET', 'سوق الأسهم الافتراضي', 1050, height, THEME.cyan);
+  let y = 145;
   for (const company of entries) {
     const data = market.companies[company.code];
     const history = data.history?.length ? data.history : [data.price];
@@ -201,7 +202,7 @@ function marketCard(market, companies, nextUpdateMs) {
     ctx.textAlign = 'left';
     y += 105;
   }
-  centerText(ctx, `التحديث القادم بعد ${formatDuration(nextUpdateMs)}`, 525, 705, '700 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  centerText(ctx, `التحديث القادم بعد ${formatDuration(nextUpdateMs)}`, 525, height - 38, '700 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
@@ -223,6 +224,72 @@ async function stockTradeCard(user, action, company, units, total, price, state,
   metric(ctx, 72, 395, 260, 72, 'رصيدك', money(state.balance), THEME.green);
   metric(ctx, 370, 395, 260, 72, 'ملكيتك', Number(state.stocks?.[company.code] || 0).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), THEME.gold);
   metric(ctx, 668, 395, 260, 72, 'قيمة المحفظة', money(portfolioValue), THEME.silver);
+  return canvas.toBuffer('image/png');
+}
+
+function usageCard(command, lines) {
+  const rows = Array.isArray(lines) ? lines : [String(lines || '')];
+  const height = 280 + rows.length * 58;
+  const { canvas, ctx } = baseCard('NEVERLESS BANK', `طريقة استخدام ${command}`, 980, height, THEME.cyan);
+  let y = 165;
+  rows.forEach((line, index) => {
+    fillRoundRect(ctx, 70, y, 840, 44, 13, 'rgba(10,24,39,.92)', THEME.strokeSoft, 1.2);
+    rtlText(ctx, line, 880, y + 29, '700 17px "Noto Sans Arabic", "Neverless Latin"', index === 0 ? THEME.text : THEME.silver);
+    y += 58;
+  });
+  centerText(ctx, 'كامل • نص • ربع • أو مبلغ محدد', 490, height - 38, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  return canvas.toBuffer('image/png');
+}
+
+function propertiesCard(state, market, stockValue, assetValue) {
+  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ممتلكاتك الحالية', 1050, 760, THEME.gold);
+  const items = [
+    ['الأسهم', stockValue, `${Object.values(state.stocks || {}).filter(v => Number(v) > 0).length} شركات`, THEME.cyan],
+    ['الأراضي', (state.assets?.LAND || 0) * market.assets.LAND.price, `${state.assets?.LAND || 0} أرض`, THEME.green],
+    ['السيارات', (state.assets?.CAR || 0) * market.assets.CAR.price, `${state.assets?.CAR || 0} سيارة`, THEME.blue],
+    ['الطائرات', (state.assets?.PLANE || 0) * market.assets.PLANE.price, `${state.assets?.PLANE || 0} طائرة`, THEME.silver],
+    ['الذهب', (state.assets?.GOLD || 0) * market.assets.GOLD.price, `${Number(state.assets?.GOLD || 0).toFixed(3)} أونصة`, THEME.gold],
+  ];
+  let y = 150;
+  for (const [name, value, count, color] of items) {
+    fillRoundRect(ctx, 60, y, 930, 92, 18, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
+    ctx.fillStyle = color;
+    ctx.font = '900 23px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(name, 88, y + 38);
+    ctx.fillStyle = THEME.muted;
+    ctx.font = '650 14px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(count, 88, y + 67);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = THEME.text;
+    ctx.font = '900 26px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(money(value), 950, y + 52);
+    ctx.textAlign = 'left';
+    y += 105;
+  }
+  const total = stockValue + assetValue;
+  fillRoundRect(ctx, 260, 680, 530, 58, 18, 'rgba(21,70,53,.26)', THEME.green, 1.5);
+  centerText(ctx, `إجمالي قيمة الممتلكات ${money(total)}`, 525, 718, '900 22px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
+  return canvas.toBuffer('image/png');
+}
+
+async function assetTradeCard(user, action, asset, quantity, total, unitPrice, state, totalAssetsValue) {
+  const buy = action === 'buy';
+  const color = buy ? THEME.green : THEME.red;
+  const { canvas, ctx } = baseCard('NEVERLESS ASSETS', buy ? 'شراء ممتلكات' : 'بيع ممتلكات', 1000, 510, color);
+  drawAvatarImage(ctx, await loadAvatarImage(user), 70, 155, 100, color);
+  ctx.fillStyle = THEME.text;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 260, 24, 16, 800)}px "Noto Sans Arabic", "Neverless Latin"`;
+  ctx.fillText(playerName(user), 195, 193);
+  ctx.fillStyle = THEME.muted;
+  ctx.font = '700 15px "Noto Sans Arabic", "Neverless Latin"';
+  ctx.fillText(asset.name, 195, 220);
+
+  metric(ctx, 490, 150, 205, 84, 'الكمية', asset.code === 'GOLD' ? Number(quantity).toFixed(3) : String(Math.round(quantity)), THEME.silver);
+  metric(ctx, 715, 150, 205, 84, 'السعر الحالي', money(unitPrice), THEME.cyan);
+  metric(ctx, 490, 255, 430, 84, 'قيمة العملية', money(total), color);
+  metric(ctx, 72, 390, 260, 72, 'الرصيد', money(state.balance), THEME.green);
+  metric(ctx, 370, 390, 260, 72, 'ما تملكه', asset.code === 'GOLD' ? Number(state.assets?.GOLD || 0).toFixed(3) : String(state.assets?.[asset.code] || 0), THEME.gold);
+  metric(ctx, 668, 390, 260, 72, 'قيمة الممتلكات', money(totalAssetsValue), THEME.silver);
   return canvas.toBuffer('image/png');
 }
 
@@ -328,4 +395,7 @@ module.exports = {
   statusCard,
   infoCard,
   economyEventCard,
+  usageCard,
+  propertiesCard,
+  assetTradeCard,
 };
