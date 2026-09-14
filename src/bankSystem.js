@@ -364,7 +364,7 @@ async function balance(message) {
   await commitCard(
     message,
     persistPromise,
-    balanceCard(target, { ...state, shares: portfolioValue(state, market) }, 1),
+    balanceCard(target, { ...state, portfolioValue: portfolioValue(state, market), stockPositions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length }, market.price),
     `neverless-balance-${target.id}.png`,
     `<@${target.id}> — حساب Neverless Bank`,
   );
@@ -497,7 +497,8 @@ function randomOutcome(type, wager) {
     return { payout: won ? Math.floor(wager * multiplier) : 0, multiplier };
   }
   if (type === 'invest') {
-    const percent = Math.floor(Math.random() * 56) - 20;
+    const won = Math.random() < 0.58;
+    const percent = won ? 10 + Math.floor(Math.random() * 26) : -(6 + Math.floor(Math.random() * 15));
     return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
   }
   if (type === 'dice') {
@@ -510,7 +511,8 @@ function randomOutcome(type, wager) {
     const multiplier = won ? 2 : 0;
     return { payout: won ? wager * 2 : 0, multiplier };
   }
-  const percent = Math.floor(Math.random() * 41) - 16;
+  const won = Math.random() < 0.55;
+  const percent = won ? 8 + Math.floor(Math.random() * 21) : -(7 + Math.floor(Math.random() * 16));
   return { payout: Math.max(0, Math.floor(wager * (1 + percent / 100))), percent };
 }
 
@@ -1032,7 +1034,7 @@ async function top(message, client) {
     for (const [accountKey, state] of users) {
       if (!accountKey.startsWith(`${message.guildId}:`)) continue;
       const userId = accountKey.slice(message.guildId.length + 1);
-      rows.push({ userId, state, net: state.balance + state.vault + portfolioValue(state, market) });
+      rows.push({ userId, state, portfolio: portfolioValue(state, market), positions: Object.keys(state.stocks || {}).filter(code => holdingUnits(state, code) > 0).length, net: state.balance + state.vault + portfolioValue(state, market) });
     }
     rows.sort((a, b) => b.net - a.net);
 
@@ -1191,14 +1193,14 @@ async function handleBankMessage(message, client) {
       await top(message, client);
       return true;
     }
-    match = text.match(/^(?:أسهم|اسهم|stocks?)\s+([^\s]+)\s+(.+)$/u);
-    if (match) {
-      await tradeStockByValue(message, 'buy', match[1], match[2]);
+    let stockMatch = text.match(/^(?:أسهم|اسهم|stocks?)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch) {
+      await tradeStockByValue(message, 'buy', stockMatch[1], stockMatch[2]);
       return true;
     }
-    match = text.match(/^(?:بيع أسهم|بيع اسهم|sell stocks?)\s+([^\s]+)\s+(.+)$/u);
-    if (match) {
-      await tradeStockByValue(message, 'sell', match[1], match[2]);
+    stockMatch = text.match(/^(?:بيع أسهم|بيع اسهم|sell stocks?)\s+([^\s]+)\s+(.+)$/u);
+    if (stockMatch) {
+      await tradeStockByValue(message, 'sell', stockMatch[1], stockMatch[2]);
       return true;
     }
 
