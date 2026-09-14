@@ -200,6 +200,7 @@ module.exports = {
   TIP_CD,
   MARKET_STEP,
   MAX_BET,
+  START_BALANCE,
   ROB_CD,
   PROTECTION_DURATION,
   clamp,
