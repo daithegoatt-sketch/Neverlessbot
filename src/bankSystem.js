@@ -613,7 +613,7 @@ async function vault(message, action, raw) {
     const source = action === 'deposit' ? state.balance : state.vault;
     const amount = parseAmount(raw, source);
     if (!Number.isFinite(amount)) {
-      await replyInfo(message, 'مبلغ غير صالح', `المتاح ${money(source)}`);
+      await replyUsage(message, action === 'deposit' ? 'ايداع' : 'سحب', [action === 'deposit' ? 'ايداع كامل' : 'سحب كامل', action === 'deposit' ? 'ايداع نص' : 'سحب نص', action === 'deposit' ? 'ايداع ربع' : 'سحب ربع', action === 'deposit' ? 'ايداع 5000' : 'سحب 5000']);
       return;
     }
 
@@ -1588,9 +1588,9 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
-    match = text.match(/^(?:صناديق|boxes)(?:\s+(.+))?$/u);
+    match = text.match(/^(?:صناديق|boxes)\s+(.+)$/u);
     if (match) {
-      await boxes(message, match[1] || '500');
+      await boxes(message, match[1]);
       return true;
     }
 
@@ -1632,6 +1632,10 @@ async function handleBankMessage(message, client) {
     if (/^(?:رقم|number)$/u.test(text)) return replyUsage(message, 'رقم', ['رقم كامل', 'رقم نص', 'رقم ربع', 'رقم 5000']);
     if (/^(?:ايداع|إيداع|deposit)$/u.test(text)) return replyUsage(message, 'ايداع', ['ايداع كامل', 'ايداع نص', 'ايداع ربع', 'ايداع 5000']);
     if (/^(?:سحب|withdraw)$/u.test(text)) return replyUsage(message, 'سحب', ['سحب كامل', 'سحب نص', 'سحب ربع', 'سحب 5000']);
+    const incompleteBuy = text.match(/^(?:شراء|buy)\s+([^\s]+)$/u);
+    if (incompleteBuy && companyFrom(incompleteBuy[1])) return replyUsage(message, `شراء ${incompleteBuy[1].toUpperCase()}`, [`شراء ${incompleteBuy[1].toUpperCase()} كامل`, `شراء ${incompleteBuy[1].toUpperCase()} نص`, `شراء ${incompleteBuy[1].toUpperCase()} ربع`, `شراء ${incompleteBuy[1].toUpperCase()} 5000`]);
+    const incompleteSell = text.match(/^(?:بيع|sell)\s+([^\s]+)$/u);
+    if (incompleteSell && companyFrom(incompleteSell[1])) return replyUsage(message, `بيع ${incompleteSell[1].toUpperCase()}`, [`بيع ${incompleteSell[1].toUpperCase()} كامل`, `بيع ${incompleteSell[1].toUpperCase()} نص`, `بيع ${incompleteSell[1].toUpperCase()} ربع`, `بيع ${incompleteSell[1].toUpperCase()} 5000`]);
     if (/^(?:شراء)$/u.test(text)) return replyUsage(message, 'شراء', ['شراء ARCANE كامل', 'شراء سيارة', 'شراء أرض', 'شراء طيارة', 'شراء ذهب 5000']);
     if (/^(?:بيع)$/u.test(text)) return replyUsage(message, 'بيع', ['بيع ARCANE كامل', 'بيع سيارة', 'بيع أرض', 'بيع طيارة', 'بيع ذهب كامل']);
 
