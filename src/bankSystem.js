@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const { handleMessage: handleFriendshipMessage } = require('./friendshipSystem');
 const {
   USER_PREFIX,
@@ -240,6 +240,47 @@ function updateMarket(guildId) {
   }
   markets.set(guildId, market);
   return { market, changed: steps > 0 };
+}
+
+function helpEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x173a5e)
+    .setTitle('🏦 أوامر Neverless Bank')
+    .setDescription('جميع الأموال داخل النظام افتراضية.')
+    .addFields(
+      { name: 'الحساب', value: 'رصيد\nتحويل\nايداع\nسحب', inline: true },
+      { name: 'الدخل', value: 'راتب\nبخشيش\nوقت', inline: true },
+      { name: 'الألعاب', value: 'رهان\nاستثمار\nنرد\nقمار\nتداول', inline: true },
+      { name: 'ألعاب إضافية', value: 'روليت\nهايلو\nصناديق', inline: true },
+      { name: 'السوق', value: 'سهم\nشراء سهم\nبيع سهم', inline: true },
+      { name: 'الأمان والترتيب', value: 'سرقة\nحماية\nالغاء حماية\nتوب', inline: true },
+    )
+    .setFooter({ text: 'Neverless Bank' });
+}
+
+function cooldownEmbed(user, state) {
+  const now = Date.now();
+  const rows = [
+    ['راتب', Math.max(0, state.salaryAt + SALARY_CD - now)],
+    ['بخشيش', Math.max(0, state.tipAt + TIP_CD - now)],
+    ['رهان', commandCooldownLeft(state, 'bet', now)],
+    ['استثمار', commandCooldownLeft(state, 'invest', now)],
+    ['نرد', commandCooldownLeft(state, 'dice', now)],
+    ['قمار', commandCooldownLeft(state, 'gamble', now)],
+    ['تداول', commandCooldownLeft(state, 'trade', now)],
+    ['روليت', commandCooldownLeft(state, 'roulette', now)],
+    ['هايلو', commandCooldownLeft(state, 'hilo', now)],
+    ['صناديق', commandCooldownLeft(state, 'boxes', now)],
+    ['سرقة', commandCooldownLeft(state, 'rob', now)],
+  ];
+  const protectionLeft = Math.max(0, Number(state.protectionUntil || 0) - now);
+  const value = rows.map(([name, ms]) => `${ms <= 0 ? '✅' : '❌'} **${name}** — ${ms <= 0 ? 'متاح' : formatDuration(ms)}`).join('\n');
+  return new EmbedBuilder()
+    .setColor(0x173a5e)
+    .setTitle('⏱️ حالة أوامر Neverless Bank')
+    .setDescription(value)
+    .addFields({ name: 'الحماية', value: protectionLeft > 0 ? `🛡️ مفعلة — ${formatDuration(protectionLeft)}` : 'غير مفعلة' })
+    .setFooter({ text: user.globalName || user.username || 'Neverless Bank' });
 }
 
 async function replyImage(message, buffer, name, content = null, components = []) {
@@ -868,7 +909,7 @@ async function adminMoney(message, action, raw) {
   if (!isAdmin(message)) return replyInfo(message, 'غير مصرح', 'هذا الأمر للإدارة فقط');
   if (action === 'reset-server') {
     const ids = [...users.keys()].filter(k => k.startsWith(`${message.guildId}:`)).map(k => k.slice(message.guildId.length + 1));
-    await Promise.all(ids.map(id => withLock(accountLockKey(message.guildId,id), async()=>{ users.set(key(message.guildId,id), newUser()); return persistUser(message.guild,id); })));
+    await Promise.all(ids.map(id => withLock(accountLockKey(message.guildId,id), async()=>{ const cleared = newUser(); cleared.balance = 0; users.set(key(message.guildId,id), cleared); return persistUser(message.guild,id); })));
     return replyInfo(message, 'تم التصفير', 'تم تصفير حسابات البنك في السيرفر', null);
   }
   const target = message.mentions.users.first();
@@ -876,7 +917,7 @@ async function adminMoney(message, action, raw) {
   return withLock(accountLockKey(message.guildId,target.id), async()=>{
     const state=getUser(message.guildId,target.id);
     if(action==='add'){ const amount=parseAmount(raw, Number.MAX_SAFE_INTEGER); if(!Number.isFinite(amount)) return replyInfo(message,'مبلغ غير صالح','مثال: زيده 5000000 @member'); state.balance += amount; await commitCard(message,persistUser(message.guild,target.id),economyEventCard(target,'إضافة إدارية',amount,state.balance,'good'),`admin-add-${target.id}.png`,`<@${target.id}> — تمت إضافة ${money(amount)}`); }
-    else { users.set(key(message.guildId,target.id),newUser()); await commitCard(message,persistUser(message.guild,target.id),economyEventCard(target,'تصفير الحساب',0,START_BALANCE,'bad'),`admin-reset-${target.id}.png`,`<@${target.id}> — تم تصفير الحساب`); }
+    else { const cleared = newUser(); cleared.balance = 0; users.set(key(message.guildId,target.id),cleared); await commitCard(message,persistUser(message.guild,target.id),economyEventCard(target,'تصفير الحساب',0,0,'bad'),`admin-reset-${target.id}.png`,`<@${target.id}> — تم تصفير الحساب`); }
   });
 }
 
@@ -901,7 +942,10 @@ async function handleBankMessage(message, client) {
     await ensureLoaded(message.guild);
 
     if (/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)) {
-      await replyImage(message, helpCard(), 'neverless-bank-commands.png', '🏦 أوامر Neverless Bank');
+      await message.reply({
+        embeds: [helpEmbed()],
+        allowedMentions: { repliedUser: false, parse: [] },
+      });
       return true;
     }
     if (/^(?:رصيد|balance|bal|بروفايل|profile|محفظة|wallet|ثروتي)(?:\s|$)/u.test(text)) {
@@ -909,12 +953,10 @@ async function handleBankMessage(message, client) {
       return true;
     }
     if (/^(?:وقت|cooldowns?)$/u.test(text)) {
-      await replyImage(
-        message,
-        statusCard(message.author, getUser(message.guildId, message.author.id)),
-        `bank-time-${message.author.id}.png`,
-        `<@${message.author.id}> — حالة الأوامر`,
-      );
+      await message.reply({
+        embeds: [cooldownEmbed(message.author, getUser(message.guildId, message.author.id))],
+        allowedMentions: { repliedUser: false, parse: [] },
+      });
       return true;
     }
     if (/^(?:راتب|salary|daily)$/u.test(text)) {
@@ -941,7 +983,7 @@ async function handleBankMessage(message, client) {
       return true;
     }
 
-    let match = text.match(/^(?:تحويل|transfer)\s+<@!?\d{15,22}>\s+(.+)$/u);
+    let match = text.match(/^(?:تحويل|transfer)\s+(?:<@!?\d{15,22}>\s+(.+)|(.+?)\s+<@!?\d{15,22}>)$/u);
     if (match) {
       await transfer(message, match[1] || match[2]);
       return true;
