@@ -236,82 +236,65 @@ async function tradeGameCard(user, wager, out, net, balance) {
 function rouletteCard(mult, wager, payout, balance) {
   const net = payout - wager;
   const color = net > 0 ? THEME.green : net < 0 ? THEME.red : THEME.blue;
-  const { canvas, ctx } = baseCard('NEVERLESS ROULETTE', 'دولاب الحظ', 1000, 620, color);
-  const cx = 500;
-  const cy = 330;
-  const radius = 185;
-  const slots = [0, 1.5, 0, 2, 1, 0, 5, 0, 1.5, 0, 2, 1];
-
-  slots.forEach((m, index) => {
-    const a = -Math.PI / 2 + index * Math.PI * 2 / slots.length;
-    const b = -Math.PI / 2 + (index + 1) * Math.PI * 2 / slots.length;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, radius, a, b);
-    ctx.closePath();
-    ctx.fillStyle = index % 2 ? '#0e2740' : '#153553';
-    ctx.fill();
-    ctx.strokeStyle = '#45617e';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    const mid = (a + b) / 2;
-    const tx = cx + Math.cos(mid) * radius * 0.70;
-    const ty = cy + Math.sin(mid) * radius * 0.70;
-    ctx.save();
-    ctx.translate(tx, ty);
-    ctx.rotate(mid + Math.PI / 2);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = THEME.silver;
-    ctx.font = '800 16px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`x${m}`, 0, 5);
-    ctx.restore();
+  const { canvas, ctx } = baseCard('NEVERLESS ROULETTE', 'دولاب الروليت', 1050, 650, color);
+  const cx = 330, cy = 345, radius = 205;
+  const slots = [
+    {m:0,c:'#1b1f2a'},{m:1.5,c:'#9f2639'},{m:0,c:'#151922'},{m:2,c:'#a92d3f'},
+    {m:1,c:'#151922'},{m:0,c:'#9f2639'},{m:5,c:'#12714f'},{m:0,c:'#151922'},
+    {m:1.5,c:'#a92d3f'},{m:0,c:'#151922'},{m:2,c:'#9f2639'},{m:1,c:'#151922'}
+  ];
+  const winningIndex = slots.findIndex((slot) => slot.m === mult);
+  slots.forEach((slot, index) => {
+    const start = -Math.PI / 2 + index * Math.PI * 2 / slots.length;
+    const end = -Math.PI / 2 + (index + 1) * Math.PI * 2 / slots.length;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,radius,start,end); ctx.closePath();
+    ctx.fillStyle = slot.c; ctx.fill();
+    ctx.strokeStyle = index === winningIndex ? color : '#52667d';
+    ctx.lineWidth = index === winningIndex ? 5 : 1.5; ctx.stroke();
+    const mid=(start+end)/2, tx=cx+Math.cos(mid)*radius*.72, ty=cy+Math.sin(mid)*radius*.72;
+    ctx.save(); ctx.translate(tx,ty); ctx.rotate(mid+Math.PI/2); ctx.textAlign='center';
+    ctx.fillStyle='#f2f5f8'; ctx.font='800 16px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(`x${slot.m}`,0,5); ctx.restore();
   });
+  ctx.beginPath(); ctx.arc(cx,cy,88,0,Math.PI*2); ctx.fillStyle='#e9eef4'; ctx.fill();
+  ctx.strokeStyle=color; ctx.lineWidth=5; ctx.stroke();
+  centerText(ctx,`x${mult}`,cx,cy+14,'900 40px "Noto Sans Arabic", "Neverless Latin"','#101c2a');
+  ctx.fillStyle=color; ctx.beginPath(); ctx.moveTo(cx,112); ctx.lineTo(cx-20,150); ctx.lineTo(cx+20,150); ctx.closePath(); ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, 86, 0, Math.PI * 2);
-  ctx.fillStyle = '#eaf0f5';
-  ctx.fill();
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#0e2740';
-  ctx.font = '900 38px "Noto Sans Arabic", "Neverless Latin"';
-  ctx.fillText(`x${mult}`, cx, cy + 12);
-  ctx.textAlign = 'left';
-
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(cx, 126);
-  ctx.lineTo(cx - 18, 155);
-  ctx.lineTo(cx + 18, 155);
-  ctx.closePath();
-  ctx.fill();
-
-  centerText(ctx, net > 0 ? `ربحت ${money(net)}` : net < 0 ? `خسرت ${money(-net)}` : 'عاد لك نفس المبلغ', 500, 558, '900 25px "Noto Sans Arabic", "Neverless Latin"', color);
-  centerText(ctx, `الرهان ${money(wager)} • الرصيد ${money(balance)}`, 500, 590, '600 15px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  fillRoundRect(ctx,610,165,370,310,24,'rgba(8,20,34,.95)',THEME.stroke,1.5);
+  centerText(ctx,net>0?'فوز':net<0?'خسارة':'تعادل',795,220,'900 30px "Noto Sans Arabic", "Neverless Latin"',color);
+  centerText(ctx,`المضاعف x${mult}`,795,265,'700 19px "Noto Sans Arabic", "Neverless Latin"',THEME.silver);
+  centerText(ctx,net>0?`+${money(net)}`:net<0?`-${money(-net)}`:money(0),795,335,'900 46px "Noto Sans Arabic", "Neverless Latin"',color);
+  metric(ctx,620,390,165,70,'الرهان',money(wager),THEME.silver);
+  metric(ctx,805,390,165,70,'الرصيد',money(balance),THEME.text);
+  centerText(ctx,'القطاع المحدد هو نتيجة الجولة',525,590,'600 15px "Noto Sans Arabic", "Neverless Latin"',THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
 function hiloCard(current, next = null, won = null, wager = 0, balance = null) {
   const accent = won === null ? THEME.blue : won ? THEME.green : THEME.red;
-  const { canvas, ctx } = baseCard('NEVERLESS HIGH / LOW', `الرهان ${money(wager)}`, 1000, 535, accent);
-
-  const drawNumber = (x, number, color) => {
-    fillRoundRect(ctx, x, 165, 225, 250, 24, '#eaf0f5', color, 3);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#0b1726';
-    ctx.font = '900 86px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(String(number), x + 112, 315);
-    ctx.textAlign = 'left';
+  const { canvas, ctx } = baseCard('NEVERLESS HIGH / LOW', 'أعلى أم أقل؟', 1000, 560, accent);
+  const suits = ['♠','♥','♦','♣'];
+  const label = (n) => n === 14 ? 'A' : n === 13 ? 'K' : n === 12 ? 'Q' : n === 11 ? 'J' : String(n);
+  const drawCard = (x, n, activeColor) => {
+    fillRoundRect(ctx,x,160,245,300,26,'#f4f6f8',activeColor,4);
+    const suit=suits[n % suits.length];
+    const red=suit==='♥'||suit==='♦';
+    ctx.fillStyle=red?'#c63145':'#101820'; ctx.textAlign='left';
+    ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(label(n),x+24,215);
+    ctx.font='900 38px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(suit,x+26,260);
+    ctx.textAlign='center'; ctx.font='900 96px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(suit,x+122,350);
+    ctx.textAlign='right'; ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillText(label(n),x+220,425);
+    ctx.textAlign='left';
   };
-
-  drawNumber(145, current, THEME.blue);
-  if (next !== null) {
-    drawNumber(630, next, accent);
-    centerText(ctx, won ? 'اختيار صحيح' : 'اختيار خاطئ', 500, 462, '900 27px "Noto Sans Arabic", "Neverless Latin"', accent);
-    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 500, 497, '600 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  drawCard(110,current,THEME.blue);
+  if(next!==null) {
+    drawCard(645,next,accent);
+    centerText(ctx, won ? 'اختيار صحيح' : 'اختيار خاطئ', 500, 505, '900 28px "Noto Sans Arabic", "Neverless Latin"', accent);
+    centerText(ctx, `الرهان ${money(wager)} • الرصيد ${money(balance)}`, 500, 535, '600 15px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
   } else {
-    centerText(ctx, 'هل الرقم القادم أعلى أم أقل؟', 720, 270, '800 23px "Noto Sans Arabic", "Neverless Latin"', THEME.text);
-    centerText(ctx, 'اختر من الأزرار بالأسفل', 720, 309, '600 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+    centerText(ctx,'VS',500,305,'900 34px "Noto Sans Arabic", "Neverless Latin"',THEME.silver);
+    centerText(ctx,'اختر أعلى أو أقل من الأزرار',700,500,'700 18px "Noto Sans Arabic", "Neverless Latin"',THEME.text);
   }
   return canvas.toBuffer('image/png');
 }
@@ -319,29 +302,34 @@ function hiloCard(current, next = null, won = null, wager = 0, balance = null) {
 function boxesCard(wager, boxes = null, picked = null, balance = null) {
   const pickedBox = picked === null ? null : boxes?.[picked];
   const accent = !pickedBox ? THEME.blue : pickedBox.bomb ? THEME.red : pickedBox.mult > 1 ? THEME.green : THEME.gold;
-  const { canvas, ctx } = baseCard('NEVERLESS VAULT BOXES', `الدخول ${money(wager)}`, 1100, 535, accent);
+  const { canvas, ctx } = baseCard('NEVERLESS VAULT BOXES', 'صناديق الخزنة', 1100, 560, accent);
 
-  for (let index = 0; index < 5; index += 1) {
-    const x = 65 + index * 202;
-    const box = boxes?.[index];
-    const selected = picked === index;
-    const fill = !box ? '#0e1d2e' : box.bomb ? '#421c2a' : '#12342d';
-    fillRoundRect(ctx, x, 170, 170, 205, 20, fill, selected ? accent : THEME.stroke, selected ? 3 : 1.5);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = box?.bomb ? THEME.red : box ? THEME.green : THEME.cyan;
-    ctx.font = '900 48px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(box ? (box.bomb ? 'X' : `x${box.mult}`) : '?', x + 85, 278);
-    ctx.fillStyle = THEME.silver;
-    ctx.font = '800 17px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`BOX ${index + 1}`, x + 85, 333);
-    ctx.textAlign = 'left';
+  for (let index=0; index<5; index+=1) {
+    const x=55+index*205, box=boxes?.[index], selected=picked===index;
+    const stroke=selected?accent:THEME.stroke;
+    // chest body
+    fillRoundRect(ctx,x,215,170,150,18,'#7b4a24',stroke,selected?4:2);
+    fillRoundRect(ctx,x+8,175,154,70,20,'#9c6534',stroke,selected?4:2);
+    ctx.fillStyle='#d3a342'; ctx.fillRect(x+74,215,22,150);
+    fillRoundRect(ctx,x+62,240,46,45,8,'#e0b64f','#6b4d1b',2);
+    ctx.textAlign='center';
+    ctx.fillStyle=THEME.silver; ctx.font='800 16px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(`BOX ${index+1}`,x+85,400);
+    if(box){
+      ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"';
+      ctx.fillStyle=box.bomb?THEME.red:THEME.green;
+      ctx.fillText(box.bomb?'✕':`x${box.mult}`,x+85,455);
+    } else {
+      ctx.font='900 42px "Noto Sans Arabic", "Neverless Latin"'; ctx.fillStyle=THEME.cyan; ctx.fillText('?',x+85,455);
+    }
+    ctx.textAlign='left';
   }
-
-  if (!boxes) {
-    centerText(ctx, 'اختر صندوقاً واحداً • صندوق واحد مفخخ', 550, 435, '700 18px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
-  } else if (pickedBox) {
-    centerText(ctx, pickedBox.bomb ? 'الصندوق انفجر' : `المضاعف x${pickedBox.mult}`, 550, 430, '900 24px "Noto Sans Arabic", "Neverless Latin"', accent);
-    if (balance !== null) centerText(ctx, `الرصيد ${money(balance)}`, 550, 466, '600 16px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  if(!boxes) {
+    centerText(ctx,`قيمة الدخول ${money(wager)} • اختر صندوقاً واحداً`,550,505,'700 18px "Noto Sans Arabic", "Neverless Latin"',THEME.muted);
+  } else if(pickedBox) {
+    const msg=pickedBox.bomb?'الصندوق مفخخ':pickedBox.mult>1?`ربحت x${pickedBox.mult}`:`عاد لك x${pickedBox.mult}`;
+    centerText(ctx,msg,550,505,'900 24px "Noto Sans Arabic", "Neverless Latin"',accent);
+    if(balance!==null) centerText(ctx,`الرصيد ${money(balance)}`,550,535,'600 15px "Noto Sans Arabic", "Neverless Latin"',THEME.muted);
   }
   return canvas.toBuffer('image/png');
 }
