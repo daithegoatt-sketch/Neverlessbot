@@ -102,7 +102,7 @@ function unpackUser(x = {}) {
 
 function newMarket() {
   const now = Date.now();
-  return { price: 100, history: [100], updatedAt: now, assetUpdatedAt: now };
+  return { price: 100, history: [100], updatedAt: now, assetUpdatedAt: now, goldUpdatedAt: now };
 }
 
 function packMarket(m) {
@@ -124,7 +124,7 @@ function packMarket(m) {
       };
     }
   }
-  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, au: m.assetUpdatedAt || m.updatedAt, c: companies, a: assets };
+  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, au: m.assetUpdatedAt || m.updatedAt, gu: m.goldUpdatedAt || m.assetUpdatedAt || m.updatedAt, c: companies, a: assets };
 }
 
 function unpackMarket(x = {}) {
@@ -156,7 +156,8 @@ function unpackMarket(x = {}) {
   }
   const updatedAt = Math.max(0, Number(x.u) || Date.now());
   const assetUpdatedAt = Math.max(0, Number(x.au) || updatedAt);
-  return { price, history, companies, assets, updatedAt, assetUpdatedAt };
+  const goldUpdatedAt = Math.max(0, Number(x.gu) || assetUpdatedAt);
+  return { price, history, companies, assets, updatedAt, assetUpdatedAt, goldUpdatedAt };
 }
 
 function enc(value) {

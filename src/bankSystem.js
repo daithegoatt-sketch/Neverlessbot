@@ -72,6 +72,7 @@ const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID, BANK_EXTRA
 const DATA_CHANNEL_NAME = 'neverless-data';
 const ADMIN_PERMISSION = 'Administrator';
 const ASSET_MARKET_STEP = 60 * 60 * 1000;
+const GOLD_MARKET_STEP = 15 * 60 * 1000;
 const STOCK_COMPANIES = Object.freeze({
   NVRS: { code: 'NVRS', name: 'Neverless Tech', aliases: ['neverless','nvrs','نفرلس','نيفرلس'] },
   ASTRA: { code: 'ASTRA', name: 'Astra Labs', aliases: ['astra','استرا','أسترا'] },
@@ -274,6 +275,7 @@ function normalizeMarketShape(market) {
   }
   market.updatedAt = Math.max(0, Number(market.updatedAt) || Date.now());
   market.assetUpdatedAt = Math.max(0, Number(market.assetUpdatedAt) || market.updatedAt || Date.now());
+  market.goldUpdatedAt = Math.max(0, Number(market.goldUpdatedAt) || market.assetUpdatedAt || Date.now());
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   return market;
@@ -302,6 +304,7 @@ function updateMarket(guildId) {
   const now = Date.now();
   const stockSteps = Math.min(24, Math.floor(Math.max(0, now - market.updatedAt) / MARKET_STEP));
   const assetSteps = Math.min(24, Math.floor(Math.max(0, now - market.assetUpdatedAt) / ASSET_MARKET_STEP));
+  const goldSteps = Math.min(96, Math.floor(Math.max(0, now - market.goldUpdatedAt) / GOLD_MARKET_STEP));
 
   for (let i = 0; i < stockSteps; i += 1) {
     for (const company of Object.values(STOCK_COMPANIES)) {
@@ -315,20 +318,35 @@ function updateMarket(guildId) {
 
   for (let i = 0; i < assetSteps; i += 1) {
     for (const asset of Object.values(ASSET_CATALOG)) {
+      if (asset.code === 'GOLD') continue;
       const data = market.assets[asset.code];
-      const move = asset.code === 'GOLD'
-        ? ((Math.random() < 0.95 ? 0.0015 + Math.random() * 0.0065 : 0.008 + Math.random() * 0.012) * (Math.random() < 0.5 ? -1 : 1))
-        : marketMove() * 0.8;
+      const move = marketMove() * 0.8;
       data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
       data.history = [...(data.history || [data.price]), data.price].slice(-24);
     }
     market.assetUpdatedAt += ASSET_MARKET_STEP;
   }
 
+  for (let i = 0; i < goldSteps; i += 1) {
+    const asset = ASSET_CATALOG.GOLD;
+    const data = market.assets.GOLD;
+    const move = (Math.random() < 0.95 ? 0.0015 + Math.random() * 0.0065 : 0.008 + Math.random() * 0.012)
+      * (Math.random() < 0.5 ? -1 : 1);
+    data.price = clamp(Math.max(1, Math.round(data.price * (1 + move))), Math.max(1, Math.round(asset.seed * 0.08)), asset.seed * 20);
+    data.history = [...(data.history || [data.price]), data.price].slice(-24);
+    market.goldUpdatedAt += GOLD_MARKET_STEP;
+  }
+
   market.price = market.companies.NVRS.price;
   market.history = market.companies.NVRS.history;
   markets.set(guildId, market);
-  return { market, changed: stockSteps > 0 || assetSteps > 0, stockChanged: stockSteps > 0, assetChanged: assetSteps > 0 };
+  return {
+    market,
+    changed: stockSteps > 0 || assetSteps > 0 || goldSteps > 0,
+    stockChanged: stockSteps > 0,
+    assetChanged: assetSteps > 0,
+    goldChanged: goldSteps > 0,
+  };
 }
 
 function companyFrom(raw) {
@@ -392,7 +410,7 @@ async function goldMarket(message) {
   await withLock(marketLockKey(message.guildId), async () => {
     const { market, changed } = updateMarket(message.guildId);
     if (changed && !await persistMarket(message.guild)) return replyInfo(message, 'تعذر تحديث سعر الذهب', 'جرّب مرة ثانية');
-    const next = Math.max(0, market.assetUpdatedAt + ASSET_MARKET_STEP - Date.now());
+    const next = Math.max(0, market.goldUpdatedAt + GOLD_MARKET_STEP - Date.now());
     const state = getUser(message.guildId, message.author.id);
     await replyImage(
       message,
@@ -461,6 +479,7 @@ async function tradeAsset(message, action, raw) {
         amountRaw = parts.length > 1 ? parts.at(-1) : '';
       }
       const maxValue = action === 'buy' ? state.balance : owned * price;
+      if (action === 'sell' && owned <= 0) return replyInfo(message, 'لا تملك ذهباً', 'اشترِ ذهباً أولاً ثم يمكنك بيعه');
       total = parseAmount(amountRaw, maxValue);
       if (!Number.isFinite(total)) return replyUsage(message, action === 'buy' ? 'شراء ذهب' : 'بيع ذهب', [
         `${action === 'buy' ? 'شراء' : 'بيع'} ذهب 50000`,
@@ -1707,6 +1726,10 @@ async function handleBankMessage(message, client) {
     if (categoryBuy) { await assetCatalog(message, categoryFromText(categoryBuy[1])); return true; }
     const categorySell = text.match(/^(?:بيع|sell)\s+(عقار|عقارات|ارض|أرض|اراضي|أراضي|سيارة|سياره|سيارات|طائرة|طائره|طيارة|طياره|طائرات)$/u);
     if (categorySell) { await assetCatalog(message, categoryFromText(categorySell[1])); return true; }
+    let goldTrade = text.match(/^(?:شراء|buy)\s+(?:ذهب|gold)\s+(.+)$/u);
+    if (goldTrade) { await tradeAsset(message,'buy',`ذهب ${goldTrade[1]}`); return true; }
+    goldTrade = text.match(/^(?:بيع|sell)\s+(?:ذهب|gold)\s+(.+)$/u);
+    if (goldTrade) { await tradeAsset(message,'sell',`ذهب ${goldTrade[1]}`); return true; }
     if (/^(?:شراء|buy)\s+(?:ذهب|gold)$/u.test(text) || /^(?:بيع|sell)\s+(?:ذهب|gold)$/u.test(text)) { await goldMarket(message); return true; }
 
     let assetMatch = text.match(/^(?:شراء|buy)\s+(.+)$/u);
