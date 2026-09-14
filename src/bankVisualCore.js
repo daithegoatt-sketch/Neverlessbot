@@ -216,11 +216,11 @@ async function stockTradeCard(user, action, count, total, price, state) {
 }
 
 async function topCard(rows, price) {
-  const { canvas, ctx } = baseCard('NEVERLESS TOP 5', 'أغنى أعضاء البنك حسب صافي الثروة', 1050, 760, THEME.gold);
-  const avatars = await Promise.all(rows.slice(0, 5).map((row) => loadAvatarImage(row.user)));
+  const { canvas, ctx } = baseCard('NEVERLESS TOP 10', 'أغنى أعضاء البنك حسب صافي الثروة', 1050, 1280, THEME.gold);
+  const avatars = await Promise.all(rows.slice(0, 10).map((row) => loadAvatarImage(row.user)));
   let y = 145;
 
-  for (let i = 0; i < Math.min(5, rows.length); i += 1) {
+  for (let i = 0; i < Math.min(10, rows.length); i += 1) {
     const row = rows[i];
     const accent = i === 0 ? THEME.gold : i === 1 ? THEME.silver : i === 2 ? '#c78d67' : THEME.blue;
     fillRoundRect(ctx, 55, y, 940, 102, 20, i < 3 ? 'rgba(15,31,49,.94)' : 'rgba(10,23,38,.90)', THEME.strokeSoft, 1.5);
@@ -237,13 +237,13 @@ async function topCard(rows, price) {
     ctx.textAlign = 'right';
     ctx.fillStyle = i === 0 ? THEME.gold : THEME.green;
     ctx.font = '900 25px sans-serif';
-    ctx.fillText(money(row.net), 955, y + 60);
+    ctx.fillText(`${money(row.net)}${i === 0 ? '  VVIP' : ''}`, 955, y + 60);
     ctx.textAlign = 'left';
     y += 112;
   }
 
-  if (!rows.length) centerText(ctx, 'لا توجد حسابات بعد', 525, 380, '700 23px sans-serif', THEME.muted);
-  rtlText(ctx, `سعر السهم الحالي ${money(price)}`, 990, 718, '600 14px sans-serif', THEME.muted);
+  if (!rows.length) centerText(ctx, 'لا توجد حسابات بعد', 525, 640, '700 23px sans-serif', THEME.muted);
+  rtlText(ctx, `VVIP = الأغنى في السيرفر • سعر السهم الحالي ${money(price)}`, 990, 1240, '600 14px sans-serif', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
@@ -290,6 +290,21 @@ function infoCard(title, message, ok = false) {
   return canvas.toBuffer('image/png');
 }
 
+async function economyEventCard(user, title, amount, balance, kind = 'good') {
+  const accent = kind === 'bad' ? THEME.red : kind === 'protect' ? THEME.cyan : THEME.green;
+  const { canvas, ctx } = baseCard('NEVERLESS BANK', title, 1000, 455, accent);
+  drawAvatarImage(ctx, await loadAvatarImage(user), 70, 155, 112, accent);
+  ctx.fillStyle = THEME.text;
+  ctx.font = `800 ${fitText(ctx, playerName(user), 260, 25, 16, 800)}px sans-serif`;
+  ctx.fillText(playerName(user), 205, 195);
+  fillRoundRect(ctx, 500, 145, 410, 190, 24, 'rgba(8,20,34,.94)', THEME.stroke, 1.5);
+  centerText(ctx, title, 705, 190, '700 19px sans-serif', THEME.muted);
+  ctx.textAlign = 'center'; ctx.fillStyle = accent; ctx.font = '900 52px sans-serif';
+  ctx.fillText(amount ? money(amount) : 'ACTIVE', 705, 260); ctx.textAlign = 'left';
+  centerText(ctx, `الرصيد الآن ${money(balance)}`, 705, 307, '700 17px sans-serif', THEME.text);
+  return canvas.toBuffer('image/png');
+}
+
 module.exports = {
   helpCard,
   balanceCard,
@@ -301,4 +316,5 @@ module.exports = {
   topCard,
   statusCard,
   infoCard,
+  economyEventCard,
 };
