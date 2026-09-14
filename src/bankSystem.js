@@ -190,12 +190,12 @@ async function persistUser(guild, userId) {
   if (id) {
     const edited = await channel.messages.edit(id, {
       content,
-      allowedMentions: { users: [message.author.id], repliedUser: true },
+      allowedMentions: { parse: [] },
     }).catch(() => null);
     if (edited) return true;
   }
 
-  const message = await channel.send({ content, allowedMentions: { users: [message.author.id], repliedUser: true } }).catch((error) => {
+  const message = await channel.send({ content, allowedMentions: { parse: [] } }).catch((error) => {
     console.error(`[bank] failed to persist user ${userId}:`, error);
     return null;
   });
@@ -215,12 +215,12 @@ async function persistMarket(guild) {
   if (id) {
     const edited = await channel.messages.edit(id, {
       content,
-      allowedMentions: { users: [message.author.id], repliedUser: true },
+      allowedMentions: { parse: [] },
     }).catch(() => null);
     if (edited) return true;
   }
 
-  const message = await channel.send({ content, allowedMentions: { users: [message.author.id], repliedUser: true } }).catch((error) => {
+  const message = await channel.send({ content, allowedMentions: { parse: [] } }).catch((error) => {
     console.error('[bank] failed to persist market:', error);
     return null;
   });
