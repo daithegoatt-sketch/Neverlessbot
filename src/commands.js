@@ -73,6 +73,11 @@ const commands = [
     .addUserOption((o) => o.setName('member').setDescription('العضو المطلوب إنذاره').setRequired(true))
     .addStringOption((o) => o.setName('reason').setDescription('سبب الإنذار').setMinLength(1).setMaxLength(300).setRequired(true)),
   new SlashCommandBuilder()
+    .setName('removewarn')
+    .setDescription('إزالة جميع إنذارات العضو اليدوية والتلقائية')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption((o) => o.setName('member').setDescription('العضو المطلوب حذف جميع إنذاراته').setRequired(true)),
+  new SlashCommandBuilder()
     .setName('automod')
     .setDescription('إدارة الكلمات والإنذارات في Neverless AutoMod')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
