@@ -6,13 +6,15 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('
 
 const BANK_CHANNEL_ID = '1548665575247581184';
 const BANK_TEST_CHANNEL_ID = '1548665662556217384';
-const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID]);
+const BANK_EXTRA_CHANNEL_ID = '1548983198120419418';
+const BANK_CHANNELS = new Set([BANK_CHANNEL_ID, BANK_TEST_CHANNEL_ID, BANK_EXTRA_CHANNEL_ID]);
 const DATA_CHANNEL_NAME = 'neverless-data';
 const USER_PREFIX = 'NLBANK1|U|';
 const MARKET_PREFIX = 'NLBANK1|M|';
 const START_BALANCE = 1000;
-const SALARY_CD = 20 * 60 * 60 * 1000;
-const TIP_CD = 8 * 60 * 60 * 1000;
+const COMMAND_CD = 5 * 60 * 1000;
+const SALARY_CD = COMMAND_CD;
+const TIP_CD = COMMAND_CD;
 const MARKET_STEP = 5 * 60 * 1000;
 const MAX_BET = 100000;
 
@@ -28,10 +30,10 @@ const key = (g, u) => `${g}:${u}`;
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
 function newUser() {
-  return { balance: START_BALANCE, vault: 0, shares: 0, salaryAt: 0, tipAt: 0, earned: 0, lost: 0, games: 0, wins: 0 };
+  return { balance: START_BALANCE, vault: 0, shares: 0, salaryAt: 0, tipAt: 0, earned: 0, lost: 0, games: 0, wins: 0, cooldowns: {} };
 }
 function packUser(s) {
-  return { b: s.balance, v: s.vault, sh: s.shares, sa: s.salaryAt, ta: s.tipAt, e: s.earned, l: s.lost, g: s.games, w: s.wins };
+  return { b: s.balance, v: s.vault, sh: s.shares, sa: s.salaryAt, ta: s.tipAt, e: s.earned, l: s.lost, g: s.games, w: s.wins, c: s.cooldowns || {} };
 }
 function unpackUser(x = {}) {
   return {
@@ -44,6 +46,9 @@ function unpackUser(x = {}) {
     lost: Math.max(0, Math.floor(Number(x.l ?? 0) || 0)),
     games: Math.max(0, Math.floor(Number(x.g ?? 0) || 0)),
     wins: Math.max(0, Math.floor(Number(x.w ?? 0) || 0)),
+    cooldowns: x.c && typeof x.c === 'object' && !Array.isArray(x.c)
+      ? Object.fromEntries(Object.entries(x.c).filter(([name, at]) => /^[a-z]+$/.test(name) && Number.isFinite(Number(at))).map(([name, at]) => [name, Math.max(0, Number(at))]))
+      : {},
   };
 }
 function newMarket() { return { price: 100, history: [100], updatedAt: Date.now() }; }
@@ -172,18 +177,29 @@ function digits(v) {
   return String(v || '').replace(/[٠-٩۰-۹]/g, (d) => String(a.includes(d) ? a.indexOf(d) : p.indexOf(d)));
 }
 function parseAmount(raw, max = Infinity) {
-  let s = digits(raw).trim().toLowerCase().replace(/,/g, '');
-  if (/^(كل|الكل|all)$/u.test(s)) return Number.isFinite(max) ? Math.floor(max) : NaN;
+  let s = digits(raw).trim().toLowerCase().replace(/[$,]/g, '');
+  const available = Number.isFinite(Number(max)) ? Math.max(0, Math.floor(Number(max))) : Infinity;
+  if (available <= 0) return NaN;
+  if (/^(كل|الكل|كامل|all|full)$/u.test(s)) return Number.isFinite(available) ? available : NaN;
+  if (/^(نص|نصف|half)$/u.test(s)) return Number.isFinite(available) ? Math.max(1, Math.floor(available / 2)) : NaN;
+  if (/^(ربع|quarter)$/u.test(s)) return Number.isFinite(available) ? Math.max(1, Math.floor(available / 4)) : NaN;
   let mult = 1;
   if (/(?:k|الف|ألف)$/u.test(s)) { mult = 1000; s = s.replace(/(?:k|الف|ألف)$/u, '').trim(); }
   if (/(?:m|مليون)$/u.test(s)) { mult = 1000000; s = s.replace(/(?:m|مليون)$/u, '').trim(); }
   const n = Math.floor(Number(s) * mult);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, max) : NaN;
+  return Number.isFinite(n) && n > 0 && n <= available ? n : NaN;
 }
 function parseShares(raw) { const n = Number(digits(raw).replace(/,/g, '').trim()); return Number.isInteger(n) && n > 0 && n <= 100000 ? n : NaN; }
 function money(v) { return `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`; }
 function shortMoney(v) { const n = Math.round(Number(v) || 0); return Math.abs(n) >= 1e6 ? `$${(n/1e6).toFixed(1)}M` : Math.abs(n) >= 1e3 ? `$${(n/1e3).toFixed(1)}K` : money(n); }
 function cooldownLeft(at, cd) { const ms = Number(at) + cd - Date.now(); return ms <= 0 ? null : `${Math.floor(ms/3600000)}س ${Math.ceil((ms%3600000)/60000)}د`; }
+function commandCooldownLeft(s, name, now = Date.now()) { return Math.max(0, Number(s.cooldowns?.[name] || 0) + COMMAND_CD - now); }
+function setCommandCooldown(s, name, now = Date.now()) { if (!s.cooldowns || typeof s.cooldowns !== 'object') s.cooldowns = {}; s.cooldowns[name] = now; }
+function cooldownStatus(ms) {
+  if (ms <= 0) return '🟢 متاح';
+  const minutes = Math.floor(ms / 60000), seconds = Math.ceil((ms % 60000) / 1000);
+  return `🔴 الوقت الباقي ${minutes}:${String(seconds).padStart(2, '0')}`;
+}
 function shortCd(userId, name, ms) {
   const k = `${userId}:${name}`, until = shortCooldowns.get(k) || 0;
   if (until > Date.now()) return Math.ceil((until - Date.now()) / 1000);
@@ -246,13 +262,16 @@ async function topCard(rows,price) {
 }
 
 function helpEmbed(client) {
-  const e=new EmbedBuilder().setColor(0x17365d).setTitle('🏦 Neverless Bank — الأوامر').setDescription('اقتصاد افتراضي منفصل خاص بالسيرفر، يعمل فقط في رومات البنك.')
+  const e=new EmbedBuilder().setColor(0x17365d).setTitle('🏦 Neverless Bank — دليل الأوامر').setDescription('اقتصاد افتراضي خاص بالسيرفر. مدة أوامر الدخل واللعب **5 دقائق**.')
     .addFields(
       {name:'💳 الحساب',value:'`رصيد` • `ايداع 500` • `سحب 500` • `تحويل @member 500`'},
-      {name:'💰 الدخل',value:'`راتب` كل 20 ساعة • `بخشيش` كل 8 ساعات'},
-      {name:'🎮 الألعاب',value:'`روليت 500` • `هايلو 500` • `صناديق 500`'},
+      {name:'⏱️ الوقت',value:'`وقت` يعرض 🟢 متاح أو 🔴 الوقت الباقي'},
+      {name:'💰 الدخل',value:'`راتب` • `بخشيش`'},
+      {name:'🎮 الألعاب والاستثمار',value:'`رهان كامل` • `استثمار نص` • `نرد ربع` • `قمار 1000` • `تداول 1000`'},
+      {name:'🧮 خيارات المبلغ',value:'`كامل` كل المتاح • `نص` نصفه • `ربع` ربعه • أو رقم محدد'},
       {name:'📈 السوق',value:'`سهم` • `شراء سهم 5` • `بيع سهم 5`'},
-      {name:'🏆 الترتيب',value:'`توب` يعرض أعلى 5 حسب صافي الثروة'}
+      {name:'🏆 الترتيب',value:'`توب` يعرض أعلى 5 حسب صافي الثروة'},
+      {name:'🤝 الصداقة',value:'`طلب صداقة @member` • `صداقة @member` • `قائمة الأصدقاء` • `حذف صديق @member`'}
     ).setFooter({text:'Neverless Bank • أموال افتراضية فقط'});
   const icon=client.user?.displayAvatarURL?.({extension:'png',size:256});if(icon)e.setThumbnail(icon);return e;
 }
@@ -260,11 +279,36 @@ async function replyImage(message,buffer,name,content,components=[]) {
   return message.reply({content:content||undefined,files:[{attachment:buffer,name}],components,allowedMentions:{repliedUser:false,parse:[]}});
 }
 
+function baseEmbed(user,title,color=0x17365d) {
+  return new EmbedBuilder().setColor(color).setAuthor({name:user.globalName||user.username,iconURL:user.displayAvatarURL({extension:'png',size:256})}).setTitle(title).setTimestamp().setFooter({text:'Neverless Bank • أموال افتراضية فقط'});
+}
+function bar(value,total,size=10){const n=total>0?clamp(Math.round(value/total*size),0,size):0;return `${'▰'.repeat(n)}${'▱'.repeat(size-n)}`;}
+function resultEmbed(user,title,wager,net,balance,details='') {
+  return baseEmbed(user,title,net>0?0x22c55e:net<0?0xef4444:0x17365d)
+    .setDescription(`${net>0?'📈 +':net<0?'📉 ':'➖ '}${money(net)}\n${bar(balance,Math.max(balance,wager*5,1000))}`)
+    .addFields(
+      {name:'👤 اللاعب',value:`<@${user.id}>`,inline:true},
+      {name:'💵 المبلغ',value:money(wager),inline:true},
+      {name:'💳 الرصيد',value:money(balance),inline:true},
+      ...(details?[{name:'🎮 النتيجة',value:details}]:[])
+    );
+}
+async function replyEmbed(message,embed,components=[]){return message.reply({embeds:[embed],components,allowedMentions:{repliedUser:false,users:[]}});}
+
 async function balance(message) {
-  const target=message.mentions.users.first()||message.author,{market,changed}=updateMarket(message.guildId);if(changed)await persistMarket(message.guild);const s=getUser(message.guildId,target.id);await persistUser(message.guild,target.id);await replyImage(message,await balanceCard(target,s,market.price),`bank-${target.id}.png`);
+  const target=message.mentions.users.first()||message.author,{market,changed}=updateMarket(message.guildId);if(changed)await persistMarket(message.guild);const s=getUser(message.guildId,target.id);await persistUser(message.guild,target.id);
+  const portfolio=s.shares*market.price,net=s.balance+s.vault+portfolio,rate=s.games?Math.round(s.wins/s.games*100):0;
+  const embed=baseEmbed(target,'💳 الحساب البنكي').setThumbnail(target.displayAvatarURL({extension:'png',size:256}))
+    .setDescription(`صافي الثروة **${money(net)}**\n${bar(net,Math.max(net,10000))}`)
+    .addFields(
+      {name:'💵 الرصيد المتاح',value:money(s.balance),inline:true},{name:'🏦 الخزنة',value:money(s.vault),inline:true},
+      {name:'📈 الأسهم',value:`${s.shares} • ${money(portfolio)}`,inline:true},{name:'🏆 الأرباح',value:money(s.earned),inline:true},
+      {name:'📉 الخسائر',value:money(s.lost),inline:true},{name:'🎯 الفوز',value:`${rate}% • ${s.wins}/${s.games}`,inline:true}
+    );
+  await replyEmbed(message,embed);
 }
 async function income(message,type) {
-  await locked(message.guildId,async()=>{const s=getUser(message.guildId,message.author.id),isSalary=type==='salary',left=cooldownLeft(isSalary?s.salaryAt:s.tipAt,isSalary?SALARY_CD:TIP_CD);if(left){await message.reply({content:`⏳ تقدر تستخدم **${isSalary?'راتب':'بخشيش'}** بعد ${left}.`,allowedMentions:{repliedUser:false}});return;}const amount=isSalary?700+Math.floor(Math.random()*801):120+Math.floor(Math.random()*381);s.balance+=amount;s.earned+=amount;if(isSalary)s.salaryAt=Date.now();else s.tipAt=Date.now();await persistUser(message.guild,message.author.id);await replyImage(message,await receiptCard(message.author,isSalary?'Daily salary':'Daily tip',amount,s.balance),`${type}-${message.author.id}.png`,`✅ تم إيداع **${money(amount)}** في رصيدك.`);});
+  await locked(message.guildId,async()=>{const s=getUser(message.guildId,message.author.id),isSalary=type==='salary',left=cooldownLeft(isSalary?s.salaryAt:s.tipAt,isSalary?SALARY_CD:TIP_CD);if(left){await message.reply({content:`🔴 الوقت الباقي **${left}**`,allowedMentions:{repliedUser:false}});return;}const amount=isSalary?700+Math.floor(Math.random()*801):120+Math.floor(Math.random()*381);s.balance+=amount;s.earned+=amount;if(isSalary)s.salaryAt=Date.now();else s.tipAt=Date.now();await persistUser(message.guild,message.author.id);await replyEmbed(message,resultEmbed(message.author,isSalary?'💰 راتب':'🎁 بخشيش',0,amount,s.balance,`تم إيداع **${money(amount)}** • متاح مجددًا بعد 5 دقائق`));});
 }
 async function transfer(message,raw) {
   const target=message.mentions.users.first();if(!target||target.bot||target.id===message.author.id){await message.reply({content:'استخدم: `تحويل @member 500`',allowedMentions:{repliedUser:false}});return;}
@@ -298,13 +342,44 @@ async function top(message,client) {
   await locked(message.guildId,async()=>{const {market,changed}=updateMarket(message.guildId);if(changed)await persistMarket(message.guild);const rows=[];for(const [k,s] of users){if(!k.startsWith(`${message.guildId}:`))continue;const userId=k.split(':')[1];rows.push({userId,state:s,net:s.balance+s.vault+s.shares*market.price});}rows.sort((a,b)=>b.net-a.net);for(const r of rows.slice(0,5))r.user=client.users.cache.get(r.userId)||await client.users.fetch(r.userId).catch(()=>({username:r.userId,globalName:null}));await replyImage(message,await topCard(rows.slice(0,5),market.price),`bank-top-${message.guildId}.png`);});
 }
 
-function normalized(content) { return digits(content).trim().replace(/^<@!?\d{15,22}>\s*/u,'').replace(/\s+/g,' ').toLowerCase(); }
+function statusEmbed(user,s) {
+  const labels=[['salary','راتب'],['tip','بخشيش'],['bet','رهان'],['invest','استثمار'],['dice','نرد'],['gamble','قمار'],['trade','تداول']];
+  return baseEmbed(user,'⏱️ أوقات الأوامر').setDescription('مدة كل أمر **5 دقائق** وتُحفظ بعد إعادة التشغيل.')
+    .addFields(labels.map(([name,label])=>({name:label,value:name==='salary'
+      ? (cooldownLeft(s.salaryAt,SALARY_CD)?`🔴 الوقت الباقي ${cooldownLeft(s.salaryAt,SALARY_CD)}`:'🟢 متاح')
+      : name==='tip'
+        ? (cooldownLeft(s.tipAt,TIP_CD)?`🔴 الوقت الباقي ${cooldownLeft(s.tipAt,TIP_CD)}`:'🟢 متاح')
+        : cooldownStatus(commandCooldownLeft(s,name)),inline:true})));
+}
+function randomOutcome(type,wager) {
+  if(type==='bet'){const won=Math.random()<.48;return{payout:won?Math.floor(wager*1.9):0,details:won?'🟢 فاز الرهان • x1.9':'🔴 خسر الرهان'};}
+  if(type==='invest'){const pct=Math.floor(Math.random()*71)-30;return{payout:Math.max(0,Math.floor(wager*(1+pct/100))),details:`${pct>=0?'📈':'📉'} عائد الاستثمار ${pct>=0?'+':''}${pct}%`};}
+  if(type==='dice'){const player=1+Math.floor(Math.random()*6),bank=1+Math.floor(Math.random()*6);return{payout:player>bank?wager*2:player===bank?wager:0,details:`🎲 أنت: **${player}** • البنك: **${bank}**`};}
+  if(type==='gamble'){const roll=Math.random(),mult=roll<.52?0:roll<.78?1.5:roll<.94?2:5;return{payout:Math.floor(wager*mult),details:`🎰 المضاعف **x${mult}**`};}
+  const pct=Math.floor(Math.random()*51)-22;return{payout:Math.max(0,Math.floor(wager*(1+pct/100))),details:`${pct>=0?'🟢 صفقة ناجحة':'🔴 صفقة خاسرة'} • ${pct>=0?'+':''}${pct}%`};
+}
+async function moneyGame(message,type,raw) {
+  const names={bet:'رهان',invest:'استثمار',dice:'نرد',gamble:'قمار',trade:'تداول'};
+  await locked(message.guildId,async()=>{
+    const s=getUser(message.guildId,message.author.id),left=commandCooldownLeft(s,type);
+    if(left){await message.reply({content:cooldownStatus(left),allowedMentions:{repliedUser:false}});return;}
+    const wager=parseAmount(raw,s.balance);
+    if(!Number.isFinite(wager)){await message.reply({content:`الاستخدام: \`${names[type]} كامل\` أو \`${names[type]} نص\` أو \`${names[type]} ربع\` أو \`${names[type]} 1000\`\nرصيدك: **${money(s.balance)}**`,allowedMentions:{repliedUser:false}});return;}
+    const out=randomOutcome(type,wager),net=out.payout-wager;s.balance=s.balance-wager+out.payout;s.games+=1;
+    if(net>0){s.wins+=1;s.earned+=net;}else if(net<0)s.lost+=-net;
+    setCommandCooldown(s,type);await persistUser(message.guild,message.author.id);
+    await replyEmbed(message,resultEmbed(message.author,`🎮 ${names[type]}`,wager,net,s.balance,`${out.details}\nالمبلغ العائد: **${money(out.payout)}**`));
+  });
+}
+
+function normalized(content) { return digits(content).trim().replace(/^[-#]+\s*/u,'').replace(/^<@!?\d{15,22}>\s*/u,'').replace(/\s+/g,' ').toLowerCase(); }
 async function handleBankMessage(message,client) {
   if(!message?.guildId||message.author?.bot||!BANK_CHANNELS.has(message.channelId))return false;const text=normalized(message.content);if(!text)return false;
-  const known=/^(?:اوامر|أوامر|bank|bank help|رصيد|balance|bal|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);if(!known)return false;await ensureLoaded(message.guild);
+  const known=/^(?:اوامر|أوامر|bank|bank help|رصيد|balance|bal|وقت|cooldowns?|راتب|salary|daily|بخشيش|tip|توب|top|سهم|اسهم|أسهم|stock|تحويل|transfer|ايداع|إيداع|deposit|سحب|withdraw|رهان|bet|استثمار|invest|نرد|dice|قمار|gamble|تداول|trade|روليت|roulette|هايلو|هاي لو|hilo|صناديق|boxes|شراء سهم|شراء اسهم|شراء أسهم|buy|بيع سهم|بيع اسهم|بيع أسهم|sell)(?:\s|$)/u.test(text);if(!known)return false;await ensureLoaded(message.guild);
   try {
     if(/^(?:اوامر|أوامر|bank|bank help)$/u.test(text)){await message.reply({embeds:[helpEmbed(client)],allowedMentions:{repliedUser:false}});return true;}
     if(/^(?:رصيد|balance|bal)(?:\s|$)/u.test(text)){await balance(message);return true;}
+    if(/^(?:وقت|cooldowns?)$/u.test(text)){await replyEmbed(message,statusEmbed(message.author,getUser(message.guildId,message.author.id)));return true;}
     if(/^(?:راتب|salary|daily)$/u.test(text)){await income(message,'salary');return true;}
     if(/^(?:بخشيش|tip)$/u.test(text)){await income(message,'tip');return true;}
     if(/^(?:توب|top)$/u.test(text)){await top(message,client);return true;}
@@ -312,16 +387,24 @@ async function handleBankMessage(message,client) {
     let m=text.match(/^(?:تحويل|transfer)\s+<@!?\d{15,22}>\s+(.+)$/u);if(m){await transfer(message,m[1]);return true;}
     m=text.match(/^(?:ايداع|إيداع|deposit)\s+(.+)$/u);if(m){await vault(message,'deposit',m[1]);return true;}
     m=text.match(/^(?:سحب|withdraw)\s+(.+)$/u);if(m){await vault(message,'withdraw',m[1]);return true;}
-    m=text.match(/^(?:روليت|roulette)\s+(.+)$/u);if(m){await roulette(message,m[1]);return true;}
-    m=text.match(/^(?:هايلو|هاي لو|hilo)\s+(.+)$/u);if(m){await hilo(message,m[1]);return true;}
-    m=text.match(/^(?:صناديق|boxes)(?:\s+(.+))?$/u);if(m){await boxes(message,m[1]);return true;}
+    const moneyGames=[
+      [/^(?:رهان|bet)\s+(.+)$/u,'bet'],
+      [/^(?:استثمار|invest)\s+(.+)$/u,'invest'],
+      [/^(?:نرد|dice)\s+(.+)$/u,'dice'],
+      [/^(?:قمار|gamble)\s+(.+)$/u,'gamble'],
+      [/^(?:تداول|trade)\s+(.+)$/u,'trade'],
+    ];
+    for(const [pattern,type] of moneyGames){m=text.match(pattern);if(m){await moneyGame(message,type,m[1]);return true;}}
+    m=text.match(/^(?:روليت|roulette)\s+(.+)$/u);if(m){await moneyGame(message,'gamble',m[1]);return true;}
+    m=text.match(/^(?:هايلو|هاي لو|hilo)\s+(.+)$/u);if(m){await moneyGame(message,'bet',m[1]);return true;}
+    m=text.match(/^(?:صناديق|boxes)(?:\s+(.+))?$/u);if(m){await moneyGame(message,'invest',m[1]||'500');return true;}
     m=text.match(/^(?:شراء سهم|شراء اسهم|شراء أسهم|buy)\s+(.+)$/u);if(m){await tradeStock(message,'buy',m[1]);return true;}
     m=text.match(/^(?:بيع سهم|بيع اسهم|بيع أسهم|sell)\s+(.+)$/u);if(m){await tradeStock(message,'sell',m[1]);return true;}
     await message.reply({content:'اكتب `اوامر` لعرض أوامر البنك.',allowedMentions:{repliedUser:false}});return true;
   } catch(e){console.error('[bank] command failed:',e);await message.reply({content:'صار خطأ مؤقت في البنك. جرّب مرة ثانية.',allowedMentions:{repliedUser:false}}).catch(()=>{});return true;}
 }
 function installBankSystem(client) {
-  if(client.__neverlessBankInstalled)return;client.__neverlessBankInstalled=true;client.on('messageCreate',(m)=>handleBankMessage(m,client).catch((e)=>console.error('[bank] unhandled:',e)));console.log(`[bank] installed for ${BANK_CHANNEL_ID} + test ${BANK_TEST_CHANNEL_ID}`);
+  if(client.__neverlessBankInstalled)return;client.__neverlessBankInstalled=true;client.on('messageCreate',(m)=>handleBankMessage(m,client).catch((e)=>console.error('[bank] unhandled:',e)));console.log(`[bank] installed for ${[...BANK_CHANNELS].join(', ')}`);
 }
 
-module.exports={installBankSystem,handleBankMessage,parseAmount,parseShares,parseRecord,BANK_CHANNEL_ID,BANK_TEST_CHANNEL_ID};
+module.exports={installBankSystem,handleBankMessage,parseAmount,parseShares,parseRecord,unpackUser,commandCooldownLeft,cooldownStatus,BANK_CHANNEL_ID,BANK_TEST_CHANNEL_ID,BANK_EXTRA_CHANNEL_ID,COMMAND_CD};
