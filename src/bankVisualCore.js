@@ -333,13 +333,13 @@ async function topCard(rows, price) {
     ctx.textAlign = 'right';
     ctx.fillStyle = i === 0 ? THEME.gold : THEME.green;
     ctx.font = '900 25px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`${money(row.net)}${i === 0 ? '  VVIP' : ''}`, 955, y + 60);
+    ctx.fillText(`${money(row.net)}${i === 0 ? '  #1' : ''}`, 955, y + 60);
     ctx.textAlign = 'left';
     y += 112;
   }
 
   if (!rows.length) centerText(ctx, 'لا توجد حسابات بعد', 525, 640, '700 23px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
-  rtlText(ctx, `VVIP = الأغنى في السيرفر • سعر السهم الحالي ${money(price)}`, 990, 1240, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  rtlText(ctx, `المركز الأول = الأغنى في السيرفر - سعر NVRS الحالي ${money(price)}`, 990, 1240, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
