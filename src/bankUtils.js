@@ -21,7 +21,8 @@ function newUser() {
     vault: 0,
     shares: 0,
     stocks: {},
-    assets: { LAND: 0, CAR: 0, PLANE: 0, GOLD: 0 },
+    assets: {},
+    stockBasis: {},
     salaryAt: 0,
     tipAt: 0,
     loanAt: 0,
@@ -42,6 +43,7 @@ function packUser(s) {
     sh: s.shares,
     st: s.stocks || {},
     as: s.assets || {},
+    sb: s.stockBasis || {},
     sa: s.salaryAt,
     ta: s.tipAt,
     la: s.loanAt || 0,
@@ -61,18 +63,24 @@ function unpackUser(x = {}) {
     ? Object.fromEntries(Object.entries(x.st).filter(([, q]) => Number(q) > 0).map(([k, q]) => [String(k).toUpperCase(), Number(q)]))
     : (legacyShares > 0 ? { NVRS: legacyShares } : {});
   const assetsRaw = x.as && typeof x.as === 'object' && !Array.isArray(x.as) ? x.as : {};
-  const assets = {
-    LAND: Math.max(0, Math.floor(Number(assetsRaw.LAND) || 0)),
-    CAR: Math.max(0, Math.floor(Number(assetsRaw.CAR) || 0)),
-    PLANE: Math.max(0, Math.floor(Number(assetsRaw.PLANE) || 0)),
-    GOLD: Math.max(0, Number(assetsRaw.GOLD) || 0),
-  };
+  const assets = {};
+  for (const [code, qty] of Object.entries(assetsRaw)) {
+    const n = Number(qty);
+    if (Number.isFinite(n) && n > 0) assets[String(code).toUpperCase()] = n;
+  }
+  // Migrate the first asset prototype into the named catalog.
+  if (assets.LAND) { assets.HOUSE = (assets.HOUSE || 0) + assets.LAND; delete assets.LAND; }
+  if (assets.CAR) { assets.SEDAN = (assets.SEDAN || 0) + assets.CAR; delete assets.CAR; }
+  if (assets.PLANE) { assets.JET = (assets.JET || 0) + assets.PLANE; delete assets.PLANE; }
+  const stockBasisRaw = x.sb && typeof x.sb === 'object' && !Array.isArray(x.sb) ? x.sb : {};
+  const stockBasis = Object.fromEntries(Object.entries(stockBasisRaw).filter(([,v]) => Number(v) > 0).map(([k,v]) => [String(k).toUpperCase(), Number(v)]));
   return {
     balance: Math.max(0, Math.floor(Number(x.b ?? START_BALANCE) || 0)),
     vault: Math.max(0, Math.floor(Number(x.v ?? 0) || 0)),
     shares: Math.max(0, Number(stocks.NVRS || legacyShares) || 0),
     stocks,
     assets,
+    stockBasis,
     salaryAt: Math.max(0, Number(x.sa ?? 0) || 0),
     tipAt: Math.max(0, Number(x.ta ?? 0) || 0),
     loanAt: Math.max(0, Number(x.la ?? 0) || 0),
@@ -115,7 +123,7 @@ function packMarket(m) {
       };
     }
   }
-  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies, a: assets, vl: m.vvipLeaderId || null };
+  return { p: m.price, h: Array.isArray(m.history) ? m.history.slice(-24) : [], u: m.updatedAt, c: companies, a: assets };
 }
 
 function unpackMarket(x = {}) {
@@ -145,7 +153,7 @@ function unpackMarket(x = {}) {
       };
     }
   }
-  return { price, history, companies, assets, vvipLeaderId: x.vl || null, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
+  return { price, history, companies, assets, updatedAt: Math.max(0, Number(x.u) || Date.now()) };
 }
 
 function enc(value) {

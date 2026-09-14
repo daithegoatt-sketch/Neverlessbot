@@ -23,7 +23,7 @@ const {
 } = require('./bankUtils');
 
 function helpCard() {
-  const { canvas, ctx } = baseCard('NEVERLESS BANK', 'دليل أوامر البنك • جميع الأموال افتراضية', 1100, 840, THEME.cyan);
+  const { canvas, ctx } = baseCard('NEVERLESS BANK', 'دليل أوامر البنك', 1100, 840, THEME.cyan);
   const sections = [
     ['الحساب', ['رصيد / بروفايل', 'ايداع 500', 'سحب 500', 'تحويل @member 500']],
     ['الدخل والوقت', ['راتب', 'بخشيش', 'وقت']],
@@ -69,7 +69,13 @@ async function balanceCard(user, state, price) {
   ctx.fillStyle = THEME.text;
   const size = fitText(ctx, playerName(user), 300, 31, 18, 800);
   ctx.font = `800 ${size}px "Noto Sans Arabic", "Neverless Latin"`;
+  const nameWidth = ctx.measureText(playerName(user)).width;
   ctx.fillText(playerName(user), 64, 350);
+  if (state.rank) {
+    ctx.fillStyle = THEME.gold;
+    ctx.font = '800 18px "Noto Sans Arabic", "Neverless Latin"';
+    ctx.fillText(`#${state.rank}`, 64 + Math.min(300, nameWidth + 18), 350);
+  }
   ctx.fillStyle = THEME.muted;
   ctx.font = '500 15px "Noto Sans Arabic", "Neverless Latin"';
   ctx.fillText(`@${user.username}`, 64, 376);
@@ -207,24 +213,30 @@ function marketCard(market, companies, nextUpdateMs) {
   return canvas.toBuffer('image/png');
 }
 
-async function stockTradeCard(user, action, company, units, total, price, state, portfolioValue) {
+async function stockTradeCard(user, action, company, units, total, price, state, portfolioValue, profit = null) {
   const buy = action === 'buy';
   const color = buy ? THEME.green : THEME.red;
-  const { canvas, ctx } = baseCard('NEVERLESS MARKET', buy ? 'شراء أسهم' : 'بيع أسهم', 1000, 520, color);
+  const { canvas, ctx } = baseCard('NEVERLESS MARKET', buy ? 'شراء أسهم' : 'بيع أسهم', 1000, 550, color);
   drawAvatarImage(ctx, await loadAvatarImage(user), 72, 155, 105, color);
   ctx.fillStyle = THEME.text;
   ctx.font = `800 ${fitText(ctx, playerName(user), 240, 24, 16, 800)}px "Noto Sans Arabic", "Neverless Latin"`;
   ctx.fillText(playerName(user), 202, 195);
   ctx.fillStyle = THEME.muted;
   ctx.font = '700 15px "Noto Sans Arabic", "Neverless Latin"';
-  ctx.fillText(`${company.name} • ${company.code}`, 202, 226);
+  ctx.fillText(`${company.name} - ${company.code}`, 202, 226);
 
   metric(ctx, 490, 150, 205, 84, 'الوحدات', Number(units).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), THEME.silver);
   metric(ctx, 715, 150, 205, 84, 'سعر السهم', money(price), THEME.cyan);
-  metric(ctx, 490, 255, 430, 84, 'قيمة الصفقة', money(total), color);
-  metric(ctx, 72, 395, 260, 72, 'رصيدك', money(state.balance), THEME.green);
-  metric(ctx, 370, 395, 260, 72, 'ملكيتك', Number(state.stocks?.[company.code] || 0).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), THEME.gold);
-  metric(ctx, 668, 395, 260, 72, 'قيمة المحفظة', money(portfolioValue), THEME.silver);
+  if (buy) {
+    metric(ctx, 550, 255, 370, 76, 'قيمة الصفقة', money(total), color);
+  } else {
+    const pl = Number(profit || 0);
+    metric(ctx, 490, 255, 205, 76, pl >= 0 ? 'الربح' : 'الخسارة', `${pl >= 0 ? '+' : '-'}${money(Math.abs(pl))}`, pl >= 0 ? THEME.green : THEME.red);
+    metric(ctx, 715, 255, 205, 76, 'قيمة الصفقة', money(total), color);
+  }
+  metric(ctx, 72, 420, 260, 72, 'رصيدك', money(state.balance), THEME.green);
+  metric(ctx, 370, 420, 260, 72, 'ملكيتك', Number(state.stocks?.[company.code] || 0).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), THEME.gold);
+  metric(ctx, 668, 420, 260, 72, 'قيمة المحفظة', money(portfolioValue), THEME.silver);
   return canvas.toBuffer('image/png');
 }
 
@@ -242,34 +254,40 @@ function usageCard(command, lines) {
   return canvas.toBuffer('image/png');
 }
 
-function propertiesCard(state, market, stockValue, assetValue) {
-  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ممتلكاتك الحالية', 1050, 760, THEME.gold);
-  const items = [
-    ['الأسهم', stockValue, `${Object.values(state.stocks || {}).filter(v => Number(v) > 0).length} شركات`, THEME.cyan],
-    ['الأراضي', (state.assets?.LAND || 0) * market.assets.LAND.price, `${state.assets?.LAND || 0} أرض • ${money(market.assets.LAND.price)}`, THEME.green],
-    ['السيارات', (state.assets?.CAR || 0) * market.assets.CAR.price, `${state.assets?.CAR || 0} سيارة • ${money(market.assets.CAR.price)}`, THEME.blue],
-    ['الطائرات', (state.assets?.PLANE || 0) * market.assets.PLANE.price, `${state.assets?.PLANE || 0} طائرة • ${money(market.assets.PLANE.price)}`, THEME.silver],
-    ['الذهب', (state.assets?.GOLD || 0) * market.assets.GOLD.price, `${Number(state.assets?.GOLD || 0).toFixed(3)} أونصة • ${money(market.assets.GOLD.price)}`, THEME.gold],
+function propertiesCard(state, market, companies, catalog, stockValue, assetValue) {
+  const { canvas, ctx } = baseCard('NEVERLESS PROPERTIES', 'ممتلكاتك الحالية', 1050, 900, THEME.gold);
+
+  const stockLines = Object.values(companies)
+    .filter((company) => Number(state.stocks?.[company.code] || 0) > 0)
+    .map((company) => `${company.code}  ${Number(state.stocks[company.code]).toFixed(2)}  ${money(Number(state.stocks[company.code]) * market.companies[company.code].price)}`);
+  const byCategory = (cat) => Object.values(catalog)
+    .filter((asset) => asset.category === cat && Number(state.assets?.[asset.code] || 0) > 0)
+    .map((asset) => `${asset.name} x${Number(state.assets[asset.code]).toFixed(asset.fractional ? 3 : 0)}`);
+
+  const groups = [
+    ['الأسهم', stockLines.length ? stockLines.join('   ') : 'لا يوجد', THEME.cyan],
+    ['العقارات', byCategory('PROPERTY').join('   ') || 'لا يوجد', THEME.green],
+    ['السيارات', byCategory('CAR').join('   ') || 'لا يوجد', THEME.blue],
+    ['الطائرات', byCategory('PLANE').join('   ') || 'لا يوجد', THEME.silver],
+    ['الذهب', Number(state.assets?.GOLD || 0) > 0 ? `${Number(state.assets.GOLD).toFixed(3)} oz   ${money(Number(state.assets.GOLD) * market.assets.GOLD.price)}` : 'لا يوجد', THEME.gold],
   ];
+
   let y = 150;
-  for (const [name, value, count, color] of items) {
-    fillRoundRect(ctx, 60, y, 930, 92, 18, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
+  for (const [name, detail, color] of groups) {
+    fillRoundRect(ctx, 60, y, 930, 112, 18, 'rgba(10,23,38,.92)', THEME.strokeSoft, 1.5);
     ctx.fillStyle = color;
     ctx.font = '900 23px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(name, 88, y + 38);
-    ctx.fillStyle = THEME.muted;
-    ctx.font = '650 14px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(count, 88, y + 67);
-    ctx.textAlign = 'right';
+    ctx.fillText(name, 88, y + 39);
     ctx.fillStyle = THEME.text;
-    ctx.font = '900 26px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(money(value), 950, y + 52);
-    ctx.textAlign = 'left';
-    y += 105;
+    const size = fitText(ctx, detail, 810, 18, 12, 600);
+    ctx.font = `600 ${size}px "Noto Sans Arabic", "Neverless Latin"`;
+    ctx.fillText(detail, 88, y + 78);
+    y += 130;
   }
+
   const total = stockValue + assetValue;
-  fillRoundRect(ctx, 260, 680, 530, 58, 18, 'rgba(21,70,53,.26)', THEME.green, 1.5);
-  centerText(ctx, `إجمالي قيمة الممتلكات ${money(total)}`, 525, 718, '900 22px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
+  fillRoundRect(ctx, 250, 810, 550, 58, 18, 'rgba(21,70,53,.26)', THEME.green, 1.5);
+  centerText(ctx, `قيمة ممتلكاتك ${money(total)}`, 525, 847, '900 22px "Noto Sans Arabic", "Neverless Latin"', THEME.green);
   return canvas.toBuffer('image/png');
 }
 
@@ -316,13 +334,13 @@ async function topCard(rows, price) {
     ctx.textAlign = 'right';
     ctx.fillStyle = i === 0 ? THEME.gold : THEME.green;
     ctx.font = '900 25px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`${money(row.net)}${i === 0 ? '  VVIP' : ''}`, 955, y + 60);
+    ctx.fillText(`${money(row.net)}${i === 0 ? '  #1' : ''}`, 955, y + 60);
     ctx.textAlign = 'left';
     y += 112;
   }
 
   if (!rows.length) centerText(ctx, 'لا توجد حسابات بعد', 525, 640, '700 23px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
-  rtlText(ctx, `VVIP = الأغنى في السيرفر • سعر السهم الحالي ${money(price)}`, 990, 1240, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
+  rtlText(ctx, `المركز الأول = الأغنى في السيرفر - سعر NVRS الحالي ${money(price)}`, 990, 1240, '600 14px "Noto Sans Arabic", "Neverless Latin"', THEME.muted);
   return canvas.toBuffer('image/png');
 }
 
