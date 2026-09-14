@@ -69,11 +69,12 @@ async function balanceCard(user, state, price) {
   ctx.fillStyle = THEME.text;
   const size = fitText(ctx, playerName(user), 300, 31, 18, 800);
   ctx.font = `800 ${size}px "Noto Sans Arabic", "Neverless Latin"`;
+  const nameWidth = ctx.measureText(playerName(user)).width;
   ctx.fillText(playerName(user), 64, 350);
   if (state.rank) {
     ctx.fillStyle = THEME.gold;
     ctx.font = '800 18px "Noto Sans Arabic", "Neverless Latin"';
-    ctx.fillText(`#${state.rank}`, 64 + Math.min(300, ctx.measureText(playerName(user)).width + 18), 350);
+    ctx.fillText(`#${state.rank}`, 64 + Math.min(300, nameWidth + 18), 350);
   }
   ctx.fillStyle = THEME.muted;
   ctx.font = '500 15px "Noto Sans Arabic", "Neverless Latin"';
@@ -229,9 +230,9 @@ async function stockTradeCard(user, action, company, units, total, price, state,
   if (buy) {
     metric(ctx, 550, 255, 370, 76, 'قيمة الصفقة', money(total), color);
   } else {
-    metric(ctx, 550, 255, 175, 76, 'قيمة الصفقة', money(total), color);
     const pl = Number(profit || 0);
-    metric(ctx, 745, 255, 175, 76, pl >= 0 ? 'الربح' : 'الخسارة', `${pl >= 0 ? '+' : '-'}${money(Math.abs(pl))}`, pl >= 0 ? THEME.green : THEME.red);
+    metric(ctx, 490, 255, 205, 76, pl >= 0 ? 'الربح' : 'الخسارة', `${pl >= 0 ? '+' : '-'}${money(Math.abs(pl))}`, pl >= 0 ? THEME.green : THEME.red);
+    metric(ctx, 715, 255, 205, 76, 'قيمة الصفقة', money(total), color);
   }
   metric(ctx, 72, 420, 260, 72, 'رصيدك', money(state.balance), THEME.green);
   metric(ctx, 370, 420, 260, 72, 'ملكيتك', Number(state.stocks?.[company.code] || 0).toFixed(4).replace(/0+$/,'').replace(/\.$/,''), THEME.gold);
