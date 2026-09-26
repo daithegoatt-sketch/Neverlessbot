@@ -4,6 +4,8 @@ const { scheduleAchievementRefresh } = require('./achievementRoles');
 const { whenAccountStoreReady } = require('./accountStore');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
+const TEST_CHANNEL_ID = process.env.GENSHIN_TEST_CHANNEL_ID || '1539226931319545936';
+const ALLOWED_CHANNELS = new Set([CHANNEL_ID, TEST_CHANNEL_ID]);
 const PERIODIC_REFRESH_MS = 60 * 60 * 1000;
 let installed = false;
 
@@ -49,12 +51,12 @@ function installAchievementTriggers(client) {
   });
 
   client.on('messageCreate', (message) => {
-    if (!message?.guildId || message.author?.bot || message.channelId !== CHANNEL_ID) return;
+    if (!message?.guildId || message.author?.bot || !ALLOWED_CHANNELS.has(message.channelId)) return;
     if (!hasBotMention(message, client) || !shouldRefreshFromMessage(message.content)) return;
     const mutation = isLinkMutation(message.content);
     const ranking = isRankingRequest(message.content);
     scheduleAchievementRefresh(message.guild, {
-      delay: mutation ? 25_000 : 12_000,
+      delay: mutation ? 25_000 : ranking ? 4_000 : 12_000,
       force: mutation || ranking,
     });
   });
