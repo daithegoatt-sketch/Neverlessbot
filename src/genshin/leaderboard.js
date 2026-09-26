@@ -165,7 +165,9 @@ async function buildNeverlessLeaderboard(guild) {
   // Always refresh on the explicit ranking command. The completed result is still
   // cached so profile can reuse the latest board without rebuilding it.
   const users = await linkedGuildUsers(guild);
-  const rows = await mapLimit(users.slice(0, 40), 2, (link) => buildAccountScore(link, { forceRefresh: true }));
+  // Neverless ranking must consider every linked member. Limiting this list can
+  // award Top Neverless to a member who is then missing from the visible board/Hall.
+  const rows = await mapLimit(users, 2, (link) => buildAccountScore(link, { forceRefresh: true }));
   const clean = rows.filter(Boolean).sort((a, b) => b.accountScore - a.accountScore || b.averageBuild - a.averageBuild);
   const value = { rows: clean };
   cache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL });

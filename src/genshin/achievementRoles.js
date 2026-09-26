@@ -5,6 +5,7 @@ const { getAllLinkedUsers } = require('./accountStore');
 const { fetchAccount } = require('./enkaClient');
 const { rateVisibleAccount } = require('./liveAccountRating');
 const { accountScoreFromRated } = require('./leaderboard');
+const { recordTopNeverless } = require('./achievementHall');
 const { getCharacterNames } = require('./dataClient');
 
 const CHANNEL_ID = process.env.GENSHIN_CHANNEL_ID || '1538091335079297034';
@@ -102,14 +103,25 @@ async function syncRoleOwner(guild, roleName, winnerId, options = {}) {
     ? guild.members.cache.get(String(winnerId)) || await guild.members.fetch(String(winnerId)).catch(() => null)
     : null;
 
+  let success = true;
   const remove = [...role.members.values()].filter((member) => !winner || member.id !== winner.id);
-  await mapLimit(remove, 3, (member) => member.roles.remove(role, 'Neverless top achievement transferred'));
+  await mapLimit(remove, 3, async (member) => {
+    try {
+      await member.roles.remove(role, 'Neverless top achievement transferred');
+    } catch (error) {
+      success = false;
+      console.warn(`[genshin-achievements] Could not remove ${roleName} from ${member.user?.tag || member.id}: ${error.message}`);
+    }
+  });
   if (winner && !winner.roles.cache.has(role.id)) {
-    await winner.roles.add(role, 'Neverless top achievement earned').catch((error) => {
+    try {
+      await winner.roles.add(role, 'Neverless top achievement earned');
+    } catch (error) {
+      success = false;
       console.warn(`[genshin-achievements] Could not add ${roleName} to ${winner.user?.tag || winner.id}: ${error.message}`);
-    });
+    }
   }
-  return true;
+  return success;
 }
 
 async function linkedGuildUsers(guild) {
@@ -184,12 +196,20 @@ async function refreshAchievementRolesUnlocked(guild) {
     syncRoleOwner(guild, safeRoleName(winner.name), winner.discordUserId));
 
   await cleanupStaleCharacterRoles(guild, state.topByCharacter.keys());
-  await syncRoleOwner(
+  const neverlessSynced = await syncRoleOwner(
     guild,
     NEVERLESS_ROLE,
     state.accountWinner?.discordUserId || null,
     { createEmpty: Boolean(state.accountWinner) },
   );
+  // Keep the Hall of Fame and the public transfer announcement in the same
+  // transaction as the role change. The guildMemberUpdate listener remains a
+  // fallback, but this makes the role, leaderboard record and announcement deterministic.
+  if (neverlessSynced) {
+    await recordTopNeverless(guild, state.accountWinner || null, { announce: true }).catch((error) => {
+      console.warn(`[genshin-achievements] Could not sync Top Neverless Hall record: ${error.message}`);
+    });
+  }
 
   lastRefresh.set(guild.id, Date.now());
   console.log(`[genshin-achievements] Refreshed ${characterRows.length} character Top roles in ${guild.name}.`);
@@ -238,9 +258,15 @@ async function syncCharacterAchievement(guild, board) {
 
 async function syncNeverlessAchievement(guild, board) {
   const winner = chooseAccountWinner(board?.rows || []);
-  return syncRoleOwner(guild, NEVERLESS_ROLE, winner?.discordUserId || null, {
+  const synced = await syncRoleOwner(guild, NEVERLESS_ROLE, winner?.discordUserId || null, {
     createEmpty: Boolean(winner),
   });
+  if (synced) {
+    await recordTopNeverless(guild, winner || null, { announce: true }).catch((error) => {
+      console.warn(`[genshin-achievements] Could not sync Top Neverless Hall record: ${error.message}`);
+    });
+  }
+  return synced;
 }
 
 function shouldRefreshFromMessage(content) {

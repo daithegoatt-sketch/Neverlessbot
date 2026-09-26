@@ -6,7 +6,8 @@ const {
   handleNeverlessFlex,
   isHallCommand,
 } = require('./achievementHall');
-const { buildNeverlessLeaderboard, getCachedNeverlessLeaderboard } = require('./leaderboard');
+const { buildNeverlessLeaderboard, getCachedNeverlessLeaderboard, buildAccountScore } = require('./leaderboard');
+const { getAllLinkedUsers } = require('./accountStore');
 
 const NEVERLESS_ROLE = 'Top Neverless';
 const syncTimers = new Map();
@@ -61,7 +62,24 @@ async function boardRowForHolder(guild, userId) {
     console.warn(`[genshin-hall] Could not refresh Neverless leaderboard: ${error.message}`);
     return null;
   });
-  return board?.rows?.find((item) => String(item.discordUserId) === String(userId)) || null;
+  row = board?.rows?.find((item) => String(item.discordUserId) === String(userId)) || null;
+  if (row) return row;
+
+  // Last-resort reconciliation: if the role already moved, rate that holder
+  // directly so Hall of Fame cannot remain stuck on the previous member.
+  const link = getAllLinkedUsers().find((item) => String(item.discordUserId) === String(userId));
+  if (!link) return null;
+  const member = guild.members.cache.get(String(userId))
+    || await guild.members.fetch(String(userId)).catch(() => null);
+  const direct = await buildAccountScore({
+    ...link,
+    member,
+    displayName: member?.displayName || member?.user?.globalName || member?.user?.username || String(userId),
+  }, { forceRefresh: true }).catch((error) => {
+    console.warn(`[genshin-hall] Could not rate current Top Neverless holder directly: ${error.message}`);
+    return null;
+  });
+  return direct;
 }
 
 async function syncFromTopRole(guild, options = {}) {
@@ -127,8 +145,10 @@ function installAchievementHall(client) {
 
   client.once('ready', () => {
     for (const guild of client.guilds.cache.values()) {
-      // Seed/reconcile silently after a restart. A restart must never look like a new champion announcement.
-      scheduleRoleSync(guild, { delay: 10_000, announce: false });
+      // Reconcile after restart. recordTopNeverless only announces when the persisted
+      // holder actually differs, so a normal restart stays silent while a missed
+      // transfer is repaired and announced automatically.
+      scheduleRoleSync(guild, { delay: 10_000, announce: true });
     }
   });
 
